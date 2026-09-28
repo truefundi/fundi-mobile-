@@ -1,0 +1,1599 @@
+# Fundi Mobile App — Complete UI/UX Design Prompt
+
+Design and build a **professional, modern mobile application UI for “Fundi”**, an on-demand skilled-worker marketplace that connects customers with qualified technicians such as mechanics, electricians, plumbers, HVAC technicians, appliance repair specialists, garage technicians, truck mechanics, and general maintenance workers.
+
+The application must feel **trustworthy, practical, fast, professional, and easy to use**.
+
+The core Fundi experience is:
+
+**REQUEST → MATCH → ACCEPT → PAY VISIT FEE → TRACK → ARRIVE → DIAGNOSE → QUOTE → APPROVE → REPAIR → COMPLETE → PAYMENT → RATE**
+
+---
+
+# IMPORTANT DESIGN RULE
+
+## ABSOLUTELY NO GRADIENTS
+
+Do not use gradients anywhere in the application.
+
+Do NOT use:
+
+* Linear gradients
+* Radial gradients
+* Gradient backgrounds
+* Gradient buttons
+* Gradient cards
+* Gradient overlays
+* Gradient illustrations
+* Gradient text
+* Gradient icons
+
+Use **solid colors only**.
+
+The interface should rely on:
+
+* Solid color backgrounds
+* White surfaces
+* Neutral backgrounds
+* Clear borders
+* Subtle shadows
+* Strong typography
+* Consistent spacing
+* Simple icons
+* Clear hierarchy
+
+Keep the design clean and professional rather than flashy.
+
+---
+
+# DESIGN DIRECTION
+
+Create a premium but practical service marketplace similar in usability to modern mobility and service applications.
+
+The design should communicate:
+
+**Trust + Speed + Reliability + Professionalism**
+
+Avoid making it look like a generic food-delivery application.
+
+The application should feel appropriate for:
+
+* Car repairs
+* Electrical work
+* Plumbing
+* HVAC
+* Home maintenance
+* Appliance repair
+* Commercial equipment
+* Emergency services
+
+---
+
+# COLOR SYSTEM
+
+Use a solid-color design system.
+
+Primary brand color:
+
+**Fundi Orange**
+
+Use one strong orange as the main brand/accent color.
+
+Suggested:
+
+**Primary:** #F97316
+
+Supporting colors:
+
+**Background:** #F8FAFC
+**Surface:** #FFFFFF
+**Primary Text:** #111827
+**Secondary Text:** #6B7280
+**Border:** #E5E7EB
+**Success:** #16A34A
+**Warning:** #F59E0B
+**Error:** #DC2626
+**Info:** #2563EB
+
+Use colors consistently.
+
+Do not introduce unnecessary colors.
+
+Do not use gradients.
+
+---
+
+# TYPOGRAPHY
+
+Use a modern sans-serif font such as:
+
+**Inter**
+
+Typography should have a clear hierarchy:
+
+* Large page titles
+* Medium section headings
+* Strong card titles
+* Comfortable body text
+* Small metadata labels
+* Clear button labels
+
+Use bold typography for important prices, statuses, and actions.
+
+---
+
+# GENERAL UI STYLE
+
+Use:
+
+* Rounded cards
+* Medium corner radius
+* Clean white surfaces
+* Subtle borders
+* Very subtle shadows
+* Spacious layouts
+* Large touch targets
+* Clear primary CTA buttons
+* Bottom navigation
+* Simple line icons
+
+Avoid:
+
+* Excessive shadows
+* Glassmorphism
+* Neumorphism
+* Excessive rounded/pill UI
+* Excessive decorative elements
+* Clutter
+* Gradient effects
+
+---
+
+# CUSTOMER MOBILE APP
+
+Create the complete customer experience.
+
+## 1. Splash Screen
+
+Display:
+
+**Fundi**
+
+Tagline:
+
+**Tell us what's wrong. Fundi finds who can fix it.**
+
+Simple logo.
+
+Solid brand-color background.
+
+No gradient.
+
+---
+
+# 2. Onboarding
+
+Create 3 onboarding screens.
+
+### Screen 1
+
+**Find the right technician**
+
+"Tell us what you need and Fundi finds qualified technicians nearby."
+
+Illustration/icon.
+
+### Screen 2
+
+**Track your technician**
+
+"Know when your technician is coming with real-time location and ETA."
+
+### Screen 3
+
+**Get the job done**
+
+"Approve repairs, manage payments and keep a digital service record."
+
+CTA:
+
+**Get Started**
+
+---
+
+# 3. Authentication
+
+Create:
+
+### Sign In
+
+* Phone number
+* Country selector
+* Password or OTP
+* Continue button
+* Forgot password
+* Create account
+
+### Create Account
+
+* Full name
+* Phone number
+* Email
+* Password
+* Location
+
+CTA:
+
+**Create Account**
+
+---
+
+# 4. CUSTOMER HOME
+
+Create a polished dashboard.
+
+Top:
+
+**Good morning, [Name]**
+
+Location:
+
+📍 Kigali, Rwanda
+
+Main CTA:
+
+### What service do you need?
+
+Search bar:
+
+**Search for a service...**
+
+Then service categories.
+
+Display categories as clean cards:
+
+🚗 Car & Garage
+⚡ Electrical
+🔧 Plumbing
+❄️ HVAC
+🏠 Home Repair
+🔌 Appliance Repair
+🚚 Truck & Mechanical
+🛠️ General Maintenance
+
+Include:
+
+### 🚨 Emergency Service
+
+A highly visible emergency button.
+
+Then:
+
+### Recent Services
+
+Show previous jobs.
+
+Example:
+
+**Electrical Repair**
+
+John • Completed
+$300 • Aug 28
+
+Then:
+
+### Recommended Technicians
+
+Show technician cards with:
+
+* Profile photo
+* Name
+* Skill
+* Rating
+* Completed jobs
+* Distance
+* Availability
+
+---
+
+# 5. SERVICE REQUEST
+
+When customer selects a service, open a step-by-step request flow.
+
+### Step 1 — What is wrong?
+
+Title:
+
+**Tell us what happened**
+
+Input:
+
+**Describe the problem...**
+
+Example:
+
+"My kitchen power outlet stopped working."
+
+Allow:
+
+📷 Add Photos
+🎥 Add Video
+
+---
+
+### Step 2 — Location
+
+Show:
+
+**Where is the service needed?**
+
+Map.
+
+Current location.
+
+Address field.
+
+Button:
+
+**Use Current Location**
+
+---
+
+### Step 3 — Urgency
+
+Options:
+
+**Emergency**
+Need someone immediately
+
+**Today**
+As soon as possible today
+
+**Schedule**
+Choose a preferred time
+
+---
+
+### Step 4 — Review Request
+
+Display:
+
+Service
+Problem
+Photos
+Location
+Urgency
+Preferred time
+
+Then:
+
+**Continue**
+
+---
+
+# 6. MATCHING SCREEN
+
+Create a professional searching animation without gradients.
+
+Title:
+
+**Finding the right technician**
+
+Show:
+
+* Map
+* Technician location markers
+* Search animation
+* Matching status
+
+Text:
+
+**Looking for qualified technicians near you...**
+
+Then transition to:
+
+**Technician Found**
+
+---
+
+# 7. VISIT FEE SCREEN
+
+Create a clear payment confirmation screen.
+
+Title:
+
+**Technician Visit & Diagnostic Fee**
+
+Large price:
+
+**$75**
+
+Description:
+
+"This covers the technician's travel, inspection and diagnosis."
+
+Show:
+
+* Visit fee
+* Technician availability
+* Estimated arrival
+
+CTA:
+
+### Request Technician
+
+Secondary:
+
+**Cancel**
+
+Clearly explain that the visit fee is subject to Fundi's cancellation/refund policy.
+
+---
+
+# 8. TECHNICIAN CONFIRMATION
+
+After matching, show:
+
+Technician profile card.
+
+Example:
+
+**John Smith**
+
+Electrician
+
+⭐ 4.8
+
+**1,250 jobs completed**
+
+14 min ETA
+
+5 km away
+
+Status:
+
+**Accepted your request**
+
+CTA:
+
+**Continue to Payment**
+
+---
+
+# 9. VISIT PAYMENT
+
+Create payment screen.
+
+Title:
+
+**Pay Visit Fee**
+
+Amount:
+
+**$75**
+
+Payment methods:
+
+* Card
+* Mobile Money
+* Fundi Wallet
+* Other available methods
+
+CTA:
+
+**Pay $75**
+
+Display a secure-payment indicator.
+
+---
+
+# 10. TECHNICIAN TRACKING
+
+Create a live tracking screen.
+
+Top:
+
+**John is on the way**
+
+Map occupying most of the screen.
+
+Technician marker.
+
+Customer marker.
+
+Bottom sheet:
+
+John Smith
+Electrician
+
+⭐ 4.8
+
+ETA:
+
+**14 minutes**
+
+Status:
+
+**On the way**
+
+Buttons:
+
+**Call**
+
+**Message**
+
+---
+
+# 11. TECHNICIAN ARRIVED
+
+When technician arrives:
+
+Show confirmation:
+
+### Your technician has arrived
+
+John Smith
+
+Electrician
+
+Display:
+
+**ARRIVED**
+
+Then:
+
+**Diagnosis will begin shortly.**
+
+---
+
+# 12. DIAGNOSIS SCREEN
+
+Show:
+
+### Technician is diagnosing the problem
+
+Timeline:
+
+✓ Technician arrived
+
+● Diagnosis in progress
+
+○ Repair quote
+
+○ Customer approval
+
+○ Repair
+
+○ Completion
+
+The technician can later submit the diagnosis.
+
+---
+
+# 13. REPAIR QUOTE
+
+Create a detailed quote screen.
+
+Title:
+
+**Repair Quote**
+
+Example:
+
+**Problem**
+
+Faulty alternator
+
+**Parts**
+
+Alternator — $350
+
+**Labour**
+
+$150
+
+**Repair Total**
+
+$500
+
+**Visit Fee Paid**
+
+-$75
+
+**Remaining Balance**
+
+$425
+
+Large highlighted total:
+
+**$425**
+
+CTA:
+
+### Approve Repair
+
+Secondary:
+
+**Decline**
+
+Important message:
+
+"You will not be charged for additional work without your approval."
+
+---
+
+# 14. REPAIR IN PROGRESS
+
+After approval:
+
+Title:
+
+**Repair in progress**
+
+Technician:
+
+John Smith
+
+Show progress timeline:
+
+✓ Diagnosis completed
+
+✓ Repair approved
+
+● Repair in progress
+
+○ Final inspection
+
+○ Job completed
+
+Display estimated completion time.
+
+---
+
+# 15. ADDITIONAL WORK APPROVAL
+
+If the technician discovers additional work, create a separate approval screen.
+
+Title:
+
+**Additional Work Requires Approval**
+
+Show:
+
+Original quote
+
+Additional problem
+
+Additional parts
+
+Additional labour
+
+Additional cost
+
+CTA:
+
+**Approve Additional Work**
+
+Secondary:
+
+**Decline**
+
+Never automatically charge the customer.
+
+---
+
+# 16. JOB COMPLETED
+
+Create completion screen.
+
+Large success icon.
+
+Title:
+
+### Job Completed
+
+Show:
+
+Technician
+Service
+Completion time
+
+Before/after photos.
+
+Final service summary.
+
+CTA:
+
+**View Invoice**
+
+---
+
+# 17. REPAIR PAYMENT SETTLEMENT
+
+Create:
+
+### How was the repair paid?
+
+Show repair total.
+
+Options:
+
+**Paid through Fundi**
+
+**Cash**
+
+**Mobile Money / E-transfer**
+
+**Other**
+
+If Fundi payment is selected, show the payment flow.
+
+If external payment is selected, record the settlement method without forcing the transaction through Fundi.
+
+---
+
+# 18. DIGITAL INVOICE
+
+Create a professional invoice screen.
+
+Include:
+
+Fundi logo
+
+Job ID
+
+Customer
+
+Technician
+
+Service
+
+Diagnosis
+
+Parts
+
+Labour
+
+Visit fee
+
+Repair amount
+
+Payment method
+
+Date
+
+Time
+
+Location
+
+Total
+
+Status:
+
+**PAID**
+
+CTA:
+
+**Download Receipt**
+
+---
+
+# 19. RATE TECHNICIAN
+
+Create rating screen.
+
+Title:
+
+### How was your experience?
+
+5-star rating.
+
+Categories:
+
+Quality
+Professionalism
+Arrival time
+Communication
+Value
+
+Comment:
+
+**Tell us about your experience...**
+
+CTA:
+
+**Submit Review**
+
+---
+
+# 20. CUSTOMER SERVICE HISTORY
+
+Create:
+
+### My Services
+
+Tabs:
+
+**Active | Completed**
+
+Each service card:
+
+Service type
+
+Technician
+
+Date
+
+Amount
+
+Status
+
+Job ID
+
+Example:
+
+**Electrical Repair**
+
+John Smith
+
+Completed
+
+Aug 28, 2026
+
+$300
+
+---
+
+# 21. CUSTOMER PROFILE
+
+Create profile screen.
+
+Include:
+
+Profile photo
+
+Name
+
+Phone
+
+Email
+
+Location
+
+Then:
+
+My Services
+
+Payments
+
+Saved Locations
+
+Notifications
+
+Help & Support
+
+Terms & Privacy
+
+Settings
+
+Log Out
+
+---
+
+# TECHNICIAN APP
+
+Create a separate technician experience.
+
+The technician dashboard should focus on:
+
+**Availability → Jobs → Schedule → Earnings → Reputation**
+
+---
+
+# 22. TECHNICIAN DASHBOARD
+
+Top:
+
+**Good morning, John**
+
+Availability control:
+
+### GO LIVE
+
+When active:
+
+**YOU ARE AVAILABLE**
+
+Display:
+
+Today's jobs
+
+Completed jobs
+
+Today's earnings
+
+Rating
+
+Then:
+
+### Upcoming Jobs
+
+Show scheduled jobs.
+
+---
+
+# 23. GO LIVE
+
+Create an availability screen.
+
+Toggle:
+
+**AVAILABLE**
+
+Settings:
+
+Service categories
+
+Service radius
+
+Working hours
+
+Maximum active jobs
+
+Emergency jobs
+
+Current location
+
+When offline:
+
+**GO OFFLINE**
+
+---
+
+# 24. NEW JOB REQUEST
+
+Create a high-priority incoming job screen.
+
+Title:
+
+### New Job Request
+
+Service:
+
+Electrical
+
+Customer problem:
+
+"Power outlet not working"
+
+Distance:
+
+5 km
+
+ETA:
+
+12 minutes
+
+Visit fee:
+
+$75
+
+Photos attached.
+
+Large actions:
+
+**ACCEPT**
+
+**DECLINE**
+
+Include countdown timer.
+
+---
+
+# 25. TECHNICIAN JOB DETAILS
+
+After accepting:
+
+Customer information
+
+Service
+
+Problem
+
+Photos/videos
+
+Location
+
+Visit fee
+
+ETA
+
+Navigation CTA:
+
+**START NAVIGATION**
+
+Actions:
+
+Call Customer
+
+Message Customer
+
+---
+
+# 26. TECHNICIAN EN ROUTE
+
+Display:
+
+### On the way
+
+Map
+
+Customer location
+
+ETA
+
+Distance
+
+CTA:
+
+**ARRIVED**
+
+---
+
+# 27. TECHNICIAN ARRIVAL
+
+Confirmation:
+
+### Confirm Arrival
+
+Show GPS location.
+
+CTA:
+
+**CONFIRM ARRIVAL**
+
+After confirmation:
+
+Customer receives notification.
+
+---
+
+# 28. TECHNICIAN DIAGNOSIS
+
+Create form:
+
+### Diagnosis
+
+Problem identified
+
+Required parts
+
+Labour estimate
+
+Estimated repair time
+
+Photos
+
+Notes
+
+CTA:
+
+**SUBMIT DIAGNOSIS**
+
+---
+
+# 29. CREATE QUOTE
+
+Technician enters:
+
+Parts
+
+Quantity
+
+Price
+
+Labour
+
+Other approved costs
+
+Total
+
+Show:
+
+**Visit fee already paid: $75**
+
+CTA:
+
+**SEND QUOTE TO CUSTOMER**
+
+---
+
+# 30. WAITING FOR APPROVAL
+
+Show:
+
+### Waiting for customer approval
+
+Quote status:
+
+**PENDING**
+
+Actions:
+
+Message Customer
+
+View Quote
+
+---
+
+# 31. REPAIR
+
+After approval:
+
+### Repair Approved
+
+CTA:
+
+**START REPAIR**
+
+Then:
+
+**REPAIR IN PROGRESS**
+
+Technician can upload:
+
+Before photos
+
+During-repair photos
+
+After photos
+
+---
+
+# 32. COMPLETE JOB
+
+Show:
+
+### Complete Job
+
+Final checklist:
+
+✓ Repair completed
+
+✓ Photos uploaded
+
+✓ Customer informed
+
+CTA:
+
+**JOB COMPLETED**
+
+---
+
+# 33. TECHNICIAN PAYMENT RECORD
+
+Show:
+
+### Job Earnings
+
+Visit fee:
+
+$75
+
+Fundi commission:
+
+-$22.50
+
+Technician earnings:
+
+**$52.50**
+
+Repair payment:
+
+Show settlement method:
+
+Fundi / Cash / Mobile Money / Other
+
+Clearly distinguish **Fundi-controlled visit-fee earnings** from externally settled repair payments.
+
+---
+
+# 34. TECHNICIAN EARNINGS
+
+Create dashboard:
+
+**Today's earnings**
+
+**This week**
+
+**This month**
+
+Charts should be simple and flat.
+
+No gradients.
+
+Show:
+
+Completed jobs
+
+Visit fees
+
+Fundi commissions
+
+Net earnings
+
+---
+
+# 35. TECHNICIAN PROFILE
+
+Include:
+
+Profile photo
+
+Name
+
+Primary skill
+
+Verified badge
+
+Rating
+
+Completed jobs
+
+Experience
+
+Service categories
+
+Service radius
+
+Working hours
+
+Reviews
+
+Documents/KYC status
+
+---
+
+# EMERGENCY EXPERIENCE
+
+Create a dedicated emergency flow.
+
+Customer presses:
+
+### 🚨 Emergency
+
+Select:
+
+Car breakdown
+
+Burst pipe
+
+Electrical emergency
+
+HVAC failure
+
+Commercial equipment failure
+
+Other
+
+Then:
+
+**Find available technician now**
+
+Only show technicians who are:
+
+LIVE + AVAILABLE + QUALIFIED + WITHIN EMERGENCY RADIUS
+
+Show:
+
+Emergency visit fee
+
+Estimated arrival
+
+Technician profile
+
+CTA:
+
+**REQUEST EMERGENCY TECHNICIAN**
+
+---
+
+# CUSTOMER NOTIFICATIONS
+
+Create notification screens/cards for:
+
+Technician accepted
+
+Payment successful
+
+Technician on the way
+
+Technician arrived
+
+Diagnosis completed
+
+Quote received
+
+Repair approved
+
+Repair completed
+
+Payment received
+
+Job completed
+
+Rating reminder
+
+---
+
+# TECHNICIAN NOTIFICATIONS
+
+Include:
+
+New job request
+
+Job accepted
+
+Customer cancelled
+
+Customer approved quote
+
+Additional work approved
+
+Upcoming job
+
+Payment received
+
+Rating received
+
+---
+
+# BOTTOM NAVIGATION — CUSTOMER
+
+Use:
+
+**Home | Services | Activity | Notifications | Profile**
+
+---
+
+# BOTTOM NAVIGATION — TECHNICIAN
+
+Use:
+
+**Dashboard | Jobs | Schedule | Earnings | Profile**
+
+---
+
+# COMPONENT SYSTEM
+
+Create reusable components in Figma.
+
+Components should include:
+
+* Buttons
+* Input fields
+* Search bars
+* Service cards
+* Technician cards
+* Job cards
+* Status badges
+* Rating components
+* Payment cards
+* Quote cards
+* Invoice components
+* Bottom sheets
+* Modals
+* Maps
+* Navigation bars
+* Bottom navigation
+* Alerts
+* Empty states
+* Loading states
+* Error states
+* Success states
+
+Create variants for:
+
+* Default
+* Hover
+* Pressed
+* Disabled
+* Loading
+* Error
+* Success
+
+---
+
+# JOB STATUS SYSTEM
+
+Use consistent status labels throughout the application:
+
+REQUESTED
+
+MATCHING
+
+OFFERED
+
+ACCEPTED
+
+VISIT_PAID
+
+EN_ROUTE
+
+ARRIVED
+
+DIAGNOSING
+
+DIAGNOSIS_COMPLETE
+
+QUOTE_PENDING
+
+QUOTE_APPROVED
+
+REPAIR_IN_PROGRESS
+
+ADDITIONAL_APPROVAL_REQUIRED
+
+REPAIR_COMPLETED
+
+PAYMENT_PENDING
+
+PAYMENT_REPORTED
+
+COMPLETED
+
+CANCELLED
+
+DISPUTED
+
+---
+
+# MAP DESIGN
+
+Maps should use a clean, minimal visual style.
+
+Show:
+
+Customer location
+
+Technician location
+
+Route
+
+ETA
+
+Distance
+
+Do not use gradients on map overlays or UI elements.
+
+---
+
+# RESPONSIVE DESIGN
+
+The primary design target is:
+
+**Mobile**
+
+Design for:
+
+* iPhone
+* Android
+
+Use a standard mobile frame such as:
+
+**390 × 844**
+
+Also create responsive variants where appropriate.
+
+---
+
+# ACCESSIBILITY
+
+Ensure:
+
+* Strong text contrast
+* Large touch targets
+* Clear error states
+* Icons accompanied by labels where necessary
+* Do not rely only on color to communicate status
+* Readable font sizes
+* Clear focus states
+
+---
+
+# FIGMA FILE ORGANIZATION
+
+Organize the Figma file into pages:
+
+01 — Cover
+02 — Design System
+03 — Components
+04 — Customer Authentication
+05 — Customer Home
+06 — Customer Request Flow
+07 — Matching & Technician
+08 — Tracking
+09 — Diagnosis & Quote
+10 — Repair & Completion
+11 — Payments & Invoices
+12 — Ratings
+13 — Customer Profile
+14 — Technician Authentication
+15 — Technician Dashboard
+16 — Technician Jobs
+17 — Technician Schedule
+18 — Technician Earnings
+19 — Technician Profile
+20 — Emergency Flow
+21 — Notifications
+22 — Empty & Error States
+
+---
+
+# PROTOTYPE FLOW
+
+Connect the screens into a realistic clickable prototype.
+
+The primary prototype should demonstrate:
+
+Customer:
+
+Home
+→ Select Service
+→ Describe Problem
+→ Upload Photo
+→ Location
+→ Urgency
+→ Review
+→ Find Technician
+→ Technician Found
+→ Visit Fee
+→ Payment
+→ Tracking
+→ Technician Arrived
+→ Diagnosis
+→ Quote
+→ Approve
+→ Repair
+→ Completion
+→ Payment Settlement
+→ Invoice
+→ Rating
+
+Technician:
+
+Dashboard
+→ Go Live
+→ New Job Request
+→ Accept
+→ Job Details
+→ Navigation
+→ Arrived
+→ Diagnosis
+→ Quote
+→ Customer Approval
+→ Repair
+→ Complete Job
+→ Earnings
+
+---
+
+# FINAL DESIGN REQUIREMENT
+
+The final application must look like a **real production-ready marketplace**, not a generic AI-generated template.
+
+Prioritize:
+
+**Clarity over decoration.**
+
+**Function over visual effects.**
+
+**Trust over flashy design.**
+
+**Speed over complexity.**
+
+Use a strong solid-color Fundi brand identity.
+
+## ABSOLUTELY NO GRADIENTS.
+
+Every screen must use solid colors only.
