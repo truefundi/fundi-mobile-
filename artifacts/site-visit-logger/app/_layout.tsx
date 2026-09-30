@@ -16,6 +16,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { FundiProvider } from '@/context/FundiContext';
 import { WorkProvider } from '@/context/WorkContext';
+import { configureApi, checkApiHealth } from '@/lib/api';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -63,6 +64,11 @@ export default function RootLayout() {
     Inter_600SemiBold,
     Inter_700Bold,
   });
+
+  useEffect(() => {
+    configureApi();
+    void checkApiHealth().catch(() => undefined);
+  }, []);
 
   if (!fontsLoaded && !fontError) return null;
 
