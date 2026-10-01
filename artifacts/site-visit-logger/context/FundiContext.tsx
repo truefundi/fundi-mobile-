@@ -25,7 +25,7 @@ import {
 
 export type { Job, JobStatus } from '@/constants/jobs';
 
-type NewRequest = Pick<Job, 'service' | 'problem' | 'urgency' | 'locationLabel' | 'photoUri'>;
+type NewRequest = Pick<Job, 'service' | 'problem' | 'urgency' | 'locationLabel' | 'photoUri' | 'videoUri'>;
 
 type FundiContextValue = {
   jobs: Job[];

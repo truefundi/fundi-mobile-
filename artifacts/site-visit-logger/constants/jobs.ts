@@ -142,6 +142,12 @@ export type Job = {
   urgency: 'Emergency' | 'Today' | 'Schedule';
   locationLabel: string;
   photoUri?: string;
+  /**
+   * Local video the customer attached. Like photoUri it is a device URI until
+   * the backend's upload endpoint (POST /uploads/presign) exists; the request
+   * payload then carries the uploaded URL instead.
+   */
+  videoUri?: string;
   status: JobStatus;
   /** ISO timestamp of the last status change — drives the simulated timers. */
   statusSince: string;
