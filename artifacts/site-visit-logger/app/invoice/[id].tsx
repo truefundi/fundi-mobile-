@@ -2,9 +2,10 @@ import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Share, StyleSheet, Text, View } from 'react-native';
-import { balanceDue, formatMoney, quoteSubtotal, repairTotal, type Job } from '@/constants/jobs';
+import { additionalSubtotal, balanceDue, formatMoney, quoteSubtotal, repairTotal, type Job } from '@/constants/jobs';
 import { formatPhone } from '@/constants/auth';
 import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
@@ -25,21 +26,36 @@ export default function InvoiceScreen() {
 
   if (!job) {
     return (
-      <StageScreen title="Invoice not found" onBack={() => router.replace('/activity')}>
-        <Text style={[styles.body, { color: colors.mutedForeground }]}>This job is no longer on this device.</Text>
+      <StageScreen
+        title="Invoice not found"
+        onBack={() => router.replace('/activity')}
+        footer={<Button label="Back to my services" onPress={() => router.replace('/activity')} testID="invoice-missing-back" />}
+      >
+        <EmptyState icon="file-text" title="This invoice is not available" text="The job is no longer on this device." />
       </StageScreen>
     );
   }
 
   const issued = new Date(job.completedAt ?? job.statusSince);
-  const partsTotal = job.quote?.parts.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0) ?? 0;
+  const extraApproved = job.additionalWorkApproved && job.additionalWork ? job.additionalWork : undefined;
+  const partsTotal =
+    (job.quote?.parts.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0) ?? 0) +
+    (extraApproved ? additionalSubtotal(extraApproved) - extraApproved.labour : 0);
+  const labourTotal = (job.quote?.labour ?? 0) + (extraApproved?.labour ?? 0);
 
   return (
     <StageScreen
       eyebrow="INVOICE"
       title={job.reference}
       onBack={() => (router.canGoBack() ? router.back() : router.replace('/activity'))}
-      footer={<Button label="Share receipt" onPress={() => Share.share({ message: receiptText(job, customer) }).catch(() => undefined)} testID="invoice-share-button" />}
+      footer={
+        <Button
+          label="Share receipt"
+          icon="share-outline"
+          onPress={() => Share.share({ message: receiptText(job, customer) }).catch(() => undefined)}
+          testID="invoice-share-button"
+        />
+      }
     >
       <View style={[styles.header, { backgroundColor: colors.primary }]}>
         <Text style={[styles.brand, { color: colors.primaryForeground }]}>fundi</Text>
@@ -77,8 +93,8 @@ export default function InvoiceScreen() {
                 value={formatMoney(line.quantity * line.unitPrice)}
               />
             ))}
-            {job.additionalWork && job.additionalWorkApproved
-              ? job.additionalWork.parts.map((line) => (
+            {extraApproved
+              ? extraApproved.parts.map((line) => (
                   <MoneyRow
                     key={line.label}
                     label={line.label}
@@ -88,8 +104,8 @@ export default function InvoiceScreen() {
                 ))
               : null}
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
-            <MoneyRow label="Parts" value={formatMoney(partsTotal + (job.additionalWorkApproved && job.additionalWork ? job.additionalWork.parts.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0) : 0))} />
-            <MoneyRow label="Labour" value={formatMoney(job.quote.labour + (job.additionalWorkApproved && job.additionalWork ? job.additionalWork.labour : 0))} />
+            <MoneyRow label="Parts" value={formatMoney(partsTotal)} />
+            <MoneyRow label="Labour" value={formatMoney(labourTotal)} />
           </SectionCard>
         </>
       ) : null}
@@ -103,7 +119,7 @@ export default function InvoiceScreen() {
       </SectionCard>
 
       <SectionCard emphasis>
-        <Text style={[styles.totalLabel, { color: colors.primaryForeground }]}>TOTAL</Text>
+        <Text style={[styles.totalLabel, { color: colors.primaryForeground }]}>TOTAL PAID</Text>
         <Text style={[styles.total, { color: colors.primaryForeground }]}>
           {formatMoney(repairTotal(job) > 0 ? repairTotal(job) : job.visitFee)}
         </Text>
@@ -138,6 +154,6 @@ const styles = StyleSheet.create({
   paidText: { fontFamily: 'Inter_700Bold', fontSize: 12, letterSpacing: 1 },
   body: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20 },
   divider: { height: 1, marginVertical: 8 },
-  totalLabel: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3 },
+  totalLabel: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.3 },
   total: { fontFamily: 'Inter_700Bold', fontSize: 36, letterSpacing: -1.2, marginTop: 3 },
 });
