@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { BackButton } from '@/components/ui/BackButton';
@@ -40,6 +40,11 @@ function formatDuration(seconds: number): string {
 export default function RequestScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  // Side by side the photo and video buttons truncate on small phones; stack them there.
+  const stackMedia = width < 360;
+  // On short screens the map would push the address field below the fold.
+  const mapHeight = height < 700 ? 120 : 190;
   const router = useRouter();
   const { service: serviceParam, emergency } = useLocalSearchParams<{ service?: string; emergency?: string }>();
   const service = serviceParam || 'General Maintenance';
@@ -225,6 +230,14 @@ export default function RequestScreen() {
     setStep(target);
   };
 
+  // Shown right under the field it is about, so it is never hidden behind the pinned buttons.
+  const errorView = error ? (
+    <View style={styles.errorRow} accessibilityLiveRegion="polite">
+      <Feather name="alert-circle" size={15} color={colors.destructive} />
+      <Text testID="request-error" style={[styles.error, { color: colors.destructive }]}>{error}</Text>
+    </View>
+  ) : null;
+
   const attachments = [photoUri ? 'Photo' : null, videoUri ? 'Video' : null].filter(Boolean).join(' and ');
 
   return (
@@ -273,11 +286,12 @@ export default function RequestScreen() {
                 { backgroundColor: colors.card, borderColor: error && !problem.trim() ? colors.destructive : colors.border, color: colors.foreground },
               ]}
             />
+            {errorView}
 
             <Text style={[styles.fieldLabel, { color: colors.foreground }]}>
               Photo or video <Text style={[styles.optional, { color: colors.mutedForeground }]}>(optional)</Text>
             </Text>
-            <View style={styles.mediaRow}>
+            <View style={[styles.mediaRow, stackMedia && styles.mediaColumn]}>
               <MediaButton
                 testID="add-photo-button"
                 icon="camera-outline"
@@ -314,7 +328,7 @@ export default function RequestScreen() {
               title="Where is the service needed?"
               subtitle="We use this to match you with nearby technicians."
             />
-            <View style={[styles.mapPlaceholder, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+            <View style={[styles.mapPlaceholder, { height: mapHeight, backgroundColor: colors.secondary, borderColor: colors.border }]}>
               <View style={[styles.mapGrid, { backgroundColor: colors.infoMuted }]} />
               <View style={[styles.mapPin, { backgroundColor: colors.primary }]}>
                 <Ionicons name="location" size={20} color={colors.primaryForeground} />
@@ -345,6 +359,7 @@ export default function RequestScreen() {
                 style={[styles.addressText, { color: colors.foreground }]}
               />
             </View>
+            {errorView}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Use my current location"
@@ -411,12 +426,7 @@ export default function RequestScreen() {
             <Notice tone="brand" icon="shield-checkmark-outline" text="You will review any visit fee and repair quote before paying." />
           </>
         )}
-        {!!error && (
-          <View style={styles.errorRow} accessibilityLiveRegion="polite">
-            <Feather name="alert-circle" size={15} color={colors.destructive} />
-            <Text testID="request-error" style={[styles.error, { color: colors.destructive }]}>{error}</Text>
-          </View>
-        )}
+        {step > 2 ? errorView : null}
       </KeyboardAwareScrollViewCompat>
 
       {/* Pinned, like the journey stages, so the next step is always in reach. */}
@@ -552,7 +562,8 @@ const styles = StyleSheet.create({
   optional: { fontFamily: 'Inter_400Regular', fontSize: 13 },
   problemInput: { minHeight: 140, borderWidth: 1, borderRadius: 14, padding: 14, fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 21 },
   mediaRow: { flexDirection: 'row', gap: 10 },
-  mediaCell: { flex: 1 },
+  mediaColumn: { flexDirection: 'column' },
+  mediaCell: { flex: 1, minWidth: 0 },
   mediaButton: { minHeight: 64, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 11, paddingVertical: 10 },
   mediaIcon: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   mediaCopy: { flex: 1 },
@@ -560,7 +571,7 @@ const styles = StyleSheet.create({
   mediaHint: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
   thumbnail: { width: 38, height: 38, borderRadius: 9 },
   removeButton: { position: 'absolute', top: -7, right: -7, width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  mapPlaceholder: { height: 190, borderRadius: 16, borderWidth: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, marginTop: 22 },
+  mapPlaceholder: { borderRadius: 16, borderWidth: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, marginTop: 22 },
   mapGrid: { ...StyleSheet.absoluteFillObject, opacity: 0.35 },
   mapPin: { width: 45, height: 45, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
   mapLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 10, textAlign: 'center' },
@@ -579,7 +590,7 @@ const styles = StyleSheet.create({
   reviewRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12 },
   reviewLabel: { width: 70, fontFamily: 'Inter_500Medium', fontSize: 13 },
   reviewValue: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 14, lineHeight: 20 },
-  errorRow: { flexDirection: 'row', gap: 7, alignItems: 'flex-start', marginTop: 16 },
+  errorRow: { flexDirection: 'row', gap: 7, alignItems: 'flex-start', marginTop: 10 },
   error: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 },
   footer: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1 },
   backAction: { minWidth: 96 },

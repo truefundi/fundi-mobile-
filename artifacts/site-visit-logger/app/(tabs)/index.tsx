@@ -279,7 +279,8 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   safeArea: { paddingHorizontal: SCREEN_GUTTER, gap: 17, paddingTop: 17 },
   searchBar: { minHeight: 52, borderRadius: 14, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 14, paddingRight: 6 },
-  searchInput: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 14, minHeight: 48 },
+  // minWidth 0 lets the field shrink; otherwise it pushes the buttons off-screen.
+  searchInput: { flex: 1, minWidth: 0, fontFamily: 'Inter_500Medium', fontSize: 14, minHeight: 48 },
   searchText: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 14 },
   clearButton: { padding: 4 },
   searchFilter: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },

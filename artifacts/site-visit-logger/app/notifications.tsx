@@ -92,7 +92,8 @@ export default function NotificationsScreen() {
           </View>
           <Feather name="chevron-right" size={18} color={colors.primaryForeground} />
         </Pressable>
-      ) : (
+      ) : events.length === 0 ? null : (
+        // With no updates at all, the empty state below already says so.
         <View style={[styles.unreadBanner, { backgroundColor: colors.secondary }]}>
           <View style={[styles.unreadIcon, { backgroundColor: colors.primary }]}>
             <Ionicons name="notifications-outline" size={17} color={colors.primaryForeground} />
@@ -156,13 +157,13 @@ function relativeTime(iso: string): string {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: 20 },
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: 4 },
-  actionBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, padding: 14, marginTop: 18, marginBottom: 14 },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: 4, marginBottom: 18 },
+  actionBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, padding: 14, marginBottom: 14 },
   actionIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   actionCopy: { flex: 1 },
   actionTitle: { fontFamily: 'Inter_700Bold', fontSize: 14 },
   actionText: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
-  unreadBanner: { flexDirection: 'row', alignItems: 'center', gap: 11, borderRadius: 14, padding: 14, marginTop: 18, marginBottom: 14 },
+  unreadBanner: { flexDirection: 'row', alignItems: 'center', gap: 11, borderRadius: 14, padding: 14, marginBottom: 14 },
   unreadIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   unreadText: { fontFamily: 'Inter_500Medium', fontSize: 13, flex: 1 },
   alertCard: { flexDirection: 'row', gap: 12, borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 10 },

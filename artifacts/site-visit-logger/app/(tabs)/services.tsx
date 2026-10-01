@@ -67,10 +67,12 @@ export default function ServicesScreen() {
                     <MaterialCommunityIcons name={service.icon} size={27} color={colors.primary} />
                   </View>
                   <Text style={[styles.label, { color: colors.foreground }]}>{service.label}</Text>
-                  <View style={styles.linkRow}>
-                    <Text style={[styles.link, { color: colors.primary }]}>Request service</Text>
-                    <Ionicons name="arrow-forward" size={14} color={colors.primary} />
-                  </View>
+                  {/* The arrow sits inside the text, held to "service" by a no-break
+                      space, so on narrow cards it wraps with the word, not alone. */}
+                  <Text style={[styles.link, { color: colors.primary }]}>
+                    {'Request service '}
+                    <Ionicons name="arrow-forward" size={13} color={colors.primary} />
+                  </Text>
                 </Pressable>
               ))}
             </View>
@@ -99,11 +101,10 @@ export default function ServicesScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP, marginTop: 22 },
-  card: { minHeight: 145, borderRadius: 16, borderWidth: 1, padding: 14, justifyContent: 'space-between' },
+  card: { minHeight: 145, borderRadius: 16, borderWidth: 1, padding: 13, justifyContent: 'space-between' },
   icon: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   label: { fontFamily: 'Inter_700Bold', fontSize: 15, lineHeight: 19, marginTop: 13 },
-  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 10 },
-  link: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  link: { fontFamily: 'Inter_600SemiBold', fontSize: 12, lineHeight: 17, marginTop: 10 },
   helpCard: { borderRadius: 18, padding: 18, marginTop: 22 },
   helpKicker: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.3 },
   helpTitle: { fontFamily: 'Inter_700Bold', fontSize: 19, marginTop: 7 },
