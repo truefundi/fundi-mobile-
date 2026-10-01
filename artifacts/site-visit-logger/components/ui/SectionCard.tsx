@@ -31,5 +31,5 @@ export function SectionCard({ title, children, emphasis }: Props) {
 
 const styles = StyleSheet.create({
   card: { borderRadius: 16, borderWidth: 1, padding: 16 },
-  title: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3, marginBottom: 11 },
+  title: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.3, marginBottom: 11 },
 });

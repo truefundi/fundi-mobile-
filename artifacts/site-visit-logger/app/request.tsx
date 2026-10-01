@@ -3,8 +3,8 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, BackHandler, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { BackButton } from '@/components/ui/BackButton';
@@ -78,6 +78,18 @@ export default function RequestScreen() {
     if (hasProgress) setConfirmLeave(true);
     else leave();
   };
+
+  // Android's hardware back follows the same rules as the arrow: step back,
+  // and ask before discarding a filled-in form.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (step === 1 && !hasProgress) return false;
+      goBack();
+      return true;
+    });
+    return () => subscription.remove();
+  });
 
   const addPhoto = async () => {
     setError('');
