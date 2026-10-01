@@ -1,8 +1,8 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { formatMoney, repairTotal, type Job } from '@/constants/jobs';
 import { REPAIR_MS } from '@/constants/simulation';
+import { Notice } from '@/components/ui/Notice';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { Timeline, type TimelineStep } from '@/components/ui/Timeline';
@@ -58,18 +58,13 @@ export function RepairInProgress({ job }: { job: Job }) {
         </View>
       </SectionCard>
 
-      <View style={[styles.notice, { backgroundColor: colors.infoMuted }]}>
-        <Ionicons name="information-circle-outline" size={17} color={colors.info} />
-        <Text style={[styles.noticeText, { color: colors.info }]}>
-          If your technician finds anything else, you will be asked to approve it first.
-        </Text>
-      </View>
+      <Notice tone="info" icon="information-circle-outline" text="If your technician finds anything else, you will be asked to approve it first." />
     </StageScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  etaLabel: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.2 },
+  etaLabel: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.2 },
   eta: { fontFamily: 'Inter_700Bold', fontSize: 22, marginTop: 4 },
   progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 13 },
   progressFill: { height: 6, borderRadius: 3 },
@@ -77,6 +72,4 @@ const styles = StyleSheet.create({
   totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, marginTop: 12, paddingTop: 11 },
   totalLabel: { fontFamily: 'Inter_500Medium', fontSize: 13 },
   total: { fontFamily: 'Inter_700Bold', fontSize: 16 },
-  notice: { flexDirection: 'row', gap: 9, borderRadius: 12, padding: 13, alignItems: 'flex-start' },
-  noticeText: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 18, flex: 1 },
 });

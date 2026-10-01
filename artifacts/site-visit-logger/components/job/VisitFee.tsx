@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatMoney, type Job, type PaymentMethod } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { MoneyRow } from '@/components/ui/MoneyRow';
+import { Notice } from '@/components/ui/Notice';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { TechnicianCard } from '@/components/ui/TechnicianCard';
@@ -35,8 +36,8 @@ export function VisitFee({ job, onPay, onCancel }: { job: Job; onPay: (method: P
         hideBack
         footer={
           <>
-            <Button label="Request technician" onPress={() => setShowPayment(true)} testID="visit-fee-continue-button" />
-            <Button label="Cancel" variant="outline" onPress={onCancel} testID="visit-fee-cancel-button" />
+            <Button label="Continue to payment" icon="arrow-forward" onPress={() => setShowPayment(true)} testID="visit-fee-continue-button" />
+            <Button label="Cancel request" variant="outline" onPress={onCancel} testID="visit-fee-cancel-button" />
           </>
         }
       >
@@ -58,16 +59,13 @@ export function VisitFee({ job, onPay, onCancel }: { job: Job; onPay: (method: P
           <MoneyRow label="Written diagnosis" value="Included" />
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <MoneyRow label="Estimated arrival" value={`${job.technician.etaMinutes} min`} />
-          <MoneyRow label="Visit fee" value={formatMoney(job.visitFee)} strong />
         </SectionCard>
 
-        <View style={[styles.policy, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <Ionicons name="shield-checkmark-outline" size={17} color={colors.mutedForeground} />
-          <Text style={[styles.policyText, { color: colors.mutedForeground }]}>
-            The visit fee is subject to Fundi&apos;s cancellation and refund policy. It is credited against your repair
-            total if you approve the quote.
-          </Text>
-        </View>
+        <Notice
+          tone="neutral"
+          icon="shield-checkmark-outline"
+          text="The visit fee is subject to Fundi's cancellation and refund policy. It is credited against your repair total if you approve the quote."
+        />
       </StageScreen>
     );
   }
@@ -125,28 +123,21 @@ export function VisitFee({ job, onPay, onCancel }: { job: Job; onPay: (method: P
         })}
       </SectionCard>
 
-      <View style={[styles.secure, { backgroundColor: colors.successMuted }]}>
-        <Ionicons name="lock-closed" size={15} color={colors.success} />
-        <Text style={[styles.secureText, { color: colors.success }]}>Secured by Fundi. Your details are encrypted.</Text>
-      </View>
+      <Notice tone="success" icon="lock-closed" text="Secured by Fundi. Your details are encrypted." />
     </StageScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  priceLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  priceLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   price: { fontFamily: 'Inter_700Bold', fontSize: 44, letterSpacing: -1.5, marginTop: 4 },
   priceText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20, marginTop: 6 },
   divider: { height: 1, marginVertical: 8 },
-  policy: { flexDirection: 'row', gap: 10, borderRadius: 12, borderWidth: 1, padding: 13, alignItems: 'flex-start' },
-  policyText: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18, flex: 1 },
   method: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
   methodIcon: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   methodCopy: { flex: 1 },
   methodName: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
-  methodDetail: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
+  methodDetail: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
   radio: { width: 21, height: 21, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   radioDot: { width: 10, height: 10, borderRadius: 5 },
-  secure: { flexDirection: 'row', gap: 8, borderRadius: 12, padding: 12, alignItems: 'center' },
-  secureText: { fontFamily: 'Inter_500Medium', fontSize: 12, flex: 1 },
 });

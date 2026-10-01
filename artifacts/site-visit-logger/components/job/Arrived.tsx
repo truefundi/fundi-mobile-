@@ -20,9 +20,6 @@ export function Arrived({ job }: { job: Job }) {
             <Ionicons name="checkmark" size={34} color={colors.primaryForeground} />
           </View>
         </View>
-        <View style={[styles.arrivedPill, { backgroundColor: colors.successMuted }]}>
-          <Text style={[styles.arrivedText, { color: colors.success }]}>ARRIVED</Text>
-        </View>
       </View>
 
       <TechnicianCard technician={job.technician} compact />
@@ -42,8 +39,6 @@ const styles = StyleSheet.create({
   hero: { alignItems: 'center', gap: 14, paddingVertical: 10 },
   iconRing: { width: 96, height: 96, borderRadius: 48, borderWidth: 8, alignItems: 'center', justifyContent: 'center' },
   iconCore: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
-  arrivedPill: { borderRadius: 9, paddingHorizontal: 14, paddingVertical: 7 },
-  arrivedText: { fontFamily: 'Inter_700Bold', fontSize: 13, letterSpacing: 1.6 },
   next: { fontFamily: 'Inter_700Bold', fontSize: 16 },
   nextText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20, marginTop: 6 },
 });

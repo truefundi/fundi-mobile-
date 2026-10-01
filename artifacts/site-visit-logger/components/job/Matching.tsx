@@ -81,6 +81,6 @@ const styles = StyleSheet.create({
   problem: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20, marginTop: 5 },
   metaRow: { flexDirection: 'row', gap: 16, borderTopWidth: 1, marginTop: 13, paddingTop: 12 },
   meta: { flex: 1 },
-  metaLabel: { fontFamily: 'Inter_500Medium', fontSize: 11 },
+  metaLabel: { fontFamily: 'Inter_500Medium', fontSize: 12 },
   metaValue: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 3 },
 });

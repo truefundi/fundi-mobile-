@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
 import { formatMoney, type Job } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
+import { Notice } from '@/components/ui/Notice';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { TechnicianCard } from '@/components/ui/TechnicianCard';
@@ -34,12 +35,7 @@ export function TechnicianFound({ job, onContinue, onCancel }: { job: Job; onCon
         <Step icon="document-text-outline" title="Approve the repair" text="You see a full quote before any repair work starts." last />
       </SectionCard>
 
-      <View style={[styles.notice, { backgroundColor: colors.infoMuted }]}>
-        <Ionicons name="information-circle-outline" size={17} color={colors.info} />
-        <Text style={[styles.noticeText, { color: colors.info }]}>
-          Nothing is charged until you confirm on the next screen.
-        </Text>
-      </View>
+      <Notice tone="info" icon="information-circle-outline" text="Nothing is charged until you confirm on the next screen." />
     </StageScreen>
   );
 }
@@ -64,7 +60,5 @@ const styles = StyleSheet.create({
   stepIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   stepCopy: { flex: 1 },
   stepTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
-  stepText: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18, marginTop: 2 },
-  notice: { flexDirection: 'row', gap: 9, borderRadius: 12, padding: 13, alignItems: 'flex-start' },
-  noticeText: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 18, flex: 1 },
+  stepText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, marginTop: 2 },
 });

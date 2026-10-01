@@ -102,11 +102,11 @@ function ContactButton({ icon, label, onPress, testID }: { icon: keyof typeof Fe
 
 const styles = StyleSheet.create({
   etaRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-  etaLabel: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.2 },
+  etaLabel: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.2 },
   eta: { fontFamily: 'Inter_700Bold', fontSize: 30, letterSpacing: -1, marginTop: 3 },
   statusPill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
-  statusText: { fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  statusText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 14 },
   progressFill: { height: 6, borderRadius: 3 },
   technicianRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: 1, marginTop: 15, paddingTop: 14 },
@@ -115,10 +115,10 @@ const styles = StyleSheet.create({
   identity: { flex: 1 },
   name: { fontFamily: 'Inter_700Bold', fontSize: 15 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  meta: { fontFamily: 'Inter_400Regular', fontSize: 12 },
+  meta: { fontFamily: 'Inter_400Regular', fontSize: 13, flexShrink: 1 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   contact: { flex: 1, minHeight: 46, borderRadius: 23, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   contactText: { fontFamily: 'Inter_700Bold', fontSize: 14 },
   addressRow: { flexDirection: 'row', gap: 9, alignItems: 'center' },
-  address: { fontFamily: 'Inter_500Medium', fontSize: 13, flex: 1 },
+  address: { fontFamily: 'Inter_500Medium', fontSize: 14, lineHeight: 20, flex: 1 },
 });

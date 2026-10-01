@@ -64,6 +64,6 @@ const styles = StyleSheet.create({
   initials: { fontFamily: 'Inter_700Bold', fontSize: 15 },
   copy: { flex: 1 },
   name: { fontFamily: 'Inter_700Bold', fontSize: 15 },
-  skill: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
-  problem: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20 },
+  skill: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
+  problem: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 21 },
 });
