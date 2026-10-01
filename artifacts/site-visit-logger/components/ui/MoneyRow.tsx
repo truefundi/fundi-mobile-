@@ -48,5 +48,7 @@ const styles = StyleSheet.create({
   labelColumn: { flex: 1 },
   label: { lineHeight: 19 },
   hint: { fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 2, lineHeight: 15 },
-  value: { textAlign: 'right' },
+  // Long values (an address, a name) wrap inside their half instead of
+  // squeezing the label off the row on narrow phones.
+  value: { textAlign: 'right', flexShrink: 1, maxWidth: '60%' },
 });

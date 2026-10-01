@@ -21,7 +21,7 @@ export function TechnicianCard({ technician, caption, compact }: Props) {
         </View>
         <View style={styles.identity}>
           <View style={styles.nameRow}>
-            <Text style={[styles.name, { color: colors.foreground }]}>{technician.name}</Text>
+            <Text numberOfLines={1} style={[styles.name, { color: colors.foreground }]}>{technician.name}</Text>
             <Ionicons name="shield-checkmark" size={15} color={colors.success} />
           </View>
           <Text style={[styles.skill, { color: colors.mutedForeground }]}>{technician.skill}</Text>
@@ -65,15 +65,15 @@ const styles = StyleSheet.create({
   initials: { fontFamily: 'Inter_700Bold', fontSize: 17 },
   identity: { flex: 1 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  name: { fontFamily: 'Inter_700Bold', fontSize: 16 },
+  name: { fontFamily: 'Inter_700Bold', fontSize: 16, flexShrink: 1 },
   skill: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
   caption: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 6 },
   ratingBlock: { alignItems: 'flex-end' },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   rating: { fontFamily: 'Inter_700Bold', fontSize: 14 },
-  jobs: { fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 2 },
+  jobs: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
   stats: { flexDirection: 'row', borderTopWidth: 1, marginTop: 14, paddingTop: 13 },
   stat: { flex: 1, alignItems: 'center', gap: 3 },
   statValue: { fontFamily: 'Inter_700Bold', fontSize: 14 },
-  statLabel: { fontFamily: 'Inter_400Regular', fontSize: 11 },
+  statLabel: { fontFamily: 'Inter_400Regular', fontSize: 12 },
 });

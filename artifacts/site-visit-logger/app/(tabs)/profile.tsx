@@ -1,14 +1,15 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
 import React, { useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { ModeSlider } from '@/components/ui/ModeSlider';
+import { PageHeading } from '@/components/ui/PageHeading';
 import { formatPhone, initialsOf } from '@/constants/auth';
 import { formatMoney, isClosed } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
+import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useAuth } from '@/context/AuthContext';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
@@ -35,7 +36,7 @@ type PendingAction = 'signOut' | 'delete';
 /** Spec 21 — the customer account hub. */
 export default function ProfileScreen() {
   const colors = useColors();
-  const insets = useSafeAreaInsets();
+  const bottomPadding = useTabScreenPadding();
   const router = useRouter();
   const { jobs } = useFundi();
   const { mode, setMode, status, profile, mine, done, earnings } = useWork();
@@ -76,24 +77,25 @@ export default function ProfileScreen() {
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <AppHeader />
       <ScrollView
-        // The tab bar floats over the content, so the last rows need room to clear it.
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: Platform.OS === 'web' ? 108 : insets.bottom + 92 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
       >
-      <Text style={[styles.eyebrow, { color: colors.primary }]}>YOUR FUNDI ACCOUNT</Text>
-      <Text style={[styles.title, { color: colors.foreground }]}>Profile</Text>
+      <PageHeading eyebrow="Your Fundi account" title="Profile" />
 
       <View style={[styles.profileCard, { backgroundColor: colors.primary }]}>
         <View style={[styles.avatar, { backgroundColor: colors.primaryForeground }]}>
           <Text style={[styles.avatarText, { color: colors.primary }]}>{initialsOf(account.name)}</Text>
         </View>
         <View style={styles.profileCopy}>
-          <Text testID="profile-name" style={[styles.name, { color: colors.primaryForeground }]}>{account.name}</Text>
+          <Text testID="profile-name" numberOfLines={2} style={[styles.name, { color: colors.primaryForeground }]}>{account.name}</Text>
           <View style={styles.verifiedRow}>
             <Ionicons name="checkmark-circle" size={13} color={colors.primaryForeground} />
             <Text testID="profile-phone" style={[styles.contact, { color: colors.secondary }]}>{formatPhone(account.phone)}</Text>
           </View>
-          <Text style={[styles.contact, { color: colors.secondary }]}>{account.location}</Text>
+          <View style={styles.verifiedRow}>
+            <Ionicons name="location-outline" size={13} color={colors.primaryForeground} />
+            <Text numberOfLines={1} style={[styles.contact, styles.contactFlex, { color: colors.secondary }]}>{account.location}</Text>
+          </View>
         </View>
       </View>
 
@@ -222,7 +224,7 @@ export default function ProfileScreen() {
         </Pressable>
       </View>
       <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
-        Logging out keeps this account and its jobs on the device — log back in with {formatPhone(account.phone)}. Deleting removes both.
+        Logging out keeps your account and jobs on this device. Deleting removes both for good.
       </Text>
 
       <Text style={[styles.legal, { color: colors.mutedForeground }]}>Fundi · Terms & Privacy</Text>
@@ -230,7 +232,7 @@ export default function ProfileScreen() {
       <ConfirmDialog
         visible={pendingAction === 'signOut'}
         title="Log out?"
-        message="You will need the code sent to your phone number to log back in. Your account and jobs stay on this device."
+        message={`To log back in, use ${formatPhone(account.phone)} and the code we send to it.`}
         confirmLabel="Log out"
         busy={isBusy}
         onConfirm={confirm}
@@ -263,37 +265,36 @@ function Stat({ value, label }: { value: string; label: string }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  eyebrow: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.5, marginBottom: 7 },
-  title: { fontFamily: 'Inter_700Bold', fontSize: 29, letterSpacing: -0.8 },
   profileCard: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 18, padding: 18, marginTop: 20 },
   avatar: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontFamily: 'Inter_700Bold', fontSize: 20 },
   profileCopy: { flex: 1 },
   name: { fontFamily: 'Inter_700Bold', fontSize: 19 },
   verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
-  contact: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 3 },
+  contact: { fontFamily: 'Inter_400Regular', fontSize: 13 },
+  contactFlex: { flexShrink: 1 },
   modeCard: { borderRadius: 18, borderWidth: 1, padding: 14, gap: 13, marginTop: 14 },
   modeTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   modeIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   modeCopy: { flex: 1, gap: 3 },
   modeTitle: { fontFamily: 'Inter_700Bold', fontSize: 15 },
-  modeHintText: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
+  modeHintText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18 },
   statRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
   stat: { flex: 1, borderRadius: 14, borderWidth: 1, padding: 13, alignItems: 'center' },
-  statValue: { fontFamily: 'Inter_700Bold', fontSize: 21 },
-  statLabel: { fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 3, textAlign: 'center' },
+  statValue: { fontFamily: 'Inter_700Bold', fontSize: 20 },
+  statLabel: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 3, textAlign: 'center' },
   sectionTitle: { fontFamily: 'Inter_700Bold', fontSize: 17, letterSpacing: -0.25, marginTop: 24, marginBottom: 11 },
   tradeCard: { borderRadius: 16, borderWidth: 1, padding: 15, gap: 6 },
   tradeTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   tradeName: { fontFamily: 'Inter_700Bold', fontSize: 16, letterSpacing: -0.3, flex: 1 },
   statusTag: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 11, paddingHorizontal: 9, paddingVertical: 5 },
   statusText: { fontFamily: 'Inter_600SemiBold', fontSize: 11 },
-  tradeMeta: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
+  tradeMeta: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18 },
   linkCard: { borderRadius: 16, borderWidth: 1, paddingHorizontal: 15 },
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: 13, minHeight: 54 },
   linkText: { fontFamily: 'Inter_500Medium', fontSize: 14, flex: 1 },
   soonTag: { borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4 },
-  soonText: { fontFamily: 'Inter_600SemiBold', fontSize: 10, letterSpacing: 0.4 },
-  sectionNote: { fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16, marginTop: 10 },
-  legal: { fontFamily: 'Inter_400Regular', fontSize: 11, textAlign: 'center', marginTop: 22 },
+  soonText: { fontFamily: 'Inter_600SemiBold', fontSize: 11, letterSpacing: 0.4 },
+  sectionNote: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17, marginTop: 10 },
+  legal: { fontFamily: 'Inter_400Regular', fontSize: 12, textAlign: 'center', marginTop: 22 },
 });

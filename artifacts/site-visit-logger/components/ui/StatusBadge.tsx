@@ -13,9 +13,9 @@ export function StatusBadge({ status, testID }: { status: JobStatus; testID?: st
 
   const palette = {
     progress: { background: colors.infoMuted, text: colors.info },
-    action: { background: colors.warningMuted, text: '#92400e' },
+    action: { background: colors.warningMuted, text: colors.warningForeground },
     success: { background: colors.successMuted, text: colors.success },
-    danger: { background: '#fee2e2', text: colors.destructive },
+    danger: { background: colors.destructiveMuted, text: colors.destructive },
   }[tone];
 
   return (

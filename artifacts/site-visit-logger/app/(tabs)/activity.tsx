@@ -1,15 +1,18 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { balanceDue, formatMoney, isClosed, repairTotal, type Job } from '@/constants/jobs';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { PageHeading } from '@/components/ui/PageHeading';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkJobs } from '@/components/work/WorkJobs';
 import { WorkLocked } from '@/components/work/WorkLocked';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
+import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useFundi } from '@/context/FundiContext';
 
 type Tab = 'Active' | 'Completed';
@@ -17,7 +20,7 @@ type Tab = 'Active' | 'Completed';
 /** Spec 20 — the customer's service history, split into live and finished jobs. */
 export default function ActivityScreen() {
   const colors = useColors();
-  const insets = useSafeAreaInsets();
+  const bottomPadding = useTabScreenPadding();
   const router = useRouter();
   const { jobs, isHydrated } = useFundi();
   const [tab, setTab] = useState<Tab>('Active');
@@ -41,11 +44,10 @@ export default function ActivityScreen() {
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <AppHeader />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: Platform.OS === 'web' ? 34 : insets.bottom + 30 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
       >
-      <Text style={[styles.eyebrow, { color: colors.primary }]}>{inWork ? 'YOUR WORK' : 'YOUR FUNDI JOURNEY'}</Text>
-      <Text style={[styles.title, { color: colors.foreground }]}>{inWork ? 'My jobs' : 'My services'}</Text>
+      <PageHeading eyebrow={inWork ? 'Your work' : 'Your Fundi journey'} title={inWork ? 'My jobs' : 'My services'} />
 
       {working ? (
         <WorkJobs />
@@ -80,8 +82,19 @@ export default function ActivityScreen() {
         })}
       </View>
 
-      {!isHydrated ? null : visible.length === 0 ? (
-        <EmptyState tab={tab} onBrowse={() => router.navigate('/services')} />
+      {!isHydrated ? (
+        <LoadingState label="Loading your services…" />
+      ) : visible.length === 0 ? (
+        tab === 'Active' ? (
+          <EmptyState
+            icon="clipboard"
+            title="No active services"
+            text="When you request a technician, you can follow the job here from matching through to payment."
+            action={{ label: 'Browse services', onPress: () => router.navigate('/services'), testID: 'activity-browse-button' }}
+          />
+        ) : (
+          <EmptyState icon="check-circle" title="No completed services yet" text="Finished jobs, invoices and receipts will be kept here." />
+        )
       ) : (
         visible.map((job) => <JobCard key={job.id} job={job} onPress={() => router.push(`/job/${job.id}`)} />)
       )}
@@ -134,56 +147,19 @@ function JobCard({ job, onPress }: { job: Job; onPress: () => void }) {
   );
 }
 
-function EmptyState({ tab, onBrowse }: { tab: Tab; onBrowse: () => void }) {
-  const colors = useColors();
-  return (
-    <View style={[styles.empty, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <View style={[styles.emptyIcon, { backgroundColor: colors.secondary }]}>
-        <MaterialCommunityIcons name={tab === 'Active' ? 'clipboard-text-outline' : 'check-circle-outline'} size={24} color={colors.primary} />
-      </View>
-      <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-        {tab === 'Active' ? 'No active services' : 'No completed services yet'}
-      </Text>
-      <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-        {tab === 'Active'
-          ? 'When you request a technician, you can follow the job here from matching through to payment.'
-          : 'Finished jobs, invoices and receipts will be kept here.'}
-      </Text>
-      {tab === 'Active' ? (
-        <Pressable
-          accessibilityRole="button"
-          testID="activity-browse-button"
-          onPress={onBrowse}
-          style={({ pressed }) => [styles.emptyButton, { backgroundColor: colors.primary, opacity: pressed ? 0.78 : 1 }]}
-        >
-          <Text style={[styles.emptyButtonText, { color: colors.primaryForeground }]}>Browse services</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  eyebrow: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.5, marginBottom: 7 },
-  title: { fontFamily: 'Inter_700Bold', fontSize: 29, letterSpacing: -0.8 },
   tabs: { flexDirection: 'row', borderRadius: 23, padding: 4, marginTop: 18, marginBottom: 16 },
-  tab: { flex: 1, minHeight: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  tabText: { fontSize: 13 },
+  tab: { flex: 1, minHeight: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  tabText: { fontSize: 14 },
   jobCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 11 },
   jobIcon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   jobCopy: { flex: 1, gap: 3 },
   jobTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   jobTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },
   amount: { fontFamily: 'Inter_700Bold', fontSize: 14 },
-  jobMeta: { fontFamily: 'Inter_400Regular', fontSize: 12 },
+  jobMeta: { fontFamily: 'Inter_400Regular', fontSize: 13 },
   jobFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 5 },
-  reference: { fontFamily: 'Inter_500Medium', fontSize: 11 },
-  balance: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 4 },
-  empty: { borderRadius: 16, borderWidth: 1, padding: 22, alignItems: 'center', marginTop: 6 },
-  emptyIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  emptyTitle: { fontFamily: 'Inter_700Bold', fontSize: 16, marginTop: 14 },
-  emptyText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20, textAlign: 'center', marginTop: 7 },
-  emptyButton: { minHeight: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, marginTop: 16 },
-  emptyButtonText: { fontFamily: 'Inter_700Bold', fontSize: 13 },
+  reference: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+  balance: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 4 },
 });
