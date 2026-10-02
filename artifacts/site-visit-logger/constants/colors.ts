@@ -47,6 +47,10 @@ const colors = {
 
     warning: '#f59e0b',
     warningMuted: '#fef3c7',
+    // Amber text on warningMuted; plain warning is too light to read on it.
+    warningForeground: '#92400e',
+
+    destructiveMuted: '#fee2e2',
 
     info: '#2563eb',
     infoMuted: '#dbeafe',

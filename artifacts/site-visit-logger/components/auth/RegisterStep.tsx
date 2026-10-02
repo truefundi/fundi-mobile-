@@ -1,8 +1,11 @@
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { NATIONAL_DIGITS, NATIONAL_PREFIX } from '@/constants/auth';
 import { PhoneField } from '@/components/auth/PhoneField';
+import { BackButton } from '@/components/ui/BackButton';
+import { Button } from '@/components/ui/Button';
+import { PageHeading } from '@/components/ui/PageHeading';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 
@@ -40,12 +43,14 @@ export function RegisterStep({ onBack, onLogin }: Props) {
 
   return (
     <View style={styles.step}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Go back" testID="register-back-button" onPress={onBack} style={styles.backButton}>
-        <Feather name="arrow-left" size={21} color={colors.foreground} />
-      </Pressable>
+      <BackButton onPress={onBack} testID="register-back-button" />
 
-      <Text style={[styles.eyebrow, { color: colors.primary }]}>CREATE YOUR ACCOUNT</Text>
-      <Text style={[styles.title, { color: colors.foreground }]}>Register</Text>
+      <PageHeading
+        eyebrow="Step 1 of 2 · Create your account"
+        title="Register"
+        subtitle="We will text a code to your number to confirm it."
+        style={styles.heading}
+      />
 
       <Text style={[styles.label, { color: colors.foreground }]}>Full name</Text>
       <View style={[styles.nameField, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -58,6 +63,9 @@ export function RegisterStep({ onBack, onLogin }: Props) {
             setName(value);
             setError('');
           }}
+          placeholder="Your first and last name"
+          placeholderTextColor={colors.mutedForeground}
+          returnKeyType="next"
           autoCapitalize="words"
           autoComplete="name"
           textContentType="name"
@@ -81,26 +89,9 @@ export function RegisterStep({ onBack, onLogin }: Props) {
 
       {error ? <Text testID="register-error" style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Register"
-        accessibilityState={{ disabled: !ready || isSending, busy: isSending }}
-        testID="register-button"
-        onPress={submit}
-        disabled={!ready || isSending}
-        style={({ pressed }) => [
-          styles.primaryButton,
-          { backgroundColor: ready && !isSending ? colors.primary : colors.muted, opacity: pressed ? 0.82 : 1 },
-        ]}
-      >
-        {isSending ? (
-          <ActivityIndicator color={colors.primaryForeground} />
-        ) : (
-          <Text style={[styles.primaryText, { color: ready ? colors.primaryForeground : colors.mutedForeground }]}>Register</Text>
-        )}
-      </Pressable>
+      <Button label="Register" onPress={submit} disabled={!ready} loading={isSending} testID="register-button" style={styles.primaryButton} />
 
-      <Pressable accessibilityRole="button" testID="go-to-login-button" onPress={onLogin} style={styles.switchRow}>
+      <Pressable accessibilityRole="button" testID="go-to-login-button" onPress={onLogin} hitSlop={8} style={styles.switchRow}>
         <Text style={[styles.switchText, { color: colors.mutedForeground }]}>Already have an account? </Text>
         <Text style={[styles.switchAction, { color: colors.primary }]}>Login</Text>
       </Pressable>
@@ -110,16 +101,13 @@ export function RegisterStep({ onBack, onLogin }: Props) {
 
 const styles = StyleSheet.create({
   step: { flex: 1 },
-  backButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: -8 },
-  eyebrow: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.4, marginTop: 18, marginBottom: 7, textAlign: 'center' },
-  title: { fontFamily: 'Inter_700Bold', fontSize: 29, letterSpacing: -0.8 },
-  label: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 22, marginBottom: 8 },
+  heading: { marginTop: 14 },
+  label: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 22, marginBottom: 8 },
   nameField: { minHeight: 62, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14 },
   nameInput: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 15, height: '100%' },
-  error: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 17, marginTop: 12 },
-  primaryButton: { minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', marginTop: 20 },
-  primaryText: { fontFamily: 'Inter_700Bold', fontSize: 15 },
-  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
-  switchText: { fontFamily: 'Inter_400Regular', fontSize: 12 },
-  switchAction: { fontFamily: 'Inter_700Bold', fontSize: 12 },
+  error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 12 },
+  primaryButton: { marginTop: 20 },
+  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20, paddingVertical: 6 },
+  switchText: { fontFamily: 'Inter_400Regular', fontSize: 14 },
+  switchAction: { fontFamily: 'Inter_700Bold', fontSize: 14 },
 });

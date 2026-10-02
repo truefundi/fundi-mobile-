@@ -1,5 +1,6 @@
 import React from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Button } from '@/components/ui/Button';
 import { useColors } from '@/hooks/useColors';
 
 type Props = {
@@ -33,7 +34,6 @@ export function ConfirmDialog({
   onCancel,
 }: Props) {
   const colors = useColors();
-  const accent = destructive ? colors.destructive : colors.primary;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
@@ -48,31 +48,18 @@ export function ConfirmDialog({
         <Pressable style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => undefined}>
           <Text style={[styles.title, { color: colors.foreground }]}>{title}</Text>
           <Text style={[styles.message, { color: colors.mutedForeground }]}>{message}</Text>
+          {/* Stacked, confirm on top: long labels such as "Decline extra work"
+              stay on one line on the narrowest phones. */}
           <View style={styles.actions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={cancelLabel}
-              testID="confirm-cancel-button"
-              onPress={onCancel}
-              disabled={busy}
-              style={({ pressed }) => [styles.button, { borderColor: colors.border, opacity: pressed ? 0.75 : 1 }]}
-            >
-              <Text style={[styles.buttonText, { color: colors.foreground }]}>{cancelLabel}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={confirmLabel}
-              accessibilityState={{ busy: !!busy }}
+            <Button
+              label={confirmLabel}
+              loading={busy}
+              onPress={onConfirm}
+              size="small"
               testID="confirm-accept-button"
-              onPress={busy ? undefined : onConfirm}
-              style={({ pressed }) => [styles.button, { backgroundColor: accent, borderColor: accent, opacity: pressed ? 0.8 : 1 }]}
-            >
-              {busy ? (
-                <ActivityIndicator size="small" color={colors.primaryForeground} />
-              ) : (
-                <Text style={[styles.buttonText, { color: colors.primaryForeground }]}>{confirmLabel}</Text>
-              )}
-            </Pressable>
+              style={destructive && !busy ? { backgroundColor: colors.destructive, borderColor: colors.destructive } : undefined}
+            />
+            <Button label={cancelLabel} variant="outline" onPress={onCancel} disabled={busy} size="small" testID="confirm-cancel-button" />
           </View>
         </Pressable>
       </Pressable>
@@ -84,8 +71,6 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(17, 24, 39, 0.45)', alignItems: 'center', justifyContent: 'center', padding: 26 },
   card: { width: '100%', maxWidth: 380, borderRadius: 18, borderWidth: 1, padding: 20 },
   title: { fontFamily: 'Inter_700Bold', fontSize: 18, letterSpacing: -0.4 },
-  message: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20, marginTop: 9 },
-  actions: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  button: { flex: 1, minHeight: 48, borderRadius: 24, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
-  buttonText: { fontFamily: 'Inter_700Bold', fontSize: 14 },
+  message: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 21, marginTop: 9 },
+  actions: { gap: 10, marginTop: 20 },
 });

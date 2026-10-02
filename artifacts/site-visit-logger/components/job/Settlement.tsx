@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { balanceDue, formatMoney, type Job, type SettlementMethod } from '@/constants/jobs';
+import { balanceDue, formatMoney, repairTotal, type Job, type SettlementMethod } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { MoneyRow } from '@/components/ui/MoneyRow';
+import { Notice } from '@/components/ui/Notice';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { useColors } from '@/hooks/useColors';
@@ -81,33 +82,30 @@ export function Settlement({ job, onRecord }: { job: Job; onRecord: (method: Set
         })}
       </SectionCard>
 
-      <SectionCard title="Breakdown">
-        <MoneyRow label="Visit fee (paid on arrival)" value={formatMoney(job.visitFee)} />
-        <MoneyRow label="Repair balance" value={formatMoney(due)} />
+      <SectionCard title="How the balance is worked out">
+        <MoneyRow label="Repair total" value={formatMoney(repairTotal(job))} />
+        <MoneyRow label="Visit fee already paid" value={formatMoney(job.visitFee)} credit />
       </SectionCard>
 
       {method !== 'Fundi' ? (
-        <View style={[styles.notice, { backgroundColor: colors.infoMuted }]}>
-          <Ionicons name="information-circle-outline" size={17} color={colors.info} />
-          <Text style={[styles.noticeText, { color: colors.info }]}>
-            Fundi records this settlement but does not process the money. Only the visit fee runs through the platform.
-          </Text>
-        </View>
+        <Notice
+          tone="info"
+          icon="information-circle-outline"
+          text="Fundi records this settlement but does not process the money. Only the visit fee runs through the platform."
+        />
       ) : null}
     </StageScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  dueLabel: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3 },
+  dueLabel: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.3 },
   due: { fontFamily: 'Inter_700Bold', fontSize: 40, letterSpacing: -1.4, marginTop: 3 },
   option: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
   optionIcon: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   optionCopy: { flex: 1 },
   optionLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
-  optionDetail: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17, marginTop: 2 },
+  optionDetail: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18, marginTop: 2 },
   radio: { width: 21, height: 21, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   radioDot: { width: 10, height: 10, borderRadius: 5 },
-  notice: { flexDirection: 'row', gap: 9, borderRadius: 12, padding: 13, alignItems: 'flex-start' },
-  noticeText: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 18, flex: 1 },
 });

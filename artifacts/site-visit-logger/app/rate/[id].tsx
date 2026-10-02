@@ -5,11 +5,15 @@ import * as Haptics from 'expo-haptics';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Rating } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { TechnicianCard } from '@/components/ui/TechnicianCard';
 import { useFundi } from '@/context/FundiContext';
 import { useColors } from '@/hooks/useColors';
+
+/** Read out under the stars, so the number means something before it is sent. */
+const OVERALL_LABEL = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
 
 const CATEGORIES = ['quality', 'professionalism', 'arrival', 'communication', 'value'] as const;
 
@@ -44,11 +48,16 @@ export default function RateScreen() {
   });
   const [comment, setComment] = useState(job?.rating?.comment ?? '');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!job) {
     return (
-      <StageScreen title="Job not found" onBack={() => router.replace('/activity')}>
-        <Text style={[styles.body, { color: colors.mutedForeground }]}>This job is no longer on this device.</Text>
+      <StageScreen
+        title="Job not found"
+        onBack={() => router.replace('/activity')}
+        footer={<Button label="Back to my services" onPress={() => router.replace('/activity')} testID="rate-missing-back" />}
+      >
+        <EmptyState icon="star" title="This job is not available" text="It is no longer on this device, so it cannot be rated." />
       </StageScreen>
     );
   }
@@ -69,6 +78,7 @@ export default function RateScreen() {
       value: scores.value ?? overall,
       comment: comment.trim(),
     };
+    setIsSubmitting(true);
     submitRating(job.id, rating);
     if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.replace(`/job/${job.id}`);
@@ -80,7 +90,7 @@ export default function RateScreen() {
       title="How was your experience?"
       subtitle={alreadyRated ? 'You can update your review at any time.' : 'Your rating helps other customers choose well.'}
       onBack={() => (router.canGoBack() ? router.back() : router.replace('/activity'))}
-      footer={<Button label={alreadyRated ? 'Update review' : 'Submit review'} onPress={submit} testID="rating-submit-button" />}
+      footer={<Button label={alreadyRated ? 'Update review' : 'Submit review'} loading={isSubmitting} onPress={submit} testID="rating-submit-button" />}
     >
       {job.technician ? <TechnicianCard technician={job.technician} compact /> : null}
 
@@ -102,6 +112,7 @@ export default function RateScreen() {
             </Pressable>
           ))}
         </View>
+        <Text style={[styles.overallLabel, { color: overall > 0 ? colors.foreground : colors.mutedForeground }]}>{OVERALL_LABEL[overall]}</Text>
         {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
       </SectionCard>
 
@@ -120,11 +131,11 @@ export default function RateScreen() {
                   accessibilityLabel={`${CATEGORY_LABEL[category]}: ${star}`}
                   testID={`rating-${category}-${star}`}
                   onPress={() => setScores((current) => ({ ...current, [category]: star }))}
-                  hitSlop={4}
+                  hitSlop={6}
                 >
                   <Ionicons
                     name={star <= (scores[category] ?? 0) ? 'star' : 'star-outline'}
-                    size={18}
+                    size={22}
                     color={star <= (scores[category] ?? 0) ? colors.warning : colors.input}
                   />
                 </Pressable>
@@ -155,9 +166,10 @@ const styles = StyleSheet.create({
   body: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 21 },
   overallRow: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
   starButton: { padding: 3 },
-  error: { fontFamily: 'Inter_500Medium', fontSize: 12, marginTop: 9, textAlign: 'center' },
+  overallLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 14, marginTop: 8, textAlign: 'center' },
+  error: { fontFamily: 'Inter_500Medium', fontSize: 13, marginTop: 6, textAlign: 'center' },
   categoryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 11 },
-  categoryLabel: { fontFamily: 'Inter_500Medium', fontSize: 13, flex: 1 },
-  categoryStars: { flexDirection: 'row', gap: 5 },
+  categoryLabel: { fontFamily: 'Inter_500Medium', fontSize: 14, flex: 1 },
+  categoryStars: { flexDirection: 'row', gap: 6 },
   input: { minHeight: 96, borderRadius: 12, borderWidth: 1, padding: 13, fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
 });

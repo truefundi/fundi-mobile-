@@ -76,5 +76,5 @@ const styles = StyleSheet.create({
   homeMarker: { right: '10%' },
   ghostMarker: { position: 'absolute', width: 24, height: 24, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   caption: { position: 'absolute', bottom: 10, alignSelf: 'center', borderRadius: 9, borderWidth: 1, paddingHorizontal: 11, paddingVertical: 6 },
-  captionText: { fontFamily: 'Inter_500Medium', fontSize: 11 },
+  captionText: { fontFamily: 'Inter_500Medium', fontSize: 12 },
 });

@@ -1,8 +1,10 @@
-import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import React, { useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { formatPhone, OTP_LENGTH, RESEND_AFTER_MS } from '@/constants/auth';
+import { BackButton } from '@/components/ui/BackButton';
+import { Button } from '@/components/ui/Button';
+import { PageHeading } from '@/components/ui/PageHeading';
 import { useAuth, type Verification } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 import { useCountdown } from '@/hooks/useCountdown';
@@ -52,20 +54,14 @@ export function OtpStep({ verification }: { verification: Verification }) {
 
   return (
     <View style={styles.step}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Go back"
-        testID="verify-back-button"
-        onPress={cancelVerification}
-        style={styles.backButton}
-      >
-        <Feather name="arrow-left" size={21} color={colors.foreground} />
-      </Pressable>
+      <BackButton onPress={cancelVerification} testID="verify-back-button" />
 
-      <Text style={[styles.eyebrow, { color: colors.primary }]}>{verification.intent === 'login' ? 'WELCOME BACK' : 'STEP 2 OF 2'}</Text>
-      <Text style={[styles.title, { color: colors.foreground }]}>
-        {verification.intent === 'login' ? 'Confirm it is you' : 'Verify your number'}
-      </Text>
+      <PageHeading
+        eyebrow={verification.intent === 'login' ? 'Welcome back' : 'Step 2 of 2'}
+        title={verification.intent === 'login' ? 'Confirm it is you' : 'Verify your number'}
+        subtitle={`Enter the ${OTP_LENGTH}-digit code we sent to`}
+        style={styles.heading}
+      />
       <Text style={[styles.phone, { color: colors.foreground }]}>{formatPhone(verification.phone)}</Text>
 
       <Pressable
@@ -115,33 +111,18 @@ export function OtpStep({ verification }: { verification: Verification }) {
 
       {error ? <Text testID="otp-error" style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Verify"
-        accessibilityState={{ disabled: code.length !== OTP_LENGTH || isVerifying, busy: isVerifying }}
-        testID="verify-code-button"
+      <Button
+        label="Verify"
         onPress={() => submit(code)}
-        disabled={code.length !== OTP_LENGTH || isVerifying}
-        style={({ pressed }) => [
-          styles.primaryButton,
-          {
-            backgroundColor: code.length === OTP_LENGTH && !isVerifying ? colors.primary : colors.muted,
-            opacity: pressed ? 0.82 : 1,
-          },
-        ]}
-      >
-        {isVerifying ? (
-          <ActivityIndicator color={colors.primaryForeground} />
-        ) : (
-          <Text style={[styles.primaryText, { color: code.length === OTP_LENGTH ? colors.primaryForeground : colors.mutedForeground }]}>
-            Verify
-          </Text>
-        )}
-      </Pressable>
+        disabled={code.length !== OTP_LENGTH}
+        loading={isVerifying}
+        testID="verify-code-button"
+        style={styles.primaryButton}
+      />
 
       <View style={styles.resendRow}>
         {canResend ? (
-          <Pressable accessibilityRole="button" accessibilityLabel="Send a new code" testID="resend-code-button" onPress={resend} disabled={isResending}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Send a new code" testID="resend-code-button" onPress={resend} disabled={isResending} hitSlop={10}>
             <Text style={[styles.resendAction, { color: colors.primary }]}>{isResending ? 'Sending…' : 'Send a new code'}</Text>
           </Pressable>
         ) : (
@@ -149,7 +130,7 @@ export function OtpStep({ verification }: { verification: Verification }) {
         )}
       </View>
 
-      <Pressable accessibilityRole="button" accessibilityLabel="Use another number" testID="use-another-number-button" onPress={cancelVerification} style={styles.changeRow}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Use another number" testID="use-another-number-button" onPress={cancelVerification} hitSlop={8} style={styles.changeRow}>
         <Text style={[styles.changeText, { color: colors.mutedForeground }]}>Wrong number? </Text>
         <Text style={[styles.changeAction, { color: colors.primary }]}>Use another one</Text>
       </Pressable>
@@ -159,22 +140,20 @@ export function OtpStep({ verification }: { verification: Verification }) {
 
 const styles = StyleSheet.create({
   step: { flex: 1 },
-  backButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: -8 },
-  eyebrow: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.4, marginTop: 18, marginBottom: 7, textAlign: 'center' },
-  title: { fontFamily: 'Inter_700Bold', fontSize: 29, letterSpacing: -0.8 },
-  phone: { fontFamily: 'Inter_600SemiBold', fontSize: 15, marginTop: 9 },
+  heading: { marginTop: 14 },
+  phone: { fontFamily: 'Inter_700Bold', fontSize: 16, marginTop: 4 },
   cellRow: { flexDirection: 'row', gap: 10, marginTop: 26 },
-  cell: { flex: 1, height: 66, maxWidth: 72, borderWidth: 1.5, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  // Cells share the row width, so a 320pt phone still fits all of them.
+  cell: { flex: 1, height: 62, maxWidth: 72, borderWidth: 1.5, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   cellText: { fontFamily: 'Inter_700Bold', fontSize: 26 },
   // Covers the cells so a tap anywhere on the row opens the keypad.
   hiddenInput: { ...StyleSheet.absoluteFillObject, opacity: 0, color: 'transparent' },
-  error: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 17, marginTop: 12 },
-  primaryButton: { minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', marginTop: 20 },
-  primaryText: { fontFamily: 'Inter_700Bold', fontSize: 15 },
+  error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 12 },
+  primaryButton: { marginTop: 20 },
   resendRow: { alignItems: 'center', marginTop: 18, minHeight: 20 },
   resendAction: { fontFamily: 'Inter_700Bold', fontSize: 13 },
-  resendWait: { fontFamily: 'Inter_400Regular', fontSize: 12 },
-  changeRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 14 },
-  changeText: { fontFamily: 'Inter_400Regular', fontSize: 12 },
-  changeAction: { fontFamily: 'Inter_700Bold', fontSize: 12 },
+  resendWait: { fontFamily: 'Inter_400Regular', fontSize: 13 },
+  changeRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 14, paddingVertical: 6 },
+  changeText: { fontFamily: 'Inter_400Regular', fontSize: 14 },
+  changeAction: { fontFamily: 'Inter_700Bold', fontSize: 14 },
 });

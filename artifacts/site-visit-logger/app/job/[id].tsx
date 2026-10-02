@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, type ReactNode } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useFundi } from '@/context/FundiContext';
 import { AdditionalWork } from '@/components/job/AdditionalWork';
@@ -16,8 +16,34 @@ import { TechnicianFound } from '@/components/job/TechnicianFound';
 import { Tracking } from '@/components/job/Tracking';
 import { VisitFee } from '@/components/job/VisitFee';
 import { Button } from '@/components/ui/Button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { StageScreen } from '@/components/ui/StageScreen';
-import { useColors } from '@/hooks/useColors';
+
+/** The irreversible choices on this screen, each confirmed before it happens. */
+type Pending = 'cancel' | 'declineQuote' | 'declineExtra';
+
+const CONFIRM: Record<Pending, { title: string; message: string; confirmLabel: string; cancelLabel: string }> = {
+  cancel: {
+    title: 'Cancel this request?',
+    message: 'We will stop looking for a technician. You can send a new request at any time.',
+    confirmLabel: 'Cancel request',
+    cancelLabel: 'Keep request',
+  },
+  declineQuote: {
+    title: 'Decline the repair quote?',
+    message: 'No repair will be carried out. The visit fee you already paid covers the inspection and diagnosis.',
+    confirmLabel: 'Decline quote',
+    cancelLabel: 'Go back',
+  },
+  declineExtra: {
+    title: 'Decline the extra work?',
+    message: 'Your technician will finish only the repair you already approved.',
+    confirmLabel: 'Decline extra work',
+    cancelLabel: 'Go back',
+  },
+};
 
 /**
  * Single entry point for a job.
@@ -28,7 +54,6 @@ import { useColors } from '@/hooks/useColors';
  * on the stage it is actually at.
  */
 export default function JobScreen() {
-  const colors = useColors();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const {
@@ -44,6 +69,7 @@ export default function JobScreen() {
     recordSettlement,
     cancelJob,
   } = useFundi();
+  const [pending, setPending] = useState<Pending | null>(null);
 
   const job = id ? getJob(id) : undefined;
 
@@ -51,99 +77,107 @@ export default function JobScreen() {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  if (!isHydrated) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <ActivityIndicator color={colors.primary} />
-      </View>
-    );
-  }
+  if (!isHydrated) return <LoadingState label="Loading your job…" fullScreen />;
 
   if (!job) {
     return (
       <StageScreen
         title="Job not found"
-        subtitle="This request is no longer available."
         onBack={() => router.replace('/activity')}
         footer={<Button label="Back to my services" onPress={() => router.replace('/activity')} testID="job-missing-back" />}
       >
-        <Text style={[styles.missing, { color: colors.mutedForeground }]}>
-          It may have been cleared from this device.
-        </Text>
+        <EmptyState icon="alert-circle" title="This request is no longer available" text="It may have been cleared from this device." />
       </StageScreen>
     );
   }
 
+  const confirm = () => {
+    if (pending === 'cancel') cancelJob(job.id);
+    else if (pending === 'declineQuote') declineQuote(job.id);
+    else if (pending === 'declineExtra') declineAdditionalWork(job.id);
+    setPending(null);
+  };
+
+  let stage: ReactNode;
   switch (job.status) {
     case 'REQUESTED':
     case 'MATCHING':
-      return <Matching job={job} onCancel={() => cancelJob(job.id)} />;
+      stage = <Matching job={job} onCancel={() => setPending('cancel')} />;
+      break;
 
     case 'OFFERED':
-      return (
+      stage = (
         <TechnicianFound
           job={job}
           onContinue={() => {
             tap();
             acceptOffer(job.id);
           }}
-          onCancel={() => cancelJob(job.id)}
+          onCancel={() => setPending('cancel')}
         />
       );
+      break;
 
     case 'ACCEPTED':
-      return (
+      stage = (
         <VisitFee
           job={job}
           onPay={(method) => {
             tap();
             payVisitFee(job.id, method);
           }}
-          onCancel={() => cancelJob(job.id)}
+          onCancel={() => setPending('cancel')}
         />
       );
+      break;
 
     case 'VISIT_PAID':
     case 'EN_ROUTE':
-      return <Tracking job={job} />;
+      stage = <Tracking job={job} />;
+      break;
 
     case 'ARRIVED':
-      return <Arrived job={job} />;
+      stage = <Arrived job={job} />;
+      break;
 
     case 'DIAGNOSING':
     case 'DIAGNOSIS_COMPLETE':
-      return <Diagnosis job={job} />;
+      stage = <Diagnosis job={job} />;
+      break;
 
     case 'QUOTE_PENDING':
-      return (
+      stage = (
         <RepairQuote
           job={job}
           onApprove={() => {
             tap();
             approveQuote(job.id);
           }}
-          onDecline={() => declineQuote(job.id)}
+          onDecline={() => setPending('declineQuote')}
         />
       );
+      break;
 
     case 'QUOTE_APPROVED':
     case 'REPAIR_IN_PROGRESS':
-      return <RepairInProgress job={job} />;
+      stage = <RepairInProgress job={job} />;
+      break;
 
     case 'ADDITIONAL_APPROVAL_REQUIRED':
-      return (
+      stage = (
         <AdditionalWork
           job={job}
           onApprove={() => {
             tap();
             approveAdditionalWork(job.id);
           }}
-          onDecline={() => declineAdditionalWork(job.id)}
+          onDecline={() => setPending('declineExtra')}
         />
       );
+      break;
 
     case 'REPAIR_COMPLETED':
-      return (
+      stage = (
         <JobCompleted
           job={job}
           onContinue={() => {
@@ -152,9 +186,10 @@ export default function JobScreen() {
           }}
         />
       );
+      break;
 
     case 'PAYMENT_PENDING':
-      return (
+      stage = (
         <Settlement
           job={job}
           onRecord={(method) => {
@@ -163,22 +198,31 @@ export default function JobScreen() {
           }}
         />
       );
+      break;
 
     case 'PAYMENT_REPORTED':
-      return (
-        <View style={[styles.center, { backgroundColor: colors.background }]}>
-          <ActivityIndicator color={colors.primary} />
-          <Text style={[styles.pending, { color: colors.mutedForeground }]}>Preparing your invoice…</Text>
-        </View>
-      );
+      stage = <LoadingState label="Preparing your invoice…" fullScreen />;
+      break;
 
     default:
-      return <JobClosed job={job} />;
+      stage = <JobClosed job={job} />;
   }
-}
 
-const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  pending: { fontFamily: 'Inter_500Medium', fontSize: 13 },
-  missing: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 21 },
-});
+  const dialog = pending ? CONFIRM[pending] : null;
+
+  return (
+    <>
+      {stage}
+      <ConfirmDialog
+        visible={!!dialog}
+        title={dialog?.title ?? ''}
+        message={dialog?.message ?? ''}
+        confirmLabel={dialog?.confirmLabel ?? ''}
+        cancelLabel={dialog?.cancelLabel}
+        destructive
+        onConfirm={confirm}
+        onCancel={() => setPending(null)}
+      />
+    </>
+  );
+}

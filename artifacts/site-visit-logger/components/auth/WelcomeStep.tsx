@@ -102,5 +102,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondaryText: { fontFamily: 'Inter_700Bold', fontSize: 15, color: '#ffffff' },
-  legal: { fontFamily: 'Inter_400Regular', fontSize: 11, textAlign: 'center', color: 'rgba(255,255,255,0.72)', marginTop: 7 },
+  legal: { fontFamily: 'Inter_400Regular', fontSize: 12, textAlign: 'center', color: 'rgba(255,255,255,0.72)', marginTop: 7 },
 });

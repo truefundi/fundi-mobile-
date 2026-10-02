@@ -64,7 +64,7 @@ export function JobCompleted({ job, onContinue }: { job: Job; onContinue: () => 
             <View style={[styles.photoEmpty, { backgroundColor: colors.muted, borderColor: colors.border }]}>
               <Ionicons name="camera-outline" size={20} color={colors.mutedForeground} />
             </View>
-            <Text style={[styles.photoLabel, { color: colors.mutedForeground }]}>After — added by technician</Text>
+            <Text style={[styles.photoLabel, { color: colors.mutedForeground }]}>After · your technician adds this</Text>
           </View>
         </View>
       </SectionCard>
@@ -84,11 +84,11 @@ const styles = StyleSheet.create({
   iconRing: { width: 104, height: 104, borderRadius: 52, borderWidth: 9, alignItems: 'center', justifyContent: 'center' },
   iconCore: { width: 78, height: 78, borderRadius: 39, alignItems: 'center', justifyContent: 'center' },
   diagnosis: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 20 },
-  extra: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18, marginTop: 8 },
+  extra: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, marginTop: 8 },
   photoRow: { flexDirection: 'row', gap: 11 },
   photo: { flex: 1, gap: 6 },
   photoImage: { width: '100%', height: 96, borderRadius: 11, borderWidth: 1 },
   photoEmpty: { width: '100%', height: 96, borderRadius: 11, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  photoLabel: { fontFamily: 'Inter_500Medium', fontSize: 11, lineHeight: 15 },
+  photoLabel: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 16 },
   divider: { height: 1, marginVertical: 8 },
 });

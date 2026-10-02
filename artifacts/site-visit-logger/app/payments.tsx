@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { balanceDue, formatMoney, type Job } from '@/constants/jobs';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
@@ -65,21 +66,22 @@ export default function PaymentsScreen() {
       subtitle="Visit fees are handled by Fundi. Repair balances may be settled directly with your technician."
       onBack={() => (router.canGoBack() ? router.back() : router.replace('/profile'))}
     >
-      <SectionCard title="Totals">
-        <MoneyRow label="Paid through Fundi" value={formatMoney(throughFundi)} />
-        <MoneyRow label="Settled outside Fundi" value={formatMoney(outside)} />
-        <View style={[styles.divider, { backgroundColor: colors.border }]} />
-        <MoneyRow label="Total spent" value={formatMoney(throughFundi + outside)} strong />
-      </SectionCard>
-
       {entries.length === 0 ? (
-        <SectionCard>
-          <Text style={[styles.empty, { color: colors.mutedForeground }]}>
-            No payments yet. Visit fees and repair settlements will be listed here once you complete a job.
-          </Text>
-        </SectionCard>
+        <EmptyState
+          icon="credit-card"
+          title="No payments yet"
+          text="Visit fees and repair settlements will be listed here once you complete a job."
+          action={{ label: 'Browse services', onPress: () => router.navigate('/services'), testID: 'payments-browse-button' }}
+        />
       ) : (
-        entries.map((entry) => (
+        <>
+        <SectionCard title="Totals">
+          <MoneyRow label="Paid through Fundi" value={formatMoney(throughFundi)} />
+          <MoneyRow label="Settled outside Fundi" value={formatMoney(outside)} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
+          <MoneyRow label="Total spent" value={formatMoney(throughFundi + outside)} strong />
+        </SectionCard>
+        {entries.map((entry) => (
           <Pressable
             key={entry.key}
             accessibilityRole="button"
@@ -102,9 +104,13 @@ export default function PaymentsScreen() {
               </Text>
               <Text style={[styles.reference, { color: colors.mutedForeground }]}>{entry.job.reference}</Text>
             </View>
-            <Text style={[styles.amount, { color: colors.foreground }]}>{formatMoney(entry.amount)}</Text>
+            <View style={styles.amountColumn}>
+              <Text style={[styles.amount, { color: colors.foreground }]}>{formatMoney(entry.amount)}</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+            </View>
           </Pressable>
-        ))
+        ))}
+        </>
       )}
     </StageScreen>
   );
@@ -112,12 +118,12 @@ export default function PaymentsScreen() {
 
 const styles = StyleSheet.create({
   divider: { height: 1, marginVertical: 8 },
-  empty: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 20 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 16, borderWidth: 1, padding: 14 },
   icon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   copy: { flex: 1 },
   label: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
-  detail: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
-  reference: { fontFamily: 'Inter_500Medium', fontSize: 11, marginTop: 4 },
+  detail: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
+  reference: { fontFamily: 'Inter_500Medium', fontSize: 12, marginTop: 4 },
+  amountColumn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   amount: { fontFamily: 'Inter_700Bold', fontSize: 15 },
 });

@@ -1,7 +1,7 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ModeSlider } from '@/components/ui/ModeSlider';
 import { DEFAULT_LOCATION } from '@/constants/profile';
@@ -29,6 +29,10 @@ export function AppHeader() {
   const colors = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  // On small phones a matching 104pt right flank leaves the greeting ~70pt and
+  // it wraps; there the bell keeps only its own width and the text gets the rest.
+  const narrow = width < 360;
   const { account } = useAuth();
   const { jobs } = useFundi();
 
@@ -43,7 +47,7 @@ export function AppHeader() {
         {/* Both flanks are 104pt wide, so flex:1 lands the greeting on the true
             centre of the row rather than merely between the two. */}
         <View style={styles.center}>
-          <Text style={[styles.greetingLabel, { color: colors.mutedForeground }]}>{greeting()}</Text>
+          <Text numberOfLines={1} style={[styles.greetingLabel, { color: colors.mutedForeground }]}>{greeting()}</Text>
           <Text numberOfLines={1} style={[styles.userName, { color: colors.foreground }]}>{firstName}</Text>
           <View style={styles.locationRow}>
             <Ionicons name="location-sharp" size={13} color={colors.primary} />
@@ -53,7 +57,7 @@ export function AppHeader() {
           </View>
         </View>
 
-        <View style={styles.right}>
+        <View style={[styles.right, narrow && styles.rightNarrow]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open notifications"
@@ -75,10 +79,11 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   center: { flex: 1, alignItems: 'center', paddingHorizontal: 6 },
   right: { width: 104, alignItems: 'flex-end' },
+  rightNarrow: { width: 44 },
   greetingLabel: { fontFamily: 'Inter_500Medium', fontSize: 13 },
   userName: { fontFamily: 'Inter_700Bold', fontSize: 18, letterSpacing: -0.4, marginTop: 1, maxWidth: '100%' },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  location: { fontFamily: 'Inter_400Regular', fontSize: 12 },
+  location: { fontFamily: 'Inter_400Regular', fontSize: 12, flexShrink: 1 },
   bellButton: { width: 43, height: 43, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
   dot: { width: 7, height: 7, borderRadius: 4, position: 'absolute', top: 9, right: 10 },
 });
