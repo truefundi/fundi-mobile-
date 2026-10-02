@@ -2,7 +2,7 @@
 
 ## Current status
 
-The Expo app is ready for backend configuration, but the full Fundi domain contract is not implemented yet. The current mobile UI still uses local demo state in `AuthContext`, `FundiContext`, and `WorkContext`.
+The mobile authentication flow now calls the NestJS API at `/api/v1/auth`. Job and technician/work flows remain local mock data in `FundiContext` and `WorkContext`.
 
 The generated API transport is configured in `artifacts/site-visit-logger/lib/api.ts`. It reads `EXPO_PUBLIC_API_URL` and calls `setBaseUrl()` from `@workspace/api-client-react`. The startup path performs a non-blocking health probe.
 
@@ -17,7 +17,7 @@ EXPO_PUBLIC_API_URL=https://api.example.com
 The value must be the server origin, without `/api`, because generated paths already include it:
 
 ```text
-https://api.example.com + /api/healthz
+https://api.example.com + /api/v1/auth/register
 ```
 
 For a physical device on a local network, use the development machine's LAN address rather than `localhost`.
@@ -25,10 +25,34 @@ For a physical device on a local network, use the development machine's LAN addr
 The current smoke endpoint is:
 
 ```text
-GET /api/healthz
+GET /api/v1/health
 ```
 
-Start the local server with the repository's API command and verify that endpoint before testing mobile requests.
+The app's startup probe calls the Fundi API health route. Start the NestJS server and verify that endpoint before testing mobile requests.
+
+### Expo Go on iPhone
+
+1. From the `fundi-api` repository root, start the Fundi backend. It defaults to port `3000`; PostgreSQL and Redis must be reachable, and development SMS mode must be `console`.
+2. Find the computer's Wi-Fi IPv4 address with `ipconfig`. The iPhone and computer must be on the same network.
+3. Set `EXPO_PUBLIC_API_URL` to the computer's LAN origin, for example `http://192.168.1.20:3000`. Do not use `localhost` from the phone. If iOS or the network blocks local HTTP, use an HTTPS development tunnel.
+4. Confirm `http://192.168.1.20:3000/api/v1/health` opens from Safari on the phone.
+5. Start Expo with the same environment variable and scan its QR code in Expo Go. Restart Metro whenever the API URL changes.
+6. Register/login in the app. Read the six-digit `Development OTP for <phone>: <code>` line in the backend terminal and enter that code in the app.
+
+Start the backend in one terminal:
+
+```powershell
+pnpm start:dev
+```
+
+Then launch Expo from the `fundi-mobile-` monorepo root in another terminal:
+
+```powershell
+$env:EXPO_PUBLIC_API_URL = "http://192.168.1.20:3000"
+pnpm dev:app
+```
+
+After OTP verification, the app stores JWTs in SecureStore on iPhone. Signing out revokes the server refresh session and clears the local tokens. Job and technician screens continue using their current mock data.
 
 ## API generation
 
@@ -44,19 +68,40 @@ Do not hand-edit files under:
 - `lib/api-client-react/src/generated`
 - `lib/api-zod/src/generated`
 
-## Authentication contract needed
+## Authentication integration
 
-The backend team must confirm:
+The mobile uses these implemented backend routes. All paths are relative to the configured origin and include `/api/v1`:
 
-- Register payload and response
-- Login/request-code payload and response
-- OTP verification and resend behavior
-- Access-token and refresh-token behavior, or cookie-session behavior
-- Logout and account deletion
-- Current-user/session restoration endpoint
-- Error payload and status-code conventions
+```text
+POST   /api/v1/auth/register
+POST   /api/v1/auth/login
+POST   /api/v1/auth/resend-otp
+POST   /api/v1/auth/verify-otp
+GET    /api/v1/auth/me
+POST   /api/v1/auth/refresh
+POST   /api/v1/auth/logout
+DELETE /api/v1/users/me
+```
 
-The transport already supports bearer tokens through `setAuthTokenGetter()`, but the app does not assume that choice until the backend team confirms it.
+Payloads match the Nest DTOs:
+
+```json
+{ "fullName": "Jean Paul Uwase", "phoneNumber": "+250788123456" }
+{ "phoneNumber": "+250788123456" }
+{ "phoneNumber": "+250788123456", "otp": "123456" }
+{ "phoneNumber": "+250788123456" }
+{ "refreshToken": "<refresh-jwt>" }
+```
+
+These correspond to registration, login, OTP verification, OTP resend, and refresh respectively. Registration/login/resend return a message; OTP verification and refresh return `{ "user": { "id", "fullName", "phoneNumber", "role" }, "accessToken", "refreshToken" }`. `GET /auth/me` returns the current user directly. Logout requires `Authorization: Bearer <accessToken>` and `{ "refreshToken": "<refresh-jwt>" }` in the body. Account deletion uses the authenticated `DELETE /api/v1/users/me` route.
+
+OTP values are six digits. The server owns OTP generation, delivery, expiry, resend limits, and failed-attempt handling; the client stores only the pending phone, intent, and local resend countdown. It never generates or persists OTP values.
+
+The backend rotates refresh tokens. On app startup the mobile calls `/auth/me`; if the access token returns `401`, it posts the refresh token to `/auth/refresh`, stores the returned token pair, and retries `/auth/me`.
+
+In the provided development SMS service (`sms.mode: "console"`), the OTP is printed in the Fundi API server terminal as `Development OTP for <phone>: <code>`. Watch that terminal after registering or requesting login, then enter the six-digit code in Expo Go. This is development-only behavior; production requires a configured SMS provider.
+
+JWTs are stored in Expo SecureStore on iOS/Android (including Expo Go). Web uses browser `sessionStorage`. The API client bearer-token getter reads the access token from that store. Logout calls the backend when possible and always clears local tokens; job and worker mock data are not changed by logout.
 
 ## Fundi APIs required by the current UI
 
@@ -147,83 +192,6 @@ All non-2xx responses should use one predictable JSON shape:
 ```
 
 The mobile should display `detail`, use `fieldErrors` for form fields, and log `requestId` for support. Suggested status usage: `401` unauthenticated, `403` unauthorized, `404` missing resource, `409` state conflict, `422` validation failure, and `429` rate limited.
-
-### Authentication and session
-
-#### `POST /auth/register`
-
-Request body:
-
-```json
-{
-	"name": "Jean Paul Uwase",
-	"phone": "+250788123456"
-}
-```
-
-Response `202`:
-
-```json
-{
-	"verificationId": "ver_123",
-	"phone": "+250788123456",
-	"intent": "register",
-	"expiresAt": "2026-09-30T12:05:00Z",
-	"resendAvailableAt": "2026-09-30T12:00:30Z"
-}
-```
-
-#### `POST /auth/login`
-
-Request body:
-
-```json
-{
-	"phone": "+250788123456"
-}
-```
-
-Response: same verification response with `intent: "login"`.
-
-#### `POST /auth/verify-otp`
-
-Request body:
-
-```json
-{
-	"verificationId": "ver_123",
-	"code": "1234"
-}
-```
-
-Response `200`:
-
-```json
-{
-	"accessToken": "token",
-	"refreshToken": "refresh-token",
-	"expiresAt": "2026-09-30T13:00:00Z",
-	"account": {
-		"id": "usr_123",
-		"name": "Jean Paul Uwase",
-		"phone": "+250788123456",
-		"location": "Kigali, Rwanda",
-		"createdAt": "2026-09-30T11:55:00Z"
-	}
-}
-```
-
-#### Other auth requests
-
-```text
-POST /auth/resend-otp       { "verificationId": "ver_123" }
-POST /auth/refresh          { "refreshToken": "refresh-token" }
-GET  /auth/me               response: { "account": Account }
-POST /auth/logout           response: { "success": true }
-DELETE /auth/me             response: { "success": true }
-```
-
-The mobile must never generate, store, or validate the OTP locally after this contract is active.
 
 ### Account and worker profile
 
@@ -486,10 +454,11 @@ The server must own identity, matching, job lifecycle, payment state, worker ver
 The following are intentionally retained until the backend contract is ready:
 
 - `constants/simulation.ts`: fake technicians, quotes, additional work, and timers
-- Local OTP generation in `constants/auth.ts`
-- AsyncStorage account/job/work persistence
+- AsyncStorage job/work persistence
 - `PRE_VERIFIED` worker seed data
 - Same-device customer/technician job sharing
+
+Authentication no longer uses local accounts or demo OTPs. AsyncStorage retains only the non-secret pending OTP phone/intent/timestamp; JWTs use SecureStore on native and `sessionStorage` on web.
 
 `VisitsContext.tsx` is also retained temporarily, although it currently has no active Fundi route consumer.
 
@@ -501,6 +470,7 @@ The following are intentionally retained until the backend contract is ready:
 - [ ] Run `pnpm run typecheck:libs`.
 - [ ] Run `pnpm --filter @workspace/site-visit-logger run typecheck`.
 - [ ] Start the mobile web target with `pnpm dev:app:web`.
-- [ ] Verify authentication, job creation, job detail, lifecycle actions, worker offers, payments, ratings, reload, sign-out, and server-error states.
+- [ ] Verify real API registration/login, SMS OTP verification/resend, token restore/refresh, and logout on Expo Go.
+- [ ] Verify job creation, job detail, lifecycle actions, worker offers, payments, and ratings still use mock data.
 - [ ] Remove simulation only after all production paths are server-backed.
 

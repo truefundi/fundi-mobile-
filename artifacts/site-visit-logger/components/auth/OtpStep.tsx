@@ -18,8 +18,7 @@ export function OtpStep({ verification }: { verification: Verification }) {
   const [isResending, setIsResending] = useState(false);
 
   const { remainingSeconds } = useCountdown(verification.sentAt, RESEND_AFTER_MS);
-  // A customer out of tries needs a new code now, not after the timer.
-  const canResend = remainingSeconds === 0 || verification.attemptsLeft <= 0;
+  const canResend = remainingSeconds === 0;
 
   const submit = async (entered: string) => {
     if (isVerifying) return;
