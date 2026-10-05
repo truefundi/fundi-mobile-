@@ -80,7 +80,7 @@ type WorkContextValue = {
   /** Whether this account may take work, and the papers it claimed. */
   status: WorkStatus;
   profile: WorkProfile | null;
-  apply: (profile: Omit<WorkProfile, 'submittedAt'>) => void;
+  apply: (profile: Omit<WorkProfile, 'submittedAt'>) => Promise<void>;
   settings: WorkSettings;
   updateSettings: (patch: Partial<WorkSettings>) => void;
   /** Jobs looking for a technician that this worker has not answered yet. */
@@ -175,13 +175,62 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setAvailable: (isAvailable) => update((current) => ({ ...current, isAvailable })),
       status: state.status,
       profile: state.profile,
-      apply: (profile) =>
+      // Apply now attempts a backend registration and also persists the profile locally.
+      apply: async (profile) => {
+        // Persist locally immediately so the UI reflects a pending submission.
         update((current) => ({
           ...current,
           status: 'pending',
           profile: { ...profile, submittedAt: new Date().toISOString() },
           settings: { ...current.settings, trades: [profile.trade] },
-        })),
+        }));
+
+        try {
+          // If an API URL is configured and the user is authenticated, try to register the profile.
+          const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
+          if (!baseUrl) return;
+
+          // Convert id photo to base64 if it looks like a local URI.
+          // The server accepts a profilePictureBase64 field for profile images.
+          // Certificates are not yet supported server-side and are kept locally for review.
+          const { idPhotoUri, yearsExperience } = profile as any;
+          if (!idPhotoUri) return;
+
+          // Dynamically import FileSystem to avoid requiring it in non-native targets.
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const FileSystem = require('expo-file-system');
+          let base64 = null;
+          try {
+            if (idPhotoUri && idPhotoUri.startsWith('data:')) {
+              // Already a data URL; extract base64 part.
+              const match = idPhotoUri.match(/base64,(.*)$/);
+              base64 = match ? match[1] : null;
+            } else {
+              base64 = await FileSystem.readAsStringAsync(idPhotoUri, { encoding: FileSystem.EncodingType.Base64 });
+            }
+          } catch (err) {
+            // Reading failed - don't block local persistence.
+            base64 = null;
+          }
+
+          if (!base64) return;
+
+          const token = await (await import('@/lib/auth-session')).getAccessToken();
+          const headers: Record<string, string> = { 'content-type': 'application/json' };
+          if (token) headers.authorization = `Bearer ${token}`;
+
+          await fetch(`${baseUrl}/api/v1/technicians/profile`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ yearsOfExperience: yearsExperience, profilePictureBase64: base64, profilePictureMimeType: 'image/jpeg' }),
+          });
+        } catch (err) {
+          // Swallow network errors - the local pending state remains and can be retried later.
+          // Optionally diagnostics could be emitted here.
+          // eslint-disable-next-line no-console
+          console.warn('Technician profile registration failed', err);
+        }
+      },
       settings: state.settings,
       updateSettings: (patch) => update((current) => ({ ...current, settings: { ...current.settings, ...patch } })),
       offers,
