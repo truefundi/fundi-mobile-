@@ -14,7 +14,9 @@ import { FieldLabel } from '@/components/ui/FieldLabel';
 import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { useColors } from '@/hooks/useColors';
+import { urgencyText } from '@/constants/jobs';
 import { PLACE_ICON, type SavedPlace } from '@/constants/places';
+import { SchedulePicker } from '@/components/request/SchedulePicker';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 
@@ -37,6 +39,7 @@ const URGENCY_COPY: Record<Urgency, { text: string; icon: keyof typeof Ionicons.
 
 const PROBLEM_REQUIRED = 'Tell us what happened so we can find the right technician.';
 const ADDRESS_REQUIRED = 'Add the address where the service is needed.';
+const SCHEDULE_REQUIRED = 'Choose the day and time you want the technician to come.';
 
 /** Which review line is open for editing. */
 type Editing = 'problem' | 'attached' | 'location' | 'urgency' | null;
@@ -66,6 +69,8 @@ export default function RequestScreen() {
   const [step, setStep] = useState(1);
   const [problem, setProblem] = useState('');
   const [urgency, setUrgency] = useState<Urgency>(emergency === 'true' ? 'Emergency' : 'Today');
+  // Only used when urgency is Schedule: the booked visit time.
+  const [scheduledFor, setScheduledFor] = useState<string>();
   const [photoUri, setPhotoUri] = useState<string>();
   const [videoUri, setVideoUri] = useState<string>();
   const [videoSeconds, setVideoSeconds] = useState<number>();
@@ -76,6 +81,7 @@ export default function RequestScreen() {
   // Each required field shows its own message under itself; `error` is for everything else.
   const [problemError, setProblemError] = useState('');
   const [addressError, setAddressError] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
   const [error, setError] = useState('');
   const [confirmLeave, setConfirmLeave] = useState(false);
   // Review: the line being corrected, and its unsaved value.
@@ -83,6 +89,7 @@ export default function RequestScreen() {
   const [draftProblem, setDraftProblem] = useState('');
   const [draftAddress, setDraftAddress] = useState('');
   const [draftUrgency, setDraftUrgency] = useState<Urgency>('Today');
+  const [draftScheduledFor, setDraftScheduledFor] = useState<string>();
   const [draftError, setDraftError] = useState('');
 
   // Saved places can arrive a moment after the form opens; fill the default in then, unless an address was already typed.
@@ -232,9 +239,11 @@ export default function RequestScreen() {
   const checkDetails = (): boolean => {
     const problemMessage = problem.trim() ? '' : PROBLEM_REQUIRED;
     const addressMessage = hasAddress ? '' : ADDRESS_REQUIRED;
+    const scheduleMessage = urgency === 'Schedule' && !scheduledFor ? SCHEDULE_REQUIRED : '';
     setProblemError(problemMessage);
     setAddressError(addressMessage);
-    return !problemMessage && !addressMessage;
+    setScheduleError(scheduleMessage);
+    return !problemMessage && !addressMessage && !scheduleMessage;
   };
 
   const next = () => {
@@ -257,7 +266,15 @@ export default function RequestScreen() {
     }
     setIsSubmitting(true);
     try {
-      const jobId = await addRequest({ service, problem: problem.trim(), urgency, locationLabel: address.trim(), photoUri, videoUri });
+      const jobId = await addRequest({
+        service,
+        problem: problem.trim(),
+        urgency,
+        scheduledFor: urgency === 'Schedule' ? scheduledFor : undefined,
+        locationLabel: address.trim(),
+        photoUri,
+        videoUri,
+      });
       await notify('success');
       // Hand straight over to the job screen, which picks the stage to show.
       router.replace(`/job/${jobId}`);
@@ -275,6 +292,7 @@ export default function RequestScreen() {
     setDraftProblem(problem);
     setDraftAddress(address);
     setDraftUrgency(urgency);
+    setDraftScheduledFor(scheduledFor);
     setEditing(line);
   };
 
@@ -295,7 +313,12 @@ export default function RequestScreen() {
       setAddress(draftAddress);
       setAddressError('');
     }
-    if (editing === 'urgency') setUrgency(draftUrgency);
+    if (editing === 'urgency') {
+      if (draftUrgency === 'Schedule' && !draftScheduledFor) return setDraftError(SCHEDULE_REQUIRED);
+      setUrgency(draftUrgency);
+      setScheduledFor(draftUrgency === 'Schedule' ? draftScheduledFor : undefined);
+      setScheduleError('');
+    }
     vibrate();
     closeEditor();
   };
@@ -379,7 +402,30 @@ export default function RequestScreen() {
           inputBackground={colors.background}
         />
       ) : null}
-      {line === 'urgency' ? <UrgencyPicker value={draftUrgency} onChange={setDraftUrgency} compact testIDPrefix="review-" /> : null}
+      {line === 'urgency' ? (
+        <>
+          <UrgencyPicker
+            value={draftUrgency}
+            onChange={(value) => {
+              setDraftUrgency(value);
+              setDraftError('');
+            }}
+            compact
+            testIDPrefix="review-"
+          />
+          {draftUrgency === 'Schedule' ? (
+            <SchedulePicker
+              value={draftScheduledFor}
+              onChange={(value) => {
+                setDraftScheduledFor(value);
+                setDraftError('');
+              }}
+              hasError={!!draftError}
+              testIDPrefix="review-"
+            />
+          ) : null}
+        </>
+      ) : null}
       {errorView(draftError, 'review-edit-error')}
       {line !== 'attached' ? errorView(error) : null}
       <View style={styles.editorActions}>
@@ -468,7 +514,25 @@ export default function RequestScreen() {
             {errorView(addressError, 'address-error')}
 
             <FieldLabel label="How urgent is it?" required style={styles.sectionLabel} />
-            <UrgencyPicker value={urgency} onChange={setUrgency} />
+            <UrgencyPicker
+              value={urgency}
+              onChange={(value) => {
+                setUrgency(value);
+                setScheduleError('');
+              }}
+            />
+            {/* Schedule opens its calendar right under the choice. */}
+            {urgency === 'Schedule' ? (
+              <SchedulePicker
+                value={scheduledFor}
+                onChange={(value) => {
+                  setScheduledFor(value);
+                  setScheduleError('');
+                }}
+                hasError={!!scheduleError}
+              />
+            ) : null}
+            {errorView(scheduleError, 'schedule-error')}
             {errorView(error)}
           </>
         )}
@@ -505,7 +569,7 @@ export default function RequestScreen() {
               />
               <ReviewRow
                 label="Urgency"
-                value={urgency}
+                value={urgencyText({ urgency, scheduledFor })}
                 onEdit={() => openEditor('urgency')}
                 open={editing === 'urgency'}
                 editor={editing === 'urgency' ? editor('urgency') : null}
