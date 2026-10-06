@@ -1,4 +1,4 @@
-import * as Haptics from 'expo-haptics';
+import { vibrate, notify } from '@/lib/haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -13,6 +13,8 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { useColors } from '@/hooks/useColors';
+import { PLACE_ICON } from '@/constants/places';
+import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 
 type Urgency = 'Emergency' | 'Today' | 'Schedule';
@@ -49,6 +51,9 @@ export default function RequestScreen() {
   const { service: serviceParam, emergency } = useLocalSearchParams<{ service?: string; emergency?: string }>();
   const service = serviceParam || 'General Maintenance';
   const { addRequest } = useFundi();
+  const { savedPlaces, preferences } = useProfile();
+  // A default saved place fills the address in before the customer gets there.
+  const defaultAddress = savedPlaces.find((place) => place.id === preferences.defaultPlaceId)?.address;
   const [step, setStep] = useState(1);
   const [problem, setProblem] = useState('');
   const [urgency, setUrgency] = useState<Urgency>(emergency === 'true' ? 'Emergency' : 'Today');
@@ -56,7 +61,12 @@ export default function RequestScreen() {
   const [videoUri, setVideoUri] = useState<string>();
   const [videoSeconds, setVideoSeconds] = useState<number>();
   const [isPickingVideo, setIsPickingVideo] = useState(false);
-  const [locationLabel, setLocationLabel] = useState(PLACEHOLDER_ADDRESS);
+  const [locationLabel, setLocationLabel] = useState(defaultAddress ?? PLACEHOLDER_ADDRESS);
+
+  // Saved places can arrive a moment after the form opens; fill the default in then, unless an address was already typed.
+  useEffect(() => {
+    if (defaultAddress) setLocationLabel((current) => (current === PLACEHOLDER_ADDRESS ? defaultAddress : current));
+  }, [defaultAddress]);
   const [isLocating, setIsLocating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -64,7 +74,7 @@ export default function RequestScreen() {
 
   const hasAddress = locationLabel !== PLACEHOLDER_ADDRESS && locationLabel.trim().length > 0;
   // Anything typed or attached is worth a "discard?" before the form closes.
-  const hasProgress = problem.trim().length > 0 || !!photoUri || !!videoUri || hasAddress;
+  const hasProgress = problem.trim().length > 0 || !!photoUri || !!videoUri || (hasAddress && locationLabel !== defaultAddress);
 
   const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
@@ -101,7 +111,7 @@ export default function RequestScreen() {
     const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.78 });
     if (!result.canceled && result.assets[0]?.uri) {
       setPhotoUri(result.assets[0].uri);
-      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await vibrate();
     }
   };
 
@@ -131,7 +141,7 @@ export default function RequestScreen() {
       }
       setVideoUri(asset.uri);
       setVideoSeconds(seconds);
-      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await vibrate();
     } catch {
       setError('We could not open your videos. Try again.');
     } finally {
@@ -207,7 +217,7 @@ export default function RequestScreen() {
     const problemWithStep = validate(step);
     if (problemWithStep) {
       setError(problemWithStep);
-      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+      notify('warning');
       return;
     }
     setError('');
@@ -227,7 +237,7 @@ export default function RequestScreen() {
     setIsSubmitting(true);
     try {
       const jobId = await addRequest({ service, problem: problem.trim(), urgency, locationLabel, photoUri, videoUri });
-      if (Platform.OS !== 'web') await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await notify('success');
       // Hand straight over to the job screen, which picks the stage to show.
       router.replace(`/job/${jobId}`);
     } catch {
@@ -350,6 +360,39 @@ export default function RequestScreen() {
               </Text>
             </View>
             <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Address</Text>
+            {savedPlaces.length > 0 ? (
+              <View style={styles.placeRow}>
+                {savedPlaces.map((place) => {
+                  const selected = locationLabel === place.address;
+                  return (
+                    <Pressable
+                      key={place.id}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`Use ${place.label}: ${place.address}`}
+                      testID={`request-place-${place.id}`}
+                      onPress={() => {
+                        setLocationLabel(place.address);
+                        setError('');
+                      }}
+                      style={({ pressed }) => [
+                        styles.placeChip,
+                        {
+                          borderColor: selected ? colors.primary : colors.border,
+                          backgroundColor: selected ? colors.primary : colors.card,
+                          opacity: pressed ? 0.8 : 1,
+                        },
+                      ]}
+                    >
+                      <Ionicons name={PLACE_ICON[place.kind]} size={15} color={selected ? colors.primaryForeground : colors.primary} />
+                      <Text numberOfLines={1} style={[styles.placeChipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                        {place.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
             <View
               style={[
                 styles.addressCard,
@@ -587,6 +630,9 @@ const styles = StyleSheet.create({
   mapGrid: { ...StyleSheet.absoluteFillObject, opacity: 0.35 },
   mapPin: { width: 45, height: 45, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
   mapLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 10, textAlign: 'center' },
+  placeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  placeChip: { minHeight: 38, maxWidth: '100%', borderRadius: 19, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 13 },
+  placeChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 13, flexShrink: 1 },
   addressCard: { minHeight: 56, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 13, paddingVertical: 6 },
   addressText: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 15, lineHeight: 20, paddingVertical: 8 },
   useCurrent: { minHeight: 44, borderRadius: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, alignSelf: 'flex-start', paddingHorizontal: 16, marginTop: 12 },
