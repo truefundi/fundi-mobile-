@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { FieldLabel } from '@/components/ui/FieldLabel';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { formatPhone, initialsOf } from '@/constants/auth';
 import { useProfile } from '@/context/ProfileContext';
@@ -113,7 +114,7 @@ export default function EditProfileScreen() {
       {errorFor('photo')}
 
       <View>
-        <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Full name</Text>
+        <FieldLabel label="Full name" required style={styles.fieldLabel} />
         <TextInput
           accessibilityLabel="Full name"
           testID="edit-profile-name"
@@ -135,7 +136,7 @@ export default function EditProfileScreen() {
       </View>
 
       <View>
-        <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Your area</Text>
+        <FieldLabel label="Your area" required style={styles.fieldLabel} />
         <TextInput
           accessibilityLabel="Your area"
           testID="edit-profile-location"
@@ -191,7 +192,7 @@ const styles = StyleSheet.create({
   photoActions: { flex: 1, gap: 8, alignItems: 'flex-start' },
   removeLink: { minHeight: 32, justifyContent: 'center' },
   removeText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  fieldLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 8, marginBottom: 8 },
+  fieldLabel: { marginTop: 8 },
   input: { minHeight: 54, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, fontFamily: 'Inter_500Medium', fontSize: 15 },
   readOnly: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   readOnlyText: { fontFamily: 'Inter_500Medium', fontSize: 15 },

@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { FieldLabel } from '@/components/ui/FieldLabel';
 import { Notice } from '@/components/ui/Notice';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
@@ -76,7 +77,7 @@ export default function SavedLocationsScreen() {
 
   const form = draft ? (
     <SectionCard title={draft.id ? 'EDIT PLACE' : 'NEW PLACE'}>
-      <Text style={[styles.fieldLabel, styles.firstLabel, { color: colors.foreground }]}>Type</Text>
+      <FieldLabel label="Type" required />
       <View accessibilityRole="radiogroup" style={styles.kindRow}>
         {PLACE_KINDS.map((kind) => {
           const selected = draft.kind === kind;
@@ -122,7 +123,7 @@ export default function SavedLocationsScreen() {
 
       {draft.kind === 'Other' ? (
         <>
-          <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Name</Text>
+          <FieldLabel label="Name" required style={styles.fieldLabel} />
           <TextInput
             accessibilityLabel="Place name"
             testID="place-name-input"
@@ -139,7 +140,7 @@ export default function SavedLocationsScreen() {
         </>
       ) : null}
 
-      <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Address</Text>
+      <FieldLabel label="Address" required style={styles.fieldLabel} />
       <View style={[styles.addressBox, { backgroundColor: colors.background, borderColor: colors.border }]}>
         <Ionicons name="location-outline" size={20} color={colors.primary} />
         <TextInput
@@ -263,8 +264,7 @@ export default function SavedLocationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  fieldLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 16, marginBottom: 8 },
-  firstLabel: { marginTop: 0 },
+  fieldLabel: { marginTop: 16 },
   kindRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   kind: { minHeight: 40, borderRadius: 20, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14 },
   kindText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
