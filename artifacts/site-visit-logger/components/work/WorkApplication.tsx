@@ -10,12 +10,20 @@ import { useWork } from '@/context/WorkContext';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 
-async function capture(): Promise<string | null> {
+const MAX_FILE_SIZE_MB = 5;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+
+type FileData = {
+  uri: string;
+  size?: number;
+};
+
+async function capture(): Promise<FileData | null> {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
   if (!permission.granted) return null;
   const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.78 });
   if (result.canceled || !result.assets[0]?.uri) return null;
-  return result.assets[0].uri;
+  return { uri: result.assets[0].uri, size: result.assets[0].fileSize };
 }
 
 export function WorkApplication() {
@@ -32,14 +40,16 @@ export function WorkApplication() {
   const [baseAddress, setBaseAddress] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'MOMO' | 'BANK_TRANSFER' | 'CASH' | 'OTHER'>('MOMO');
   const [paymentNumber, setPaymentNumber] = useState(account?.phone ?? '');
-  const [profilePictureUri, setProfilePictureUri] = useState<string>();
-  const [idPhotoUri, setIdPhotoUri] = useState<string>();
+  
+  // File states now hold size for validation
+  const [profilePicture, setProfilePicture] = useState<FileData | null>(null);
+  const [idPhoto, setIdPhoto] = useState<FileData | null>(null);
 
   // Section 2: Job Application & Multiple Service Experiences
   const [serviceExperiences, setServiceExperiences] = useState<Array<{ trade: string; customName: string; yearsOfExperience: number }>>([
     { trade: TRADES[0] ?? 'Plumbing', customName: '', yearsOfExperience: 1 },
   ]);
-  const [certificateUris, setCertificateUris] = useState<string[]>([]);
+  const [certificates, setCertificates] = useState<FileData[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -64,13 +74,29 @@ export function WorkApplication() {
     setBaseAddress(profile.baseAddress ?? '');
     setPaymentMethod(profile.paymentMethod ?? 'MOMO');
     setPaymentNumber(profile.paymentNumber ?? account?.phone ?? '');
-    setProfilePictureUri(profile.profilePictureUri ?? profile.profilePictureUrl ?? undefined);
-    setIdPhotoUri(profile.idPhotoUri || undefined);
-    setCertificateUris(profile.certificateUris);
+    
+    setProfilePicture(profile.profilePictureUri || profile.profilePictureUrl ? { uri: profile.profilePictureUri || profile.profilePictureUrl! } : null);
+    setIdPhoto(profile.idPhotoUri ? { uri: profile.idPhotoUri } : null);
+    setCertificates(profile.certificateUris?.map(uri => ({ uri })) || []);
+    
     if (profile.serviceExperiences?.length) {
       setServiceExperiences(profile.serviceExperiences);
     }
   }, [account, profile]);
+
+  // Validations
+  const emailError = email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'Invalid email format' : '';
+  const idError = nationalIdNumber && !/^\d{16}$/.test(nationalIdNumber) ? 'National ID must be exactly 16 digits' : '';
+
+  const getFileError = (file: FileData | null) => {
+    if (file?.size && file.size > MAX_FILE_SIZE_BYTES) {
+      return `File is too large (${(file.size / (1024 * 1024)).toFixed(2)} MB). Max limit is ${MAX_FILE_SIZE_MB}MB.`;
+    }
+    return '';
+  };
+
+  const profilePicError = getFileError(profilePicture);
+  const idPhotoError = getFileError(idPhoto);
 
   const isProfileComplete =
     !!fullName.trim() &&
@@ -78,8 +104,8 @@ export function WorkApplication() {
     !!nationalIdNumber.trim() &&
     !!baseAddress.trim() &&
     !!paymentNumber.trim() &&
-    !!profilePictureUri &&
-    !!idPhotoUri;
+    !!profilePicture &&
+    !!idPhoto;
 
   const isJobAppComplete =
     serviceExperiences.length > 0 &&
@@ -87,15 +113,17 @@ export function WorkApplication() {
       const name = exp.trade === 'Others' ? exp.customName.trim() : exp.trade;
       return name.length > 0 && exp.yearsOfExperience >= 0;
     }) &&
-    certificateUris.length > 0;
+    certificates.length > 0;
 
-  const ready = isProfileComplete && isJobAppComplete;
+  const noValidationErrors = !emailError && !idError && !profilePicError && !idPhotoError && !certificates.some(c => getFileError(c));
 
-  async function pickFromLibrary(imagesOnly: boolean): Promise<string | null> {
+  const ready = isProfileComplete && isJobAppComplete && noValidationErrors;
+
+  async function pickFromLibrary(imagesOnly: boolean): Promise<FileData | null> {
     if (imagesOnly) {
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78 });
       if (result.canceled || !result.assets[0]?.uri) return null;
-      return result.assets[0].uri;
+      return { uri: result.assets[0].uri, size: result.assets[0].fileSize };
     }
     const result = await DocumentPicker.getDocumentAsync({
       type: ['image/*', 'application/pdf'],
@@ -103,19 +131,19 @@ export function WorkApplication() {
       multiple: false,
     });
     if (result.canceled || !result.assets[0]?.uri) return null;
-    return result.assets[0].uri;
+    return { uri: result.assets[0].uri, size: result.assets[0].size };
   }
 
-  function chooseSource(onChosen: (uri: string) => void, imagesOnly = false) {
+  function chooseSource(onChosen: (file: FileData) => void, imagesOnly = false) {
     Alert.alert('Add document', undefined, [
       { text: 'Take a photo', onPress: async () => {
-        const uri = await capture();
-        if (uri) onChosen(uri);
+        const file = await capture();
+        if (file) onChosen(file);
         else setError('Camera access is needed to take a photo.');
       } },
       { text: 'Upload a file', onPress: async () => {
-        const uri = await pickFromLibrary(imagesOnly);
-        if (uri) onChosen(uri);
+        const file = await pickFromLibrary(imagesOnly);
+        if (file) onChosen(file);
         else setError('No file selected.');
       } },
       { text: 'Cancel', style: 'cancel' },
@@ -164,9 +192,9 @@ export function WorkApplication() {
         baseLongitude: position.coords.longitude,
         paymentMethod,
         paymentNumber,
-        profilePictureUri,
-        idPhotoUri,
-        certificateUris,
+        profilePictureUri: profilePicture?.uri,
+        idPhotoUri: idPhoto?.uri,
+        certificateUris: certificates.map(c => c.uri),
         yearsExperience: Math.max(...formattedExperiences.map((e) => e.yearsOfExperience), 0),
         trade: formattedExperiences[0]?.customName || 'General',
         serviceExperiences: formattedExperiences,
@@ -181,6 +209,8 @@ export function WorkApplication() {
 
   const allTradeOptions = [...TRADES, 'Others'];
 
+  const RequiredAsterisk = () => <Text style={{ color: colors.destructive }}> *</Text>;
+
   return (
     <ScrollView contentContainerStyle={styles.screen}>
       <View style={[styles.intro, { backgroundColor: colors.secondary }]}>
@@ -194,22 +224,23 @@ export function WorkApplication() {
       <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Section 1: Profile & Identity</Text>
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Profile Picture</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Profile Picture<RequiredAsterisk/></Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => chooseSource((uri) => setProfilePictureUri(uri), true)}
-          style={[styles.upload, { borderColor: profilePictureUri ? colors.success : colors.border }]}
+          onPress={() => chooseSource((file) => setProfilePicture(file), true)}
+          style={[styles.upload, { borderColor: profilePicError ? colors.destructive : profilePicture ? colors.success : colors.border }]}
         >
-          {profilePictureUri ? (
-            <Image source={{ uri: profilePictureUri }} style={styles.thumbnail} contentFit="cover" />
+          {profilePicture ? (
+            <Image source={{ uri: profilePicture.uri }} style={styles.thumbnail} contentFit="cover" />
           ) : (
             <Ionicons name="person-circle-outline" size={21} color={colors.primary} />
           )}
-          <Text style={[styles.uploadText, { color: colors.foreground }]}>{profilePictureUri ? 'Picture added' : 'Upload profile picture'}</Text>
-          {profilePictureUri ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
+          <Text style={[styles.uploadText, { color: colors.foreground }]}>{profilePicture ? 'Picture added' : 'Upload profile picture'}</Text>
+          {profilePicture && !profilePicError ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
         </Pressable>
+        {profilePicError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{profilePicError}</Text> : null}
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Full Name</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Full Name<RequiredAsterisk/></Text>
         <TextInput
           value={fullName}
           onChangeText={setFullName}
@@ -218,7 +249,7 @@ export function WorkApplication() {
           style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
         />
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Phone Number</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Phone Number<RequiredAsterisk/></Text>
         <TextInput
           value={phoneNumber}
           onChangeText={setPhoneNumber}
@@ -235,10 +266,11 @@ export function WorkApplication() {
           keyboardType="email-address"
           placeholder="amina@example.com"
           placeholderTextColor={colors.mutedForeground}
-          style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+          style={[styles.input, { backgroundColor: colors.background, borderColor: emailError ? colors.destructive : colors.border, color: colors.foreground }]}
         />
+        {emailError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{emailError}</Text> : null}
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Gender</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Gender<RequiredAsterisk/></Text>
         <View style={styles.rowWrap}>
           {(['FEMALE', 'MALE', 'NON_BINARY', 'PREFER_NOT_TO_SAY'] as const).map((g) => {
             const selected = gender === g;
@@ -257,31 +289,35 @@ export function WorkApplication() {
           })}
         </View>
 
-        <Text style={[styles.label, { color: colors.foreground }]}>National ID Number</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>National ID Number<RequiredAsterisk/></Text>
         <TextInput
           value={nationalIdNumber}
           onChangeText={setNationalIdNumber}
-          placeholder="ID123456"
+          placeholder="1234567890123456"
+          keyboardType="number-pad"
+          maxLength={16}
           placeholderTextColor={colors.mutedForeground}
-          style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+          style={[styles.input, { backgroundColor: colors.background, borderColor: idError ? colors.destructive : colors.border, color: colors.foreground }]}
         />
+        {idError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{idError}</Text> : null}
 
-        <Text style={[styles.label, { color: colors.foreground }]}>National ID Document Photo</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>National ID Document Photo<RequiredAsterisk/></Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => chooseSource((uri) => setIdPhotoUri(uri))}
-          style={[styles.upload, { borderColor: idPhotoUri ? colors.success : colors.border }]}
+          onPress={() => chooseSource((file) => setIdPhoto(file))}
+          style={[styles.upload, { borderColor: idPhotoError ? colors.destructive : idPhoto ? colors.success : colors.border }]}
         >
-          {idPhotoUri && !idPhotoUri.toLowerCase().includes('.pdf') ? (
-            <Image source={{ uri: idPhotoUri }} style={styles.thumbnail} contentFit="cover" />
+          {idPhoto && !idPhoto.uri.toLowerCase().includes('.pdf') ? (
+            <Image source={{ uri: idPhoto.uri }} style={styles.thumbnail} contentFit="cover" />
           ) : (
             <Ionicons name="card-outline" size={21} color={colors.primary} />
           )}
-          <Text style={[styles.uploadText, { color: colors.foreground }]}>{idPhotoUri ? 'ID added' : 'Photograph your ID'}</Text>
-          {idPhotoUri ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
+          <Text style={[styles.uploadText, { color: colors.foreground }]}>{idPhoto ? 'ID added' : 'Photograph your ID'}</Text>
+          {idPhoto && !idPhotoError ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
         </Pressable>
+        {idPhotoError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{idPhotoError}</Text> : null}
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Base Address / Location</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Base Address / Location<RequiredAsterisk/></Text>
         <TextInput
           value={baseAddress}
           onChangeText={setBaseAddress}
@@ -290,7 +326,7 @@ export function WorkApplication() {
           style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
         />
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Payment Method</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Payment Method<RequiredAsterisk/></Text>
         <View style={styles.rowWrap}>
           {(['MOMO', 'BANK_TRANSFER', 'CASH', 'OTHER'] as const).map((m) => {
             const selected = paymentMethod === m;
@@ -309,7 +345,7 @@ export function WorkApplication() {
           })}
         </View>
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Payment / MoMo Number</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Payment / MoMo Number<RequiredAsterisk/></Text>
         <TextInput
           value={paymentNumber}
           onChangeText={setPaymentNumber}
@@ -324,7 +360,7 @@ export function WorkApplication() {
       <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Section 2: Job Application & Trades</Text>
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Service Experiences & Years of Experience</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Service Experiences & Years of Experience<RequiredAsterisk/></Text>
         {serviceExperiences.map((exp, index) => {
           const isOther = exp.trade === 'Others';
           const otherSelectedTrades = serviceExperiences
@@ -406,27 +442,33 @@ export function WorkApplication() {
           </Pressable>
         )}
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Certificates / TVET Papers</Text>
-        {certificateUris.map((uri, index) => (
-          <View key={uri} style={[styles.upload, { borderColor: colors.success }]}>
-            {uri.toLowerCase().includes('.pdf') ? (
-              <Ionicons name="document-text-outline" size={21} color={colors.primary} />
-            ) : (
-              <Image source={{ uri }} style={styles.thumbnail} contentFit="cover" />
-            )}
-            <Text style={[styles.uploadText, { color: colors.foreground }]}>Certificate {index + 1}</Text>
-            <Pressable onPress={() => setCertificateUris((current) => current.filter((item) => item !== uri))}>
-              <Feather name="x" size={18} color={colors.mutedForeground} />
-            </Pressable>
-          </View>
-        ))}
+        <Text style={[styles.label, { color: colors.foreground }]}>Certificates / TVET Papers<RequiredAsterisk/></Text>
+        {certificates.map((file, index) => {
+          const fileError = getFileError(file);
+          return (
+            <View key={file.uri} style={{ marginTop: 4 }}>
+              <View style={[styles.upload, { borderColor: fileError ? colors.destructive : colors.success }]}>
+                {file.uri.toLowerCase().includes('.pdf') ? (
+                  <Ionicons name="document-text-outline" size={21} color={colors.primary} />
+                ) : (
+                  <Image source={{ uri: file.uri }} style={styles.thumbnail} contentFit="cover" />
+                )}
+                <Text style={[styles.uploadText, { color: colors.foreground }]}>Certificate {index + 1}</Text>
+                <Pressable onPress={() => setCertificates((current) => current.filter((item) => item.uri !== file.uri))}>
+                  <Feather name="x" size={18} color={colors.mutedForeground} />
+                </Pressable>
+              </View>
+              {fileError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{fileError}</Text> : null}
+            </View>
+          );
+        })}
         <Pressable
-          onPress={() => chooseSource((uri) => setCertificateUris((current) => [...current, uri]))}
+          onPress={() => chooseSource((file) => setCertificates((current) => [...current, file]))}
           style={[styles.upload, styles.uploadDashed, { borderColor: colors.border }]}
         >
           <Ionicons name="document-attach-outline" size={21} color={colors.primary} />
           <Text style={[styles.uploadText, { color: colors.foreground }]}>
-            {certificateUris.length ? 'Add another certificate' : 'Photograph a certificate'}
+            {certificates.length ? 'Add another certificate' : 'Photograph a certificate'}
           </Text>
         </Pressable>
       </View>
@@ -489,6 +531,7 @@ const styles = StyleSheet.create({
   uploadText: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   thumbnail: { width: 34, height: 34, borderRadius: 8 },
   error: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 17, textAlign: 'center' },
+  fieldError: { fontFamily: 'Inter_500Medium', fontSize: 11, marginTop: 4, marginLeft: 4 },
   submit: { minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   submitText: { fontFamily: 'Inter_700Bold', fontSize: 15 },
   note: { fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16, textAlign: 'center', marginTop: 4 },

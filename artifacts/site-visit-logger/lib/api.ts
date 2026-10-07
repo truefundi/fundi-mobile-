@@ -1,4 +1,5 @@
 import { setAuthTokenGetter, setBaseUrl } from '@workspace/api-client-react';
+import { Platform } from 'react-native';
 import { getAccessToken } from '@/lib/auth-session';
 
 let configured = false;
@@ -73,6 +74,39 @@ export async function apiUpload<T>(path: string, body: FormData, method = 'POST'
   const headers = new Headers();
   const token = await getAccessToken();
   if (token) headers.set('authorization', `Bearer ${token}`);
+
+  if (Platform.OS !== 'web') {
+    return new Promise<T>((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open(method, `${baseUrl}${path}`);
+      headers.forEach((value, key) => request.setRequestHeader(key, value));
+      request.onload = () => {
+        const text = request.responseText;
+        let data: unknown = null;
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch {
+            data = text;
+          }
+        }
+        if (request.status < 200 || request.status >= 300) {
+          const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+          const message = payload?.message;
+          reject(new ApiRequestError(
+            Array.isArray(message) ? message.join(' ') : typeof message === 'string' ? message : `Request failed (${request.status}).`,
+            request.status,
+          ));
+          return;
+        }
+        resolve(data as T);
+      };
+      request.onerror = () => reject(new Error('Network error while uploading form data.'));
+      request.onabort = () => reject(new Error('Form data upload was cancelled.'));
+      request.ontimeout = () => reject(new Error('Form data upload timed out.'));
+      request.send(body);
+    });
+  }
 
   const response = await fetch(`${baseUrl}${path}`, { method, headers, body });
   const text = await response.text();

@@ -137,11 +137,12 @@ async function appendLocalFile(form: FormData, uri: string, fileName: string): P
     form.append('file', await response.blob(), fullName);
     return;
   }
+  const safeUri = Platform.OS === 'ios' ? uri.replace('file://', '') : uri;
   form.append('file', {
-    uri,
+    uri: safeUri,
     name: fullName,
     type: mimeType,
-  } as unknown as Blob);
+  } as any);
 }
 
 type WorkContextValue = {
@@ -394,7 +395,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             form.append('type', 'CERTIFICATE');
             form.append('title', title);
             form.append('certificateType', 'TVET_CERTIFICATE');
-            form.append('customCategoryName', experience.customName);
+            form.append('customCategoryName', experience?.customName || 'General');
             await appendLocalFile(form, uri, `certificate-${index + 1}`);
             await apiUpload('/api/v1/technicians/profile/documents', form);
           }
