@@ -40,7 +40,7 @@ type AuthContextValue = {
   /** False until the stored session has been read back from the device. */
   isHydrated: boolean;
   /** Creates an account through the backend and requests an OTP. */
-  register: (name: string, phone: string) => Promise<void>;
+  register: (name: string, phone: string, role?: 'CUSTOMER' | 'TECHNICIAN') => Promise<void>;
   /** Signs straight back in on a number that already has an account. */
   login: (phone: string) => Promise<void>;
   resendCode: () => Promise<void>;
@@ -134,12 +134,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (nameInput: string, phoneInput: string) => {
+    async (nameInput: string, phoneInput: string, role: 'CUSTOMER' | 'TECHNICIAN' = 'CUSTOMER') => {
       const name = normaliseName(nameInput);
       if (!name) throw new Error('Enter your full name, first and last.');
       const number = normalisePhone(phoneInput);
       if (!number) throw new Error(PHONE_RULE);
-      await startRegistration(name, number);
+      await startRegistration(name, number, role);
       await rememberVerification({
         phone: number,
         intent: 'register',

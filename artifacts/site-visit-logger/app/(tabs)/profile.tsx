@@ -65,13 +65,26 @@ export default function ProfileScreen() {
   };
 
   const working = mode === 'working';
+  const workStatusLabel =
+    status === 'verified' ? 'Verified' :
+      status === 'pending' ? 'Under review' :
+        status === 'rejected' ? 'Action required' : 'Not submitted';
+  const workStatusColor =
+    status === 'verified' ? colors.success :
+      status === 'rejected' ? colors.destructive :
+        status === 'pending' ? colors.warning : colors.mutedForeground;
+  const certificateCount = profile?.documents
+    ? profile.documents.filter((document) => document.type === 'CERTIFICATE').length
+    : profile?.certificateUris.length ?? 0;
   const modeHint = !working
     ? 'Find and hire a technician'
     : status === 'verified'
       ? `Taking jobs${profile ? ` · ${profile.trade}` : ''}`
       : status === 'pending'
         ? 'Documents under review'
-        : 'Documents needed before you can go online';
+        : status === 'rejected'
+          ? 'Update your documents to continue'
+          : 'Documents needed before you can go online';
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -136,20 +149,20 @@ export default function ProfileScreen() {
           <View style={[styles.tradeCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.tradeTop}>
               <Text style={[styles.tradeName, { color: colors.foreground }]}>{profile?.trade ?? 'Not chosen yet'}</Text>
-              <View style={[styles.statusTag, { backgroundColor: status === 'verified' ? colors.successMuted : colors.warningMuted }]}>
+              <View style={[styles.statusTag, { backgroundColor: status === 'verified' ? colors.successMuted : status === 'rejected' ? colors.destructiveMuted : colors.warningMuted }]}>
                 <Feather
-                  name={status === 'verified' ? 'check-circle' : 'clock'}
+                  name={status === 'verified' ? 'check-circle' : status === 'rejected' ? 'alert-circle' : 'clock'}
                   size={12}
-                  color={status === 'verified' ? colors.success : colors.warning}
+                  color={workStatusColor}
                 />
                 <Text style={[styles.statusText, { color: colors.foreground }]}>
-                  {status === 'verified' ? 'Verified' : status === 'pending' ? 'Under review' : 'Not submitted'}
+                  {workStatusLabel}
                 </Text>
               </View>
             </View>
             <Text style={[styles.tradeMeta, { color: colors.mutedForeground }]}>
               {profile
-                ? `${profile.certificateUris.length} ${profile.certificateUris.length === 1 ? 'certificate' : 'certificates'} on file`
+                ? `${certificateCount} ${certificateCount === 1 ? 'certificate' : 'certificates'} on file`
                 : 'Submit your ID and a certificate to start taking jobs.'}
             </Text>
           </View>

@@ -65,6 +65,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "expo-document-picker": "~57.0.3",
     "expo-secure-store": "~57.0.4"
   }
 }

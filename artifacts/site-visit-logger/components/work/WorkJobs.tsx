@@ -23,7 +23,7 @@ export function WorkJobs() {
       <EmptyState
         icon="clipboard"
         title="No jobs taken yet"
-        text="Go live on Home and accept a job — everything you take shows up here."
+        text="Your technician job history will appear here once job matching and lifecycle APIs are available."
       />
     );
   }

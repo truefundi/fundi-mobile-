@@ -64,6 +64,39 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   return data as T;
 }
 
+/** Uploads multipart form data without setting Content-Type manually. */
+export async function apiUpload<T>(path: string, body: FormData, method = 'POST'): Promise<T> {
+  configureApi();
+  const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
+  if (!baseUrl) throw new Error('Set EXPO_PUBLIC_API_URL before making an API request.');
+
+  const headers = new Headers();
+  const token = await getAccessToken();
+  if (token) headers.set('authorization', `Bearer ${token}`);
+
+  const response = await fetch(`${baseUrl}${path}`, { method, headers, body });
+  const text = await response.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+
+  if (!response.ok) {
+    const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+    const message = payload?.message;
+    throw new ApiRequestError(
+      Array.isArray(message) ? message.join(' ') : typeof message === 'string' ? message : `Request failed (${response.status}).`,
+      response.status,
+    );
+  }
+
+  return data as T;
+}
+
 /** Lightweight connectivity probe used during app startup and diagnostics. */
 export async function checkApiHealth(): Promise<boolean> {
   const health = await apiRequest<{ services?: { api?: string } }>('/api/v1/health');

@@ -1,282 +1,175 @@
 import { Feather } from '@expo/vector-icons';
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { COMMISSION_RATE, formatMoney, STATUS_LABEL, type Job } from '@/constants/jobs';
-import { buildQuote } from '@/constants/simulation';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SwitchRow } from '@/components/ui/SwitchRow';
 import { WorkApplication } from '@/components/work/WorkApplication';
-import { useFundi } from '@/context/FundiContext';
+import { restoreSession } from '@/lib/auth-api';
+import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 
-/** What the technician keeps of a visit fee once Fundi has taken its cut. */
-function share(visitFee: number): number {
-  return visitFee * (1 - COMMISSION_RATE);
-}
-
-/** The one thing this job is waiting on the technician to do, if anything. */
-function nextAction(status: Job['status']): 'arrived' | 'diagnose' | 'complete' | null {
-  if (status === 'EN_ROUTE') return 'arrived';
-  if (status === 'ARRIVED' || status === 'DIAGNOSING') return 'diagnose';
-  if (status === 'REPAIR_IN_PROGRESS') return 'complete';
-  return null;
-}
-
-function OfferCard({ job, onAccept, onDecline }: { job: Job; onAccept: () => void; onDecline: () => void }) {
+function WorkPending() {
   const colors = useColors();
-  const urgent = job.urgency === 'Emergency';
-  return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: urgent ? colors.destructive : colors.border }]}>
-      <View style={styles.cardTop}>
-        <View style={[styles.tag, { backgroundColor: urgent ? colors.destructive : colors.secondary }]}>
-          <Text style={[styles.tagText, { color: urgent ? colors.destructiveForeground : colors.secondaryForeground }]}>{job.urgency}</Text>
-        </View>
-        <Text style={[styles.fee, { color: colors.foreground }]}>{formatMoney(share(job.visitFee))}</Text>
-      </View>
-      <Text style={[styles.service, { color: colors.foreground }]}>{job.service}</Text>
-      <Text style={[styles.problem, { color: colors.mutedForeground }]} numberOfLines={2}>{job.problem}</Text>
-      <View style={styles.metaRow}>
-        <Feather name="map-pin" size={13} color={colors.mutedForeground} />
-        <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>{job.locationLabel}</Text>
-      </View>
-      <View style={styles.actions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Decline the ${job.service} job`}
-          testID={`decline-${job.id}`}
-          onPress={onDecline}
-          style={({ pressed }) => [styles.action, styles.outline, { borderColor: colors.border, opacity: pressed ? 0.75 : 1 }]}
-        >
-          <Text style={[styles.actionText, { color: colors.mutedForeground }]}>Decline</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Accept the ${job.service} job`}
-          testID={`accept-${job.id}`}
-          onPress={onAccept}
-          style={({ pressed }) => [styles.action, { backgroundColor: colors.primary, opacity: pressed ? 0.82 : 1 }]}
-        >
-          <Text style={[styles.actionText, { color: colors.primaryForeground }]}>Accept</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
+  const { signOut } = useAuth();
+  const { profile, applicationError, refreshApplication } = useWork();
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
-/** A job this technician owns, with the one button it is waiting on. */
-function MyJobCard({ job }: { job: Job }) {
-  const colors = useColors();
-  const { markArrived, submitDiagnosis, completeRepair } = useFundi();
-  const [open, setOpen] = useState(false);
-  const [diagnosis, setDiagnosis] = useState('');
-  const [labour, setLabour] = useState('');
-  const action = nextAction(job.status);
-
-  const send = () => {
-    // Parts come from the trade's usual bill; the technician sets the finding
-    // and their labour, which are the parts only they can know.
-    const base = buildQuote(job.service);
-    submitDiagnosis(job.id, {
-      diagnosis: diagnosis.trim() || base.diagnosis,
-      parts: base.parts,
-      labour: Number(labour) || base.labour,
-    });
-    setOpen(false);
-    setDiagnosis('');
-    setLabour('');
+  const retry = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const user = await restoreSession();
+      if (!user) {
+        await signOut();
+        return;
+      }
+      await refreshApplication();
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : 'Could not retry loading your application.');
+    } finally {
+      setRetrying(false);
+    }
   };
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <View style={styles.cardTop}>
-        <Text style={[styles.service, { color: colors.foreground }]}>{job.service}</Text>
-        <Text style={[styles.fee, { color: colors.foreground }]}>{formatMoney(share(job.visitFee))}</Text>
-      </View>
-      <Text style={[styles.problem, { color: colors.mutedForeground }]} numberOfLines={2}>{job.problem}</Text>
-      <View style={styles.metaRow}>
-        <Feather name="map-pin" size={13} color={colors.mutedForeground} />
-        <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>{job.locationLabel}</Text>
-      </View>
-
-      {action === null ? (
-        <View style={[styles.waiting, { backgroundColor: colors.muted }]}>
-          <Feather name="clock" size={12} color={colors.mutedForeground} />
-          <Text style={[styles.waitingText, { color: colors.mutedForeground }]}>{STATUS_LABEL[job.status]}</Text>
+    <View style={[styles.statusCard, { backgroundColor: colors.warningMuted }]}>
+      <Feather name="clock" size={26} color={colors.warning} />
+      <Text style={[styles.title, { color: colors.foreground }]}>Documents under review</Text>
+      <Text style={[styles.body, { color: colors.mutedForeground }]}>
+        {profile
+          ? `Your ${profile.trade.toLowerCase()} application is waiting for an administrator to review it.`
+          : 'Your application is waiting for an administrator to review it.'}
+      </Text>
+      {profile?.submittedAt ? (
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          Submitted {new Date(profile.submittedAt).toLocaleString()}
+        </Text>
+      ) : null}
+      {profile?.fullName ? (
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          {profile.fullName} · {profile.phoneNumber}
+        </Text>
+      ) : null}
+      {profile?.baseAddress ? (
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>{profile.baseAddress}</Text>
+      ) : null}
+      {profile?.serviceExperiences?.map((experience, index) => (
+        <Text key={`${experience.trade}-${index}`} style={[styles.body, { color: colors.mutedForeground }]}>
+          {experience.trade} · {experience.yearsOfExperience} years
+        </Text>
+      ))}
+      {profile?.documents?.map((document) => (
+        <View key={document.id} style={styles.documentLine}>
+          <Text style={[styles.body, styles.documentTitle, { color: colors.foreground }]}>{document.title}</Text>
+          <Text style={[styles.body, { color: colors.mutedForeground }]}>
+            {document.status.replace(/_/g, ' ')}{document.reviewNote ? ` — ${document.reviewNote}` : ''}
+          </Text>
         </View>
-      ) : action === 'diagnose' && open ? (
-        <View style={styles.form}>
-          <TextInput
-            accessibilityLabel="What you found"
-            testID={`diagnosis-${job.id}`}
-            value={diagnosis}
-            onChangeText={setDiagnosis}
-            placeholder="What did you find?"
-            placeholderTextColor={colors.mutedForeground}
-            multiline
-            style={[styles.input, styles.multiline, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
-          />
-          <TextInput
-            accessibilityLabel="Labour cost"
-            testID={`labour-${job.id}`}
-            value={labour}
-            onChangeText={(value) => setLabour(value.replace(/\D/g, '').slice(0, 5))}
-            placeholder="Labour cost"
-            placeholderTextColor={colors.mutedForeground}
-            keyboardType="number-pad"
-            style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
-          />
+      ))}
+      {applicationError || retryError ? (
+        <>
+          <Text style={[styles.body, { color: colors.destructive }]}>{retryError ?? applicationError}</Text>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Send the quote"
-            testID={`send-quote-${job.id}`}
-            onPress={send}
-            style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary, opacity: pressed ? 0.82 : 1 }]}
+            accessibilityLabel="Retry loading application"
+            accessibilityState={{ disabled: retrying, busy: retrying }}
+            disabled={retrying}
+            onPress={() => void retry()}
           >
-            <Text style={[styles.actionText, { color: colors.primaryForeground }]}>Send quote</Text>
+            <Text style={[styles.body, styles.retry, { color: colors.primary }]}>{retrying ? 'Retrying…' : 'Retry'}</Text>
           </Pressable>
-        </View>
-      ) : (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={action === 'arrived' ? 'Mark arrived' : action === 'diagnose' ? 'Start the diagnosis' : 'Mark the job completed'}
-          testID={`work-action-${job.id}`}
-          onPress={() => {
-            if (action === 'arrived') markArrived(job.id);
-            else if (action === 'diagnose') setOpen(true);
-            else completeRepair(job.id);
-          }}
-          style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary, opacity: pressed ? 0.82 : 1 }]}
-        >
-          <Text style={[styles.actionText, { color: colors.primaryForeground }]}>
-            {action === 'arrived' ? 'I have arrived' : action === 'diagnose' ? 'Add diagnosis' : 'Job completed'}
-          </Text>
-        </Pressable>
-      )}
+        </>
+      ) : null}
     </View>
   );
 }
 
-function WorkPending() {
+function WorkRejected() {
   const colors = useColors();
   const { profile } = useWork();
   return (
-    <View style={[styles.pending, { backgroundColor: colors.warningMuted }]}>
-      <Feather name="clock" size={26} color={colors.warning} />
-      <Text style={[styles.pendingTitle, { color: colors.foreground }]}>Documents under review</Text>
-      <Text style={[styles.pendingText, { color: colors.mutedForeground }]}>
-        {profile
-          ? `We are checking your ${profile.trade.toLowerCase()} certificate and ID. You can go online as soon as it clears.`
-          : 'We are checking your documents. You can go online as soon as it clears.'}
+    <View style={[styles.statusCard, { backgroundColor: colors.destructiveMuted }]}>
+      <Feather name="alert-circle" size={26} color={colors.destructive} />
+      <Text style={[styles.title, { color: colors.foreground }]}>Application needs changes</Text>
+      <Text style={[styles.body, { color: colors.mutedForeground }]}>
+        Review the feedback, update your details or documents, then retry your submission.
       </Text>
+      {profile?.documents?.filter((document) => document.status === 'DENIED').map((document) => (
+        <Text key={document.id} style={[styles.body, { color: colors.destructive }]}>
+          {document.title}{document.reviewNote ? ` — ${document.reviewNote}` : ''}
+        </Text>
+      ))}
     </View>
   );
 }
 
-function WorkVerified({ query }: { query: string }) {
+function WorkApproved() {
   const colors = useColors();
-  const { isAvailable, setAvailable, offers, mine, accept, decline, earnings } = useWork();
-  const term = query.trim().toLowerCase();
-  const shown = term
-    ? offers.filter((job) => `${job.service} ${job.locationLabel} ${job.problem}`.toLowerCase().includes(term))
-    : offers;
+  const { isAvailable, setAvailable, profile, applicationError } = useWork();
 
   return (
     <View style={styles.screen}>
+      {applicationError ? <Text style={[styles.error, { color: colors.destructive }]}>{applicationError}</Text> : null}
       <SwitchRow
         title={isAvailable ? 'Available for work' : 'Not accepting jobs'}
-        hint={isAvailable ? 'New jobs near you will appear here.' : 'Turn this on to start receiving jobs.'}
+        hint="Availability is saved to your technician profile."
         value={isAvailable}
-        onValueChange={setAvailable}
+        onValueChange={(available) => {
+          void setAvailable(available).catch(() => undefined);
+        }}
         accessibilityLabel="Available for work"
         testID="availability-switch"
       />
-
-      <View style={[styles.earnings, { backgroundColor: colors.secondary }]}>
-        <View>
-          <Text style={[styles.earningsLabel, { color: colors.secondaryForeground }]}>EARNINGS THIS WEEK</Text>
-          <Text style={[styles.earningsValue, { color: colors.secondaryForeground }]}>{formatMoney(earnings)}</Text>
-        </View>
-        <Text style={[styles.earningsJobs, { color: colors.secondaryForeground }]}>
-          {mine.length} {mine.length === 1 ? 'job' : 'jobs'}
+      <View style={[styles.statusCard, { backgroundColor: colors.secondary }]}>
+        <Feather name="check-circle" size={24} color={colors.primary} />
+        <Text style={[styles.title, { color: colors.foreground }]}>Technician verified</Text>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          {profile?.trade ?? 'Your profile'} is approved. Job offers and job lifecycle actions will appear here when those backend APIs are available.
         </Text>
       </View>
-
-      {mine.length > 0 ? (
-        <>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your jobs</Text>
-          {mine.map((job) => <MyJobCard key={job.id} job={job} />)}
-        </>
-      ) : null}
-
-      <Text style={[styles.sectionTitle, { color: colors.foreground }]}>New jobs</Text>
-      {!isAvailable ? (
-        <EmptyState
-          icon="moon"
-          tone="waiting"
-          title="You are offline"
-          text="Turn on Available for work and jobs near you will arrive here."
-        />
-      ) : shown.length === 0 ? (
-        <EmptyState
-          icon={term ? 'search' : 'inbox'}
-          title={term ? 'Nothing matches that' : 'No jobs waiting'}
-          text={
-            term
-              ? `No open job mentions “${query.trim()}”. Try the service or the area.`
-              : 'When a customer nearby asks for your trade, the job lands here.'
-          }
-        />
-      ) : (
-        shown.map((job) => (
-          <OfferCard key={job.id} job={job} onAccept={() => accept(job.id)} onDecline={() => decline(job.id)} />
-        ))
-      )}
     </View>
   );
 }
 
-/**
- * The technician side of home.
- *
- * Which of the three it shows is the whole point of the gate: nobody reaches
- * the availability switch, and so no customer reaches them, until documents
- * have been read.
- */
-export function WorkHome({ query = '' }: { query?: string }) {
-  const { status } = useWork();
-  if (status === 'none') return <WorkApplication />;
+/** Technician verification is server-owned; mock same-device jobs are not shown in working mode. */
+export function WorkHome(_props: { query?: string }) {
+  const { account } = useAuth();
+  const { status, submissionFailed } = useWork();
+
+  if (account?.role !== 'TECHNICIAN') {
+    return (
+      <EmptyState
+        icon="tool"
+        tone="waiting"
+        title="Technician account required"
+        text="Sign out and register a new account as a technician to submit a work application."
+      />
+    );
+  }
+  if (submissionFailed) return <WorkApplication />;
   if (status === 'pending') return <WorkPending />;
-  return <WorkVerified query={query} />;
+  if (status === 'rejected') {
+    return (
+      <View style={styles.screen}>
+        <WorkRejected />
+        <WorkApplication />
+      </View>
+    );
+  }
+  if (status === 'verified') return <WorkApproved />;
+  return <WorkApplication />;
 }
 
 const styles = StyleSheet.create({
   screen: { gap: 14 },
-  pending: { alignItems: 'center', gap: 9, borderRadius: 16, paddingVertical: 30, paddingHorizontal: 22 },
-  pendingTitle: { fontFamily: 'Inter_700Bold', fontSize: 17, letterSpacing: -0.3 },
-  pendingText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, textAlign: 'center' },
-  earnings: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 16, padding: 16 },
-  earningsLabel: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.2 },
-  earningsValue: { fontFamily: 'Inter_700Bold', fontSize: 26, letterSpacing: -0.8, marginTop: 4 },
-  earningsJobs: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  sectionTitle: { fontFamily: 'Inter_700Bold', fontSize: 17, letterSpacing: -0.25, marginTop: 2 },
-  card: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 7 },
-  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  tag: { borderRadius: 13, paddingHorizontal: 10, paddingVertical: 5 },
-  tagText: { fontFamily: 'Inter_700Bold', fontSize: 11 },
-  fee: { fontFamily: 'Inter_700Bold', fontSize: 16 },
-  service: { fontFamily: 'Inter_700Bold', fontSize: 16, letterSpacing: -0.3, flex: 1 },
-  problem: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19 },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  meta: { fontFamily: 'Inter_400Regular', fontSize: 12, flex: 1 },
-  actions: { flexDirection: 'row', gap: 10, marginTop: 5 },
-  action: { flex: 1, minHeight: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  outline: { borderWidth: 1 },
-  actionText: { fontFamily: 'Inter_700Bold', fontSize: 14 },
-  primary: { minHeight: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', marginTop: 5 },
-  waiting: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, marginTop: 3 },
-  waitingText: { fontFamily: 'Inter_600SemiBold', fontSize: 11 },
-  form: { gap: 9, marginTop: 5 },
-  input: { minHeight: 48, borderRadius: 13, borderWidth: 1, paddingHorizontal: 13, fontFamily: 'Inter_400Regular', fontSize: 14 },
-  multiline: { minHeight: 76, paddingTop: 12, textAlignVertical: 'top' },
+  statusCard: { alignItems: 'center', gap: 9, borderRadius: 16, paddingVertical: 24, paddingHorizontal: 22 },
+  title: { fontFamily: 'Inter_700Bold', fontSize: 17, letterSpacing: -0.3, textAlign: 'center' },
+  body: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, textAlign: 'center' },
+  documentLine: { width: '100%', alignItems: 'center', gap: 1, marginTop: 5 },
+  documentTitle: { fontFamily: 'Inter_600SemiBold' },
+  retry: { fontFamily: 'Inter_700Bold', padding: 8 },
+  error: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 17, textAlign: 'center' },
 });

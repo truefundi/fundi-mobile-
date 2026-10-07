@@ -2,7 +2,7 @@
 
 ## Current status
 
-The mobile authentication flow now calls the NestJS API at `/api/v1/auth`. Job and technician/work flows remain local mock data in `FundiContext` and `WorkContext`.
+The mobile authentication flow calls the NestJS API at `/api/v1/auth`. Technician registration, profile verification, profile picture/KYC document uploads, and availability use the technician API. Job creation and job lifecycle remain local mock data in `FundiContext`; technician screens no longer consume those same-device mock jobs.
 
 The generated API transport is configured in `artifacts/site-visit-logger/lib/api.ts`. It reads `EXPO_PUBLIC_API_URL` and calls `setBaseUrl()` from `@workspace/api-client-react`. The startup path performs a non-blocking health probe.
 
@@ -441,22 +441,23 @@ Keep screens calling context methods. Move the implementation below those contex
 | --- | --- |
 | `AuthContext` | Identity, OTP, session, profile |
 | `FundiContext` | Jobs, lifecycle actions, quotes, payments, ratings |
-| `WorkContext` | Worker verification, availability, offers, earnings |
+| `WorkContext` | Server-owned technician profile, verification, documents, availability |
 | `constants/jobs.ts` | UI status labels and presentation calculations |
 | `components/job` | Render server-provided job state |
 | `components/work` | Render server-provided worker and offer state |
 | `request.tsx` | Device permissions plus create-request API call |
 
-The server must own identity, matching, job lifecycle, payment state, worker verification, and persistence. The device may continue to own camera/location permissions and presentation-only calculations.
+The server owns identity, matching, job lifecycle, payment state, worker verification, and persistence. The device may continue to own camera/location permissions and presentation-only calculations.
+
+New accounts can choose `TECHNICIAN` at registration. This role is required for the protected `/api/v1/technicians/profile*` endpoints. Technician application submission registers/updates the profile, uploads the profile picture and National ID/certificate files, and fetches the server's review state and document metadata. Failed/partial submissions retain a retryable local draft; the technician verification state itself is never auto-approved locally.
 
 ## Mock code still present
 
 The following are intentionally retained until the backend contract is ready:
 
 - `constants/simulation.ts`: fake technicians, quotes, additional work, and timers
-- AsyncStorage job/work persistence
-- `PRE_VERIFIED` worker seed data
-- Same-device customer/technician job sharing
+- Customer job data in `FundiContext` and AsyncStorage
+- Same-device customer job lifecycle simulation
 
 Authentication no longer uses local accounts or demo OTPs. AsyncStorage retains only the non-secret pending OTP phone/intent/timestamp; JWTs use SecureStore on native and `sessionStorage` on web.
 
@@ -471,6 +472,6 @@ Authentication no longer uses local accounts or demo OTPs. AsyncStorage retains 
 - [ ] Run `pnpm --filter @workspace/site-visit-logger run typecheck`.
 - [ ] Start the mobile web target with `pnpm dev:app:web`.
 - [ ] Verify real API registration/login, SMS OTP verification/resend, token restore/refresh, and logout on Expo Go.
-- [ ] Verify job creation, job detail, lifecycle actions, worker offers, payments, and ratings still use mock data.
+- [ ] Verify technician registration, profile submission, profile picture and KYC uploads, retry behavior, and server review status.
+- [ ] Verify job creation, job detail, lifecycle actions, payments, and ratings still use mock data; technician job dispatch remains unavailable until server endpoints are provided.
 - [ ] Remove simulation only after all production paths are server-backed.
-

@@ -1,9 +1,11 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import React, { useState, useEffect } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View, Alert, ActivityIndicator, ScrollView } from 'react-native';
-import { TRADES, type Trade } from '@/constants/work';
+import { TRADES } from '@/constants/work';
 import { useWork } from '@/context/WorkContext';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
@@ -18,13 +20,13 @@ async function capture(): Promise<string | null> {
 
 export function WorkApplication() {
   const colors = useColors();
-  const { apply, profile } = useWork();
+  const { apply, profile, applicationError } = useWork();
   const { account } = useAuth();
 
   // Section 1: Profile & Identity Information (Prepopulated from account)[cite: 3]
   const [fullName, setFullName] = useState(account?.name ?? '');
   const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '');
-  const [email, setEmail] = useState(account?.email ?? '');
+  const [email, setEmail] = useState('');
   const [gender, setGender] = useState<'FEMALE' | 'MALE' | 'NON_BINARY' | 'PREFER_NOT_TO_SAY'>('FEMALE');
   const [nationalIdNumber, setNationalIdNumber] = useState('');
   const [baseAddress, setBaseAddress] = useState('');
@@ -49,9 +51,26 @@ export function WorkApplication() {
         setPhoneNumber(account.phone);
         setPaymentNumber(account.phone);
       }
-      if (account.email) setEmail(account.email);
     }
   }, [account]);
+
+  useEffect(() => {
+    if (!profile) return;
+    setFullName(profile.fullName ?? account?.name ?? '');
+    setPhoneNumber(profile.phoneNumber ?? account?.phone ?? '');
+    setEmail(profile.email ?? '');
+    setGender(profile.gender ?? 'FEMALE');
+    setNationalIdNumber(profile.nationalIdNumber ?? '');
+    setBaseAddress(profile.baseAddress ?? '');
+    setPaymentMethod(profile.paymentMethod ?? 'MOMO');
+    setPaymentNumber(profile.paymentNumber ?? account?.phone ?? '');
+    setProfilePictureUri(profile.profilePictureUri ?? profile.profilePictureUrl ?? undefined);
+    setIdPhotoUri(profile.idPhotoUri || undefined);
+    setCertificateUris(profile.certificateUris);
+    if (profile.serviceExperiences?.length) {
+      setServiceExperiences(profile.serviceExperiences);
+    }
+  }, [account, profile]);
 
   const isProfileComplete =
     !!fullName.trim() &&
@@ -72,13 +91,22 @@ export function WorkApplication() {
 
   const ready = isProfileComplete && isJobAppComplete;
 
-  async function pickFromLibrary(): Promise<string | null> {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78 });
+  async function pickFromLibrary(imagesOnly: boolean): Promise<string | null> {
+    if (imagesOnly) {
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78 });
+      if (result.canceled || !result.assets[0]?.uri) return null;
+      return result.assets[0].uri;
+    }
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['image/*', 'application/pdf'],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
     if (result.canceled || !result.assets[0]?.uri) return null;
     return result.assets[0].uri;
   }
 
-  function chooseSource(onChosen: (uri: string) => void) {
+  function chooseSource(onChosen: (uri: string) => void, imagesOnly = false) {
     Alert.alert('Add document', undefined, [
       { text: 'Take a photo', onPress: async () => {
         const uri = await capture();
@@ -86,7 +114,7 @@ export function WorkApplication() {
         else setError('Camera access is needed to take a photo.');
       } },
       { text: 'Upload a file', onPress: async () => {
-        const uri = await pickFromLibrary();
+        const uri = await pickFromLibrary(imagesOnly);
         if (uri) onChosen(uri);
         else setError('No file selected.');
       } },
@@ -96,7 +124,6 @@ export function WorkApplication() {
 
   const addServiceExperience = () => {
     if (serviceExperiences.length >= 10) return;
-    // Find first available trade that hasn't been selected yet
     const selectedTrades = serviceExperiences.map((e) => e.trade);
     const availableTrade = TRADES.find((t) => !selectedTrades.includes(t)) ?? 'Others';
     setServiceExperiences([...serviceExperiences, { trade: availableTrade, customName: '', yearsOfExperience: 1 }]);
@@ -117,7 +144,11 @@ export function WorkApplication() {
     setError('');
     setLoading(true);
     try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) throw new Error('Location permission is required to register your service area.');
+      const position = await Location.getCurrentPositionAsync({});
       const formattedExperiences = serviceExperiences.map((exp) => ({
+        trade: exp.trade,
         customName: exp.trade === 'Others' ? exp.customName.trim() : exp.trade,
         yearsOfExperience: Number(exp.yearsOfExperience) || 0,
       }));
@@ -129,8 +160,8 @@ export function WorkApplication() {
         gender,
         nationalIdNumber,
         baseAddress,
-        baseLatitude: -1.95,
-        baseLongitude: 30.06,
+        baseLatitude: position.coords.latitude,
+        baseLongitude: position.coords.longitude,
         paymentMethod,
         paymentNumber,
         profilePictureUri,
@@ -139,10 +170,10 @@ export function WorkApplication() {
         yearsExperience: Math.max(...formattedExperiences.map((e) => e.yearsOfExperience), 0),
         trade: formattedExperiences[0]?.customName || 'General',
         serviceExperiences: formattedExperiences,
-      } as any);
+      });
       setSubmitted(true);
-    } catch (err: any) {
-      setError(err?.message || 'Submission failed.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Submission failed.');
     } finally {
       setLoading(false);
     }
@@ -166,7 +197,7 @@ export function WorkApplication() {
         <Text style={[styles.label, { color: colors.foreground }]}>Profile Picture</Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => chooseSource((uri) => setProfilePictureUri(uri))}
+          onPress={() => chooseSource((uri) => setProfilePictureUri(uri), true)}
           style={[styles.upload, { borderColor: profilePictureUri ? colors.success : colors.border }]}
         >
           {profilePictureUri ? (
@@ -241,7 +272,7 @@ export function WorkApplication() {
           onPress={() => chooseSource((uri) => setIdPhotoUri(uri))}
           style={[styles.upload, { borderColor: idPhotoUri ? colors.success : colors.border }]}
         >
-          {idPhotoUri ? (
+          {idPhotoUri && !idPhotoUri.toLowerCase().includes('.pdf') ? (
             <Image source={{ uri: idPhotoUri }} style={styles.thumbnail} contentFit="cover" />
           ) : (
             <Ionicons name="card-outline" size={21} color={colors.primary} />
@@ -296,7 +327,6 @@ export function WorkApplication() {
         <Text style={[styles.label, { color: colors.foreground }]}>Service Experiences & Years of Experience</Text>
         {serviceExperiences.map((exp, index) => {
           const isOther = exp.trade === 'Others';
-          // Filter out trades already selected in *other* rows, but keep the current row's trade option available
           const otherSelectedTrades = serviceExperiences
             .filter((_, i) => i !== index)
             .map((e) => e.trade);
@@ -304,45 +334,42 @@ export function WorkApplication() {
 
           return (
             <View key={index} style={styles.experienceCard}>
-              <View style={styles.experienceRow}>
-                <View style={{ flex: 2, gap: 4 }}>
-                  {!isOther ? (
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dropdownScroll}>
-                      {availableOptions.map((option) => {
-                        const selected = exp.trade === option;
-                        return (
-                          <Pressable
-                            key={option}
-                            onPress={() => updateServiceExperience(index, 'trade', option)}
-                            style={[
-                              styles.tradeChip,
-                              { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.background },
-                            ]}
-                          >
-                            <Text style={[styles.tradeChipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>{option}</Text>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
-                  ) : (
-                    <View style={styles.customTradeHeader}>
-                      <Text style={[styles.customBadgeText, { color: colors.primary }]}>Custom Trade</Text>
-                      <Pressable onPress={() => updateServiceExperience(index, 'trade', TRADES[0] ?? 'Plumbing')} style={styles.switchBackBtn}>
-                        <Text style={[styles.switchBackText, { color: colors.mutedForeground }]}>Change to preset</Text>
+              {!isOther ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dropdownScroll}>
+                  {availableOptions.map((option) => {
+                    const selected = exp.trade === option;
+                    return (
+                      <Pressable
+                        key={option}
+                        onPress={() => updateServiceExperience(index, 'trade', option)}
+                        style={[
+                          styles.tradeChip,
+                          { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.background },
+                        ]}
+                      >
+                        <Text style={[styles.tradeChipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>{option}</Text>
                       </Pressable>
-                    </View>
-                  )}
+                    );
+                  })}
+                </ScrollView>
+              ) : null}
 
-                  {isOther && (
-                    <TextInput
-                      value={exp.customName}
-                      onChangeText={(val) => updateServiceExperience(index, 'customName', val)}
-                      placeholder="Enter custom trade name"
-                      placeholderTextColor={colors.mutedForeground}
-                      style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
-                    />
-                  )}
-                </View>
+              <View style={styles.experienceRow}>
+                <TextInput
+                  value={isOther ? exp.customName : exp.trade}
+                  onChangeText={(val) => {
+                    if (isOther) {
+                      updateServiceExperience(index, 'customName', val);
+                    }
+                  }}
+                  editable={isOther}
+                  placeholder={isOther ? 'Enter custom trade name' : undefined}
+                  placeholderTextColor={colors.mutedForeground}
+                  style={[
+                    styles.input,
+                    { flex: 2, backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
+                  ]}
+                />
 
                 <TextInput
                   value={String(exp.yearsOfExperience)}
@@ -359,6 +386,15 @@ export function WorkApplication() {
                   </Pressable>
                 )}
               </View>
+
+              {isOther && (
+                <View style={styles.customFooter}>
+                  <Text style={[styles.customBadgeText, { color: colors.primary }]}>Custom Trade</Text>
+                  <Pressable onPress={() => updateServiceExperience(index, 'trade', TRADES[0] ?? 'Plumbing')} style={styles.switchBackBtn}>
+                    <Text style={[styles.switchBackText, { color: colors.mutedForeground }]}>Change to preset</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
           );
         })}
@@ -373,7 +409,11 @@ export function WorkApplication() {
         <Text style={[styles.label, { color: colors.foreground }]}>Certificates / TVET Papers</Text>
         {certificateUris.map((uri, index) => (
           <View key={uri} style={[styles.upload, { borderColor: colors.success }]}>
-            <Image source={{ uri }} style={styles.thumbnail} contentFit="cover" />
+            {uri.toLowerCase().includes('.pdf') ? (
+              <Ionicons name="document-text-outline" size={21} color={colors.primary} />
+            ) : (
+              <Image source={{ uri }} style={styles.thumbnail} contentFit="cover" />
+            )}
             <Text style={[styles.uploadText, { color: colors.foreground }]}>Certificate {index + 1}</Text>
             <Pressable onPress={() => setCertificateUris((current) => current.filter((item) => item !== uri))}>
               <Feather name="x" size={18} color={colors.mutedForeground} />
@@ -392,6 +432,7 @@ export function WorkApplication() {
       </View>
 
       {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
+      {applicationError ? <Text style={[styles.error, { color: colors.destructive }]}>{applicationError}</Text> : null}
 
       <Pressable
         accessibilityRole="button"
@@ -407,7 +448,7 @@ export function WorkApplication() {
           <ActivityIndicator color={colors.primaryForeground} />
         ) : (
           <Text style={[styles.submitText, { color: ready ? colors.primaryForeground : colors.mutedForeground }]}>
-            {submitted ? 'Submitted' : 'Submit Application'}
+            {submitted ? 'Submitted' : applicationError ? 'Retry Submission' : 'Submit Application'}
           </Text>
         )}
       </Pressable>
@@ -430,13 +471,14 @@ const styles = StyleSheet.create({
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { minHeight: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
   chipText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  experienceCard: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.05)', gap: 8 },
-  experienceRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  experienceCard: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.05)', gap: 8 },
+  experienceRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   dropdownScroll: { gap: 6, paddingVertical: 2 },
   tradeChip: { minHeight: 34, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
   tradeChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  customTradeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 2, height: 34 },
-  customBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  customFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 2, marginTop: -2 },
+  customBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  switchBackBtn: { paddingHorizontal: 8, paddingVertical: 4 },
   switchBackText: { fontFamily: 'Inter_500Medium', fontSize: 11, textDecorationLine: 'underline' },
   yearsField: { width: 70, textAlign: 'center' },
   removeBtn: { padding: 12, justifyContent: 'center', alignItems: 'center' },

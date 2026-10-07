@@ -19,10 +19,17 @@ type MessageResponse = { message: string };
 
 export type AuthIntent = 'register' | 'login';
 
-export async function startRegistration(fullName: string, phoneNumber: string): Promise<void> {
+let refreshSessionPromise: Promise<TokenResponse> | null = null;
+let restoreSessionPromise: Promise<ApiUser | null> | null = null;
+
+export async function startRegistration(
+  fullName: string,
+  phoneNumber: string,
+  role: 'CUSTOMER' | 'TECHNICIAN' = 'CUSTOMER',
+): Promise<void> {
   await apiRequest<MessageResponse>('/api/v1/auth/register', {
     method: 'POST',
-    body: { fullName, phoneNumber },
+    body: { fullName, phoneNumber, role },
   });
 }
 
@@ -49,7 +56,7 @@ export async function verifyOtp(phoneNumber: string, otp: string): Promise<Token
   return session;
 }
 
-async function refreshSession(): Promise<TokenResponse> {
+async function requestRefreshSession(): Promise<TokenResponse> {
   const refreshToken = await getRefreshToken();
   if (!refreshToken) throw new ApiRequestError('Your session has expired. Please sign in again.', 401);
 
@@ -61,7 +68,16 @@ async function refreshSession(): Promise<TokenResponse> {
   return session;
 }
 
-export async function restoreSession(): Promise<ApiUser | null> {
+function refreshSession(): Promise<TokenResponse> {
+  if (!refreshSessionPromise) {
+    refreshSessionPromise = requestRefreshSession().finally(() => {
+      refreshSessionPromise = null;
+    });
+  }
+  return refreshSessionPromise;
+}
+
+async function requestSessionRestore(): Promise<ApiUser | null> {
   const refreshToken = await getRefreshToken();
   if (!refreshToken) return null;
 
@@ -81,6 +97,15 @@ export async function restoreSession(): Promise<ApiUser | null> {
     }
     throw error;
   }
+}
+
+export function restoreSession(): Promise<ApiUser | null> {
+  if (!restoreSessionPromise) {
+    restoreSessionPromise = requestSessionRestore().finally(() => {
+      restoreSessionPromise = null;
+    });
+  }
+  return restoreSessionPromise;
 }
 
 export async function logout(): Promise<void> {

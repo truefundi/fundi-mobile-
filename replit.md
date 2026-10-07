@@ -66,10 +66,10 @@ All paths below are under `artifacts/site-visit-logger/`.
 - Only the visit fee is treated as running through Fundi. The repair balance can be settled as Cash, Mobile Money or Other, which is recorded but not processed.
 - Notifications are generated from real job events, so the feed matches whatever stage the job is at.
 - New customers register with their full name and Rwandan mobile number, confirm a 4-digit code, and the account is created. Returning customers sign in with the number and confirm the same code, so knowing a registered number is not enough to open the account behind it.
-- One account can be both sides of the marketplace. A Hiring/Working slider switches roles; Working is gated behind a trade, a national ID and a certificate, and only a verified worker can go online and take jobs.
+- Registration creates either a customer or technician account. Technician accounts submit profile details, a profile picture, a national ID and trade certificates to the backend; only backend-approved technicians can go online.
 - The session persists across restarts, and Profile can log out or delete the account and everything stored for it on the device.
-- The demo code is fixed at 1234 while no SMS gateway is connected (`makeCode` in `constants/auth.ts`), and `PRE_VERIFIED` in `constants/work.ts` grants worker status to listed numbers without documents. Both are placeholders to delete once real verification exists.
-- Not built yet: real SMS delivery, cross-device jobs (a job lives on the device that created it, so technician and customer must share an account today), the §12 matching algorithm, technician-rates-customer, i18n, tests, and the Saved locations / Help / Settings areas of Profile (shown as "Soon").
+- OTP delivery and session creation use the backend. Technician verification status and document review are read from the backend; no local seed or timed auto-approval grants worker access.
+- Not built yet: technician job dispatch/lifecycle APIs, the §12 matching algorithm, technician-rates-customer, i18n, tests, and the Saved locations / Help / Settings areas of Profile (shown as "Soon").
 
 ## User preferences
 

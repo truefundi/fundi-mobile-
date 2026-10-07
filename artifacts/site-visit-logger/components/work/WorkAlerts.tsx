@@ -63,7 +63,7 @@ export function WorkAlerts() {
         <EmptyState
           icon="bell"
           title="Nothing yet"
-          text="Job offers and updates on work you have taken will appear here."
+          text="Job offers and work updates will appear here when technician dispatch APIs are available."
         />
       ) : null}
     </View>

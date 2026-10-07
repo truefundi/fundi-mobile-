@@ -20,6 +20,7 @@ export function RegisterStep({ onBack, onLogin }: Props) {
   const { register } = useAuth();
   const [name, setName] = useState('');
   const [digits, setDigits] = useState('');
+  const [role, setRole] = useState<'CUSTOMER' | 'TECHNICIAN'>('CUSTOMER');
   const [error, setError] = useState('');
   const [isSending, setIsSending] = useState(false);
 
@@ -33,7 +34,7 @@ export function RegisterStep({ onBack, onLogin }: Props) {
     setIsSending(true);
     setError('');
     try {
-      await register(name, digits);
+      await register(name, digits, role);
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'We could not send your code. Try again.');
     } finally {
@@ -74,6 +75,35 @@ export function RegisterStep({ onBack, onLogin }: Props) {
         />
       </View>
 
+      <Text style={[styles.label, { color: colors.foreground }]}>I want to</Text>
+      <View style={styles.roleRow}>
+        {([
+          ['CUSTOMER', 'Hire a technician'],
+          ['TECHNICIAN', 'Work as a technician'],
+        ] as const).map(([value, label]) => {
+          const selected = role === value;
+          return (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => setRole(value)}
+              style={[
+                styles.roleOption,
+                {
+                  borderColor: selected ? colors.primary : colors.border,
+                  backgroundColor: selected ? colors.primary : colors.card,
+                },
+              ]}
+            >
+              <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <Text style={[styles.label, { color: colors.foreground }]}>Phone number</Text>
       {/* The mask carries the format now that the written rule below is gone. */}
       <PhoneField
@@ -103,6 +133,8 @@ const styles = StyleSheet.create({
   step: { flex: 1 },
   heading: { marginTop: 14 },
   label: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 22, marginBottom: 8 },
+  roleRow: { flexDirection: 'row', gap: 8 },
+  roleOption: { flex: 1, minHeight: 46, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
   nameField: { minHeight: 62, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14 },
   nameInput: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 15, height: '100%' },
   error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 12 },
