@@ -38,8 +38,14 @@ export type WorkProfile = {
   paymentNumber?: string;
   profilePictureUri?: string;
   profilePictureUrl?: string | null;
+  profilePictureMimeType?: string;
+  profilePictureSizeBytes?: number;
   idPhotoUri: string;
+  idPhotoMimeType?: string;
+  idPhotoSizeBytes?: number;
   certificateUris: string[];
+  certificateMimeTypes?: Array<string | undefined>;
+  certificateSizeBytes?: Array<number | undefined>;
   serviceExperiences?: Array<{ trade: string; customName: string; yearsOfExperience: number }>;
   documents?: Array<{
     id: string;
@@ -50,6 +56,7 @@ export type WorkProfile = {
     createdAt: string;
     reviewNote: string | null;
   }>;
+  
   submittedAt: string;
 };
 

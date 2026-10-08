@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, BackHandler, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { BackButton } from '@/components/ui/BackButton';
@@ -14,6 +14,7 @@ import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { useColors } from '@/hooks/useColors';
 import { useFundi } from '@/context/FundiContext';
+import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 
 type Urgency = 'Emergency' | 'Today' | 'Schedule';
 
@@ -53,7 +54,13 @@ export default function RequestScreen() {
   const [problem, setProblem] = useState('');
   const [urgency, setUrgency] = useState<Urgency>(emergency === 'true' ? 'Emergency' : 'Today');
   const [photoUri, setPhotoUri] = useState<string>();
+  const [photoError, setPhotoError] = useState('');
+  const [photoSizeBytes, setPhotoSizeBytes] = useState<number>();
+  const [photoMimeType, setPhotoMimeType] = useState<string>();
   const [videoUri, setVideoUri] = useState<string>();
+  const [videoError, setVideoError] = useState('');
+  const [videoSizeBytes, setVideoSizeBytes] = useState<number>();
+  const [videoMimeType, setVideoMimeType] = useState<string>();
   const [videoSeconds, setVideoSeconds] = useState<number>();
   const [isPickingVideo, setIsPickingVideo] = useState(false);
   const [locationLabel, setLocationLabel] = useState(PLACEHOLDER_ADDRESS);
@@ -91,17 +98,54 @@ export default function RequestScreen() {
     return () => subscription.remove();
   });
 
-  const addPhoto = async () => {
-    setError('');
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      setError('Camera access is needed to add a photo.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.78 });
-    if (!result.canceled && result.assets[0]?.uri) {
-      setPhotoUri(result.assets[0].uri);
-      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const addPhoto = async (source: 'camera' | 'library') => {
+    setPhotoError('');
+    try {
+      let result: ImagePicker.ImagePickerResult;
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          setPhotoError('Allow camera access to take a photo.');
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.78 });
+      } else {
+        if (Platform.OS !== 'web') {
+          const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!permission.granted) {
+            setPhotoError('Allow access to your photos to attach one.');
+            return;
+          }
+        }
+        result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78 });
+      }
+      const asset = result.canceled ? undefined : result.assets[0];
+      if (!asset?.uri) return;
+      if (asset.type && asset.type !== 'image' && asset.type !== 'livePhoto') {
+        setPhotoError('Choose a photo, not a video.');
+        return;
+      }
+      const mimeType = inferUploadMimeType(asset.fileName ?? asset.uri, asset.mimeType);
+      const isPhoto = asset.type === 'image' || mimeType?.startsWith('image/');
+      if (!isPhoto) {
+        setPhotoError('Choose a photo, not a video or document.');
+        return;
+      }
+      const verifiedMimeType = mimeType ?? 'image/jpeg';
+      if (asset.fileSize === undefined) {
+        setPhotoError(`We couldn't check this photo's size. Choose another photo up to ${MAX_UPLOAD_SIZE_LABEL}.`);
+        return;
+      }
+      if (asset.fileSize > MAX_UPLOAD_SIZE_BYTES) {
+        setPhotoError(`This photo is larger than ${MAX_UPLOAD_SIZE_LABEL}. Choose a smaller photo.`);
+        return;
+      }
+      setPhotoUri(asset.uri);
+      setPhotoSizeBytes(asset.fileSize);
+      setPhotoMimeType(verifiedMimeType);
+      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    } catch {
+      setPhotoError('We could not open that photo. Please try again.');
     }
   };
 
@@ -110,30 +154,54 @@ export default function RequestScreen() {
    * Android, iOS and web, and needs no microphone permission.
    */
   const addVideo = async () => {
-    setError('');
+    setVideoError('');
     setIsPickingVideo(true);
     try {
       if (Platform.OS !== 'web') {
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
-          setError('Allow access to your videos to attach one.');
+          setVideoError('Allow access to your videos to attach one.');
           return;
         }
       }
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 1 });
       const asset = result.canceled ? undefined : result.assets[0];
       if (!asset?.uri) return;
+      if (asset.type && asset.type !== 'video') {
+        setVideoError('Choose a video file for this attachment.');
+        return;
+      }
+      const mimeType = inferUploadMimeType(asset.fileName ?? asset.uri, asset.mimeType);
+      const isVideo = asset.type === 'video' || mimeType?.startsWith('video/');
+      if (!isVideo) {
+        setVideoError('Choose a video, not a photo or document.');
+        return;
+      }
+      if (!mimeType) {
+        setVideoError('We could not verify this video type. Choose another video file.');
+        return;
+      }
+      if (asset.fileSize === undefined) {
+        setVideoError(`We couldn't check this video's size. Choose another video up to ${MAX_UPLOAD_SIZE_LABEL}.`);
+        return;
+      }
+      if (asset.fileSize > MAX_UPLOAD_SIZE_BYTES) {
+        setVideoError(`This video is larger than ${MAX_UPLOAD_SIZE_LABEL}. Choose a smaller video.`);
+        return;
+      }
       // Duration is in milliseconds, and missing on some web browsers.
       const seconds = asset.duration ? asset.duration / 1000 : undefined;
       if (seconds && seconds > MAX_VIDEO_SECONDS) {
-        setError(`That video is ${formatDuration(seconds)} long. Choose one under ${MAX_VIDEO_SECONDS / 60} minutes.`);
+        setVideoError(`That video is ${formatDuration(seconds)} long. Choose one under ${MAX_VIDEO_SECONDS / 60} minutes.`);
         return;
       }
       setVideoUri(asset.uri);
+      setVideoSizeBytes(asset.fileSize);
+      setVideoMimeType(mimeType);
       setVideoSeconds(seconds);
-      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     } catch {
-      setError('We could not open your videos. Try again.');
+      setVideoError('We could not open your videos. Try again.');
     } finally {
       setIsPickingVideo(false);
     }
@@ -223,10 +291,39 @@ export default function RequestScreen() {
         setStep(check);
         return;
       }
+      if (photoError) {
+        setStep(1);
+        return;
+      }
+      if (photoUri && (photoSizeBytes === undefined || photoSizeBytes > MAX_UPLOAD_SIZE_BYTES)) {
+        setPhotoError(`Choose a photo up to ${MAX_UPLOAD_SIZE_LABEL}.`);
+        setStep(1);
+        return;
+      }
+      if (videoError) {
+        setStep(1);
+        return;
+      }
+      if (videoUri && (videoSizeBytes === undefined || videoSizeBytes > MAX_UPLOAD_SIZE_BYTES)) {
+        setVideoError(`Choose a video up to ${MAX_UPLOAD_SIZE_LABEL}.`);
+        setStep(1);
+        return;
+      }
     }
     setIsSubmitting(true);
     try {
-      const jobId = await addRequest({ service, problem: problem.trim(), urgency, locationLabel, photoUri, videoUri });
+      const jobId = await addRequest({
+        service,
+        problem: problem.trim(),
+        urgency,
+        locationLabel,
+        photoUri,
+        photoSizeBytes,
+        photoMimeType,
+        videoUri,
+        videoSizeBytes,
+        videoMimeType,
+      });
       if (Platform.OS !== 'web') await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Hand straight over to the job screen, which picks the stage to show.
       router.replace(`/job/${jobId}`);
@@ -301,23 +398,40 @@ export default function RequestScreen() {
             {errorView}
 
             <Text style={[styles.fieldLabel, { color: colors.foreground }]}>
-              Photo or video <Text style={[styles.optional, { color: colors.mutedForeground }]}>(optional)</Text>
+              Photo or video <Text style={[styles.optional, { color: colors.mutedForeground }]}>(optional, max {MAX_UPLOAD_SIZE_LABEL} each)</Text>
             </Text>
             <View style={[styles.mediaRow, stackMedia && styles.mediaColumn]}>
               <MediaButton
                 testID="add-photo-button"
                 icon="camera-outline"
                 label={photoUri ? 'Photo added' : 'Add photo'}
-                hint={photoUri ? 'Tap to retake' : 'Take a picture'}
+                hint={photoUri ? 'Tap to change' : `Photo up to ${MAX_UPLOAD_SIZE_LABEL}`}
+                error={photoError}
                 thumbnailUri={photoUri}
-                onPress={addPhoto}
-                onRemove={photoUri ? () => setPhotoUri(undefined) : undefined}
+                onPress={() => {
+                  if (Platform.OS === 'web') {
+                    void addPhoto('library');
+                    return;
+                  }
+                  Alert.alert('Add a photo', undefined, [
+                    { text: 'Take a photo', onPress: () => { void addPhoto('camera'); } },
+                    { text: 'Choose from photos', onPress: () => { void addPhoto('library'); } },
+                    { text: 'Cancel', style: 'cancel' },
+                  ]);
+                }}
+                onRemove={photoUri ? () => {
+                  setPhotoUri(undefined);
+                  setPhotoSizeBytes(undefined);
+                  setPhotoMimeType(undefined);
+                  setPhotoError('');
+                } : undefined}
               />
               <MediaButton
                 testID="add-video-button"
                 icon="videocam-outline"
                 label={videoUri ? 'Video added' : 'Add video'}
-                hint={videoUri ? (videoSeconds ? `${formatDuration(videoSeconds)} · tap to change` : 'Tap to change') : `Up to ${MAX_VIDEO_SECONDS / 60} minutes`}
+                hint={videoUri ? (videoSeconds ? `${formatDuration(videoSeconds)} · tap to change` : 'Tap to change') : `Up to ${MAX_UPLOAD_SIZE_LABEL} · ${MAX_VIDEO_SECONDS / 60} min`}
+                error={videoError}
                 attached={!!videoUri}
                 busy={isPickingVideo}
                 onPress={addVideo}
@@ -326,6 +440,9 @@ export default function RequestScreen() {
                     ? () => {
                         setVideoUri(undefined);
                         setVideoSeconds(undefined);
+                        setVideoSizeBytes(undefined);
+                        setVideoMimeType(undefined);
+                        setVideoError('');
                       }
                     : undefined
                 }
@@ -483,6 +600,7 @@ type MediaButtonProps = {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   hint: string;
+  error?: string;
   thumbnailUri?: string;
   attached?: boolean;
   busy?: boolean;
@@ -490,7 +608,7 @@ type MediaButtonProps = {
   onRemove?: () => void;
 };
 
-function MediaButton({ testID, icon, label, hint, thumbnailUri, attached, busy, onPress, onRemove }: MediaButtonProps) {
+function MediaButton({ testID, icon, label, hint, error, thumbnailUri, attached, busy, onPress, onRemove }: MediaButtonProps) {
   const colors = useColors();
   const isAttached = attached || !!thumbnailUri;
   return (
@@ -520,6 +638,11 @@ function MediaButton({ testID, icon, label, hint, thumbnailUri, attached, busy, 
           <Text numberOfLines={1} style={[styles.mediaHint, { color: colors.mutedForeground }]}>{hint}</Text>
         </View>
       </Pressable>
+      {error ? (
+        <Text accessibilityLiveRegion="polite" style={[styles.mediaError, { color: colors.destructive }]}>
+          {error}
+        </Text>
+      ) : null}
       {onRemove ? (
         <Pressable
           accessibilityRole="button"
@@ -581,6 +704,7 @@ const styles = StyleSheet.create({
   mediaCopy: { flex: 1 },
   mediaText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   mediaHint: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
+  mediaError: { fontFamily: 'Inter_500Medium', fontSize: 11, lineHeight: 15, marginTop: 6 },
   thumbnail: { width: 38, height: 38, borderRadius: 9 },
   removeButton: { position: 'absolute', top: -7, right: -7, width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   mapPlaceholder: { borderRadius: 16, borderWidth: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, marginTop: 22 },

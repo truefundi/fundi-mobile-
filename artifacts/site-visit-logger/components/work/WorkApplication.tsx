@@ -4,26 +4,48 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import React, { useState, useEffect } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View, Alert, ActivityIndicator, Platform, ScrollView } from 'react-native';
 import { TRADES } from '@/constants/work';
+import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { useWork } from '@/context/WorkContext';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 
-const MAX_FILE_SIZE_MB = 5;
-const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
-
 type FileData = {
   uri: string;
+  name?: string;
   size?: number;
+  mimeType?: string;
 };
+
+async function readBrowserFileMetadata(file: FileData): Promise<FileData> {
+  if (Platform.OS !== 'web') return file;
+  const response = await fetch(file.uri);
+  if (!response.ok) throw new Error('We could not read that file. Please choose it again.');
+  const blob = await response.blob();
+  return {
+    ...file,
+    size: blob.size,
+    mimeType: inferUploadMimeType(file.name ?? file.uri, file.mimeType ?? blob.type),
+  };
+}
 
 async function capture(): Promise<FileData | null> {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
-  if (!permission.granted) return null;
+  if (!permission.granted) throw new Error('Allow camera access to take a photo.');
   const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.78 });
   if (result.canceled || !result.assets[0]?.uri) return null;
-  return { uri: result.assets[0].uri, size: result.assets[0].fileSize };
+  const asset = result.assets[0];
+  if (asset.type && asset.type !== 'image' && asset.type !== 'livePhoto') {
+    throw new Error('Choose a photo for this field.');
+  }
+  return readBrowserFileMetadata({
+    uri: asset.uri,
+    name: asset.fileName ?? undefined,
+    size: asset.fileSize ?? undefined,
+    mimeType: inferUploadMimeType(asset.fileName ?? asset.uri, asset.mimeType) ??
+      (asset.type === 'image' ? 'image/jpeg' : undefined),
+  });
 }
 
 export function WorkApplication() {
@@ -41,9 +63,12 @@ export function WorkApplication() {
   const [paymentMethod, setPaymentMethod] = useState<'MOMO' | 'BANK_TRANSFER' | 'CASH' | 'OTHER'>('MOMO');
   const [paymentNumber, setPaymentNumber] = useState(account?.phone ?? '');
   
-  // File states now hold size for validation
+  // Keep picker metadata to validate file type and size before upload.
   const [profilePicture, setProfilePicture] = useState<FileData | null>(null);
   const [idPhoto, setIdPhoto] = useState<FileData | null>(null);
+  const [profilePictureSelectionError, setProfilePictureSelectionError] = useState('');
+  const [idPhotoSelectionError, setIdPhotoSelectionError] = useState('');
+  const [certificateSelectionError, setCertificateSelectionError] = useState('');
 
   // Section 2: Job Application & Multiple Service Experiences
   const [serviceExperiences, setServiceExperiences] = useState<Array<{ trade: string; customName: string; yearsOfExperience: number }>>([
@@ -75,9 +100,21 @@ export function WorkApplication() {
     setPaymentMethod(profile.paymentMethod ?? 'MOMO');
     setPaymentNumber(profile.paymentNumber ?? account?.phone ?? '');
     
-    setProfilePicture(profile.profilePictureUri || profile.profilePictureUrl ? { uri: profile.profilePictureUri || profile.profilePictureUrl! } : null);
-    setIdPhoto(profile.idPhotoUri ? { uri: profile.idPhotoUri } : null);
-    setCertificates(profile.certificateUris?.map(uri => ({ uri })) || []);
+    setProfilePicture(profile.profilePictureUri || profile.profilePictureUrl ? {
+      uri: profile.profilePictureUri || profile.profilePictureUrl!,
+      size: profile.profilePictureSizeBytes,
+      mimeType: profile.profilePictureMimeType,
+    } : null);
+    setIdPhoto(profile.idPhotoUri ? {
+      uri: profile.idPhotoUri,
+      size: profile.idPhotoSizeBytes,
+      mimeType: profile.idPhotoMimeType,
+    } : null);
+    setCertificates(profile.certificateUris?.map((uri, index) => ({
+      uri,
+      size: profile.certificateSizeBytes?.[index],
+      mimeType: profile.certificateMimeTypes?.[index],
+    })) || []);
     
     if (profile.serviceExperiences?.length) {
       setServiceExperiences(profile.serviceExperiences);
@@ -88,15 +125,26 @@ export function WorkApplication() {
   const emailError = email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'Invalid email format' : '';
   const idError = nationalIdNumber && !/^\d{16}$/.test(nationalIdNumber) ? 'National ID must be exactly 16 digits' : '';
 
-  const getFileError = (file: FileData | null) => {
-    if (file?.size && file.size > MAX_FILE_SIZE_BYTES) {
-      return `File is too large (${(file.size / (1024 * 1024)).toFixed(2)} MB). Max limit is ${MAX_FILE_SIZE_MB}MB.`;
+  const getFileError = (file: FileData | null, allowPdf = false) => {
+    if (!file) return '';
+    if (/^https?:\/\//i.test(file.uri)) return '';
+    if (file.size === undefined || !Number.isFinite(file.size) || file.size < 0) {
+      return `We couldn't check this file's size. Please choose it again (maximum ${MAX_UPLOAD_SIZE_LABEL}).`;
     }
-    return '';
+    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+      return `This file is larger than ${MAX_UPLOAD_SIZE_LABEL}. Please choose a smaller one.`;
+    }
+    const mimeType = inferUploadMimeType(file.name ?? file.uri, file.mimeType);
+    if (mimeType?.startsWith('image/')) return '';
+    if (allowPdf && mimeType === 'application/pdf') return '';
+    return allowPdf
+      ? 'Choose a photo or PDF file.'
+      : 'Choose a photo. Videos and documents cannot be used as a profile picture.';
   };
 
   const profilePicError = getFileError(profilePicture);
-  const idPhotoError = getFileError(idPhoto);
+  const idPhotoError = getFileError(idPhoto, true);
+  const certificateFileErrors = certificates.map((file) => getFileError(file, true));
 
   const isProfileComplete =
     !!fullName.trim() &&
@@ -115,7 +163,15 @@ export function WorkApplication() {
     }) &&
     certificates.length > 0;
 
-  const noValidationErrors = !emailError && !idError && !profilePicError && !idPhotoError && !certificates.some(c => getFileError(c));
+  const noValidationErrors =
+    !emailError &&
+    !idError &&
+    !profilePicError &&
+    !idPhotoError &&
+    !profilePictureSelectionError &&
+    !idPhotoSelectionError &&
+    !certificateSelectionError &&
+    certificateFileErrors.every((message) => !message);
 
   const ready = isProfileComplete && isJobAppComplete && noValidationErrors;
 
@@ -123,7 +179,17 @@ export function WorkApplication() {
     if (imagesOnly) {
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78 });
       if (result.canceled || !result.assets[0]?.uri) return null;
-      return { uri: result.assets[0].uri, size: result.assets[0].fileSize };
+      const asset = result.assets[0];
+      if (asset.type && asset.type !== 'image' && asset.type !== 'livePhoto') {
+        throw new Error('Choose a photo for this field.');
+      }
+      return {
+        uri: asset.uri,
+        name: asset.fileName ?? undefined,
+        size: asset.fileSize ?? undefined,
+        mimeType: inferUploadMimeType(asset.fileName ?? asset.uri, asset.mimeType) ??
+          (asset.type === 'image' ? 'image/jpeg' : undefined),
+      };
     }
     const result = await DocumentPicker.getDocumentAsync({
       type: ['image/*', 'application/pdf'],
@@ -131,21 +197,47 @@ export function WorkApplication() {
       multiple: false,
     });
     if (result.canceled || !result.assets[0]?.uri) return null;
-    return { uri: result.assets[0].uri, size: result.assets[0].size };
+    const asset = result.assets[0];
+    return readBrowserFileMetadata({
+      uri: asset.uri,
+      name: asset.name,
+      size: asset.size ?? undefined,
+      mimeType: inferUploadMimeType(asset.name || asset.uri, asset.mimeType),
+    });
   }
 
-  function chooseSource(onChosen: (file: FileData) => void, imagesOnly = false) {
-    Alert.alert('Add document', undefined, [
-      { text: 'Take a photo', onPress: async () => {
-        const file = await capture();
-        if (file) onChosen(file);
-        else setError('Camera access is needed to take a photo.');
-      } },
-      { text: 'Upload a file', onPress: async () => {
-        const file = await pickFromLibrary(imagesOnly);
-        if (file) onChosen(file);
-        else setError('No file selected.');
-      } },
+  function chooseSource(
+    onChosen: (file: FileData) => void,
+    setSourceError: (message: string) => void,
+    imagesOnly = false,
+  ) {
+    const select = async (source: 'camera' | 'library') => {
+      setSourceError('');
+      try {
+        const file = source === 'camera' ? await capture() : await pickFromLibrary(imagesOnly);
+        if (!file) return;
+        const validationError = getFileError(file, !imagesOnly);
+        if (validationError) {
+          setSourceError(validationError);
+          return;
+        }
+        onChosen(file);
+        setSourceError('');
+      } catch (selectionError) {
+        setSourceError(
+          selectionError instanceof Error
+            ? selectionError.message
+            : 'We could not open that file. Please try again.',
+        );
+      }
+    };
+    if (Platform.OS === 'web') {
+      void select('library');
+      return;
+    }
+    Alert.alert(imagesOnly ? 'Add a profile photo' : 'Add a document', undefined, [
+      { text: 'Take a photo', onPress: () => { void select('camera'); } },
+      { text: 'Upload a file', onPress: () => { void select('library'); } },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }
@@ -193,8 +285,14 @@ export function WorkApplication() {
         paymentMethod,
         paymentNumber,
         profilePictureUri: profilePicture?.uri,
+        profilePictureMimeType: profilePicture?.mimeType,
+        profilePictureSizeBytes: profilePicture?.size,
         idPhotoUri: idPhoto?.uri,
+        idPhotoMimeType: idPhoto?.mimeType,
+        idPhotoSizeBytes: idPhoto?.size,
         certificateUris: certificates.map(c => c.uri),
+        certificateMimeTypes: certificates.map((file) => file.mimeType),
+        certificateSizeBytes: certificates.map((file) => file.size),
         yearsExperience: Math.max(...formattedExperiences.map((e) => e.yearsOfExperience), 0),
         trade: formattedExperiences[0]?.customName || 'General',
         serviceExperiences: formattedExperiences,
@@ -224,11 +322,11 @@ export function WorkApplication() {
       <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Section 1: Profile & Identity</Text>
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Profile Picture<RequiredAsterisk/></Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Profile Picture (photo only, max {MAX_UPLOAD_SIZE_LABEL})<RequiredAsterisk/></Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => chooseSource((file) => setProfilePicture(file), true)}
-          style={[styles.upload, { borderColor: profilePicError ? colors.destructive : profilePicture ? colors.success : colors.border }]}
+          onPress={() => chooseSource((file) => setProfilePicture(file), setProfilePictureSelectionError, true)}
+          style={[styles.upload, { borderColor: profilePicError || profilePictureSelectionError ? colors.destructive : profilePicture ? colors.success : colors.border }]}
         >
           {profilePicture ? (
             <Image source={{ uri: profilePicture.uri }} style={styles.thumbnail} contentFit="cover" />
@@ -236,9 +334,11 @@ export function WorkApplication() {
             <Ionicons name="person-circle-outline" size={21} color={colors.primary} />
           )}
           <Text style={[styles.uploadText, { color: colors.foreground }]}>{profilePicture ? 'Picture added' : 'Upload profile picture'}</Text>
-          {profilePicture && !profilePicError ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
+          {profilePicture && !profilePicError && !profilePictureSelectionError ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
         </Pressable>
-        {profilePicError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{profilePicError}</Text> : null}
+        {profilePicError || profilePictureSelectionError ? (
+          <Text style={[styles.fieldError, { color: colors.destructive }]}>{profilePicError || profilePictureSelectionError}</Text>
+        ) : null}
 
         <Text style={[styles.label, { color: colors.foreground }]}>Full Name<RequiredAsterisk/></Text>
         <TextInput
@@ -301,21 +401,23 @@ export function WorkApplication() {
         />
         {idError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{idError}</Text> : null}
 
-        <Text style={[styles.label, { color: colors.foreground }]}>National ID Document Photo<RequiredAsterisk/></Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>National ID Document (photo or PDF, max {MAX_UPLOAD_SIZE_LABEL})<RequiredAsterisk/></Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => chooseSource((file) => setIdPhoto(file))}
-          style={[styles.upload, { borderColor: idPhotoError ? colors.destructive : idPhoto ? colors.success : colors.border }]}
+          onPress={() => chooseSource((file) => setIdPhoto(file), setIdPhotoSelectionError)}
+          style={[styles.upload, { borderColor: idPhotoError || idPhotoSelectionError ? colors.destructive : idPhoto ? colors.success : colors.border }]}
         >
-          {idPhoto && !idPhoto.uri.toLowerCase().includes('.pdf') ? (
+          {idPhoto && inferUploadMimeType(idPhoto.name ?? idPhoto.uri, idPhoto.mimeType) !== 'application/pdf' ? (
             <Image source={{ uri: idPhoto.uri }} style={styles.thumbnail} contentFit="cover" />
           ) : (
             <Ionicons name="card-outline" size={21} color={colors.primary} />
           )}
           <Text style={[styles.uploadText, { color: colors.foreground }]}>{idPhoto ? 'ID added' : 'Photograph your ID'}</Text>
-          {idPhoto && !idPhotoError ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
+          {idPhoto && !idPhotoError && !idPhotoSelectionError ? <Feather name="check-circle" size={18} color={colors.success} /> : null}
         </Pressable>
-        {idPhotoError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{idPhotoError}</Text> : null}
+        {idPhotoError || idPhotoSelectionError ? (
+          <Text style={[styles.fieldError, { color: colors.destructive }]}>{idPhotoError || idPhotoSelectionError}</Text>
+        ) : null}
 
         <Text style={[styles.label, { color: colors.foreground }]}>Base Address / Location<RequiredAsterisk/></Text>
         <TextInput
@@ -442,13 +544,13 @@ export function WorkApplication() {
           </Pressable>
         )}
 
-        <Text style={[styles.label, { color: colors.foreground }]}>Certificates / TVET Papers<RequiredAsterisk/></Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>Certificates / TVET Papers (photo or PDF, max {MAX_UPLOAD_SIZE_LABEL} each)<RequiredAsterisk/></Text>
         {certificates.map((file, index) => {
-          const fileError = getFileError(file);
+          const fileError = certificateFileErrors[index] ?? '';
           return (
             <View key={file.uri} style={{ marginTop: 4 }}>
               <View style={[styles.upload, { borderColor: fileError ? colors.destructive : colors.success }]}>
-                {file.uri.toLowerCase().includes('.pdf') ? (
+                {inferUploadMimeType(file.name ?? file.uri, file.mimeType) === 'application/pdf' ? (
                   <Ionicons name="document-text-outline" size={21} color={colors.primary} />
                 ) : (
                   <Image source={{ uri: file.uri }} style={styles.thumbnail} contentFit="cover" />
@@ -463,14 +565,18 @@ export function WorkApplication() {
           );
         })}
         <Pressable
-          onPress={() => chooseSource((file) => setCertificates((current) => [...current, file]))}
+          onPress={() => chooseSource(
+            (file) => setCertificates((current) => [...current, file]),
+            setCertificateSelectionError,
+          )}
           style={[styles.upload, styles.uploadDashed, { borderColor: colors.border }]}
         >
           <Ionicons name="document-attach-outline" size={21} color={colors.primary} />
           <Text style={[styles.uploadText, { color: colors.foreground }]}>
-            {certificates.length ? 'Add another certificate' : 'Photograph a certificate'}
+            {certificates.length ? 'Add another certificate' : 'Add certificate photo or PDF'}
           </Text>
         </Pressable>
+        {certificateSelectionError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{certificateSelectionError}</Text> : null}
       </View>
 
       {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}

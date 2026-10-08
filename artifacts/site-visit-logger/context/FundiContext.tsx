@@ -9,6 +9,7 @@ import {
   TECHNICIAN_DRIVEN,
 } from '@/constants/simulation';
 import { jobsKey, LEGACY_JOBS_KEY } from '@/constants/storage';
+import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { useAuth } from '@/context/AuthContext';
 import {
   isClosed,
@@ -25,7 +26,12 @@ import {
 
 export type { Job, JobStatus } from '@/constants/jobs';
 
-type NewRequest = Pick<Job, 'service' | 'problem' | 'urgency' | 'locationLabel' | 'photoUri' | 'videoUri'>;
+type NewRequest = Pick<Job, 'service' | 'problem' | 'urgency' | 'locationLabel' | 'photoUri' | 'videoUri'> & {
+  photoSizeBytes?: number;
+  photoMimeType?: string;
+  videoSizeBytes?: number;
+  videoMimeType?: string;
+};
 
 type FundiContextValue = {
   jobs: Job[];
@@ -291,10 +297,33 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   );
 
   const addRequest = useCallback(async (request: NewRequest) => {
+    if (request.photoUri) {
+      if (request.photoSizeBytes === undefined || !Number.isFinite(request.photoSizeBytes) || request.photoSizeBytes < 0) {
+        throw new Error(`Choose a photo again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
+      }
+      if (request.photoSizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+        throw new Error(`Your photo must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+      }
+      if (!inferUploadMimeType(request.photoUri, request.photoMimeType)?.startsWith('image/')) {
+        throw new Error('Choose a photo, not a video or document.');
+      }
+    }
+    if (request.videoUri) {
+      if (request.videoSizeBytes === undefined || !Number.isFinite(request.videoSizeBytes) || request.videoSizeBytes < 0) {
+        throw new Error(`Choose a video again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
+      }
+      if (request.videoSizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+        throw new Error(`Your video must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+      }
+      if (!inferUploadMimeType(request.videoUri, request.videoMimeType)?.startsWith('video/')) {
+        throw new Error('Choose a video, not a photo or document.');
+      }
+    }
+    const { photoSizeBytes, photoMimeType, videoSizeBytes, videoMimeType, ...jobRequest } = request;
     const now = new Date().toISOString();
     const id = makeId('job');
     const base: Job = {
-      ...request,
+      ...jobRequest,
       id,
       reference: makeReference(),
       status: 'REQUESTED',

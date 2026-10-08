@@ -7,6 +7,7 @@ import {
   type WorkProfile,
   type WorkStatus,
 } from '@/constants/work';
+import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import type { Job } from '@/constants/jobs';
 import { useAuth } from '@/context/AuthContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
@@ -119,17 +120,31 @@ function mapProfile(
   };
 }
 
-function fileMimeType(uri: string): string {
-  const path = uri.split(/[?#]/, 1)[0]?.toLowerCase() ?? '';
-  if (path.endsWith('.pdf')) return 'application/pdf';
-  if (path.endsWith('.png')) return 'image/png';
-  if (path.endsWith('.webp')) return 'image/webp';
-  return 'image/jpeg';
+function validateApplicationFile(
+  label: string,
+  uri: string,
+  sizeBytes: number | undefined,
+  declaredMimeType: string | undefined,
+  allowPdf = false,
+): string {
+  if (sizeBytes === undefined || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
+    throw new Error(`Please choose ${label} again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
+  }
+  if (sizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+    throw new Error(`${label} must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+  }
+  const mimeType = inferUploadMimeType(uri, declaredMimeType);
+  if (mimeType?.startsWith('image/')) return mimeType;
+  if (allowPdf && mimeType === 'application/pdf') return mimeType;
+  throw new Error(allowPdf ? `${label} must be a photo or PDF.` : `${label} must be a photo.`);
 }
 
-async function appendLocalFile(form: FormData, uri: string, fileName: string): Promise<void> {
-  const mimeType = fileMimeType(uri);
-  const extension = mimeType === 'application/pdf' ? 'pdf' : mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+async function appendLocalFile(form: FormData, uri: string, fileName: string, mimeType: string): Promise<void> {
+  const extension = mimeType === 'application/pdf'
+    ? 'pdf'
+    : mimeType === 'image/jpeg'
+      ? 'jpg'
+      : mimeType.slice('image/'.length).replace(/[^a-z0-9]/g, '') || 'img';
   const fullName = `${fileName}.${extension}`;
   if (Platform.OS === 'web') {
     const response = await fetch(uri);
@@ -196,6 +211,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState((current) => {
         const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID' && document.status !== 'DENIED');
         const hasCertificate = documents.some((document) => document.type === 'CERTIFICATE' && document.status !== 'DENIED');
+        // Check if server profile already has profile picture AND documents exist on server
         const applicationNeedsFiles = !serverProfile.profilePictureUrl || !hasNationalId || !hasCertificate;
         const next: Stored = {
           ...current,
@@ -305,6 +321,30 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         if (storageKey) await AsyncStorage.setItem(storageKey, serializeStored(savedState));
 
         try {
+          const profilePictureMimeType = application.profilePictureUri && !/^https?:\/\//i.test(application.profilePictureUri)
+            ? validateApplicationFile(
+                'Your profile picture',
+                application.profilePictureUri,
+                application.profilePictureSizeBytes,
+                application.profilePictureMimeType,
+              )
+            : undefined;
+          const idPhotoMimeType = validateApplicationFile(
+            'Your ID document',
+            application.idPhotoUri,
+            application.idPhotoSizeBytes,
+            application.idPhotoMimeType,
+            true,
+          );
+          const certificateMimeTypes = application.certificateUris.map((uri, index) =>
+            validateApplicationFile(
+              `Certificate ${index + 1}`,
+              uri,
+              application.certificateSizeBytes?.[index],
+              application.certificateMimeTypes?.[index],
+              true,
+            ),
+          );
           const experiences = (application.serviceExperiences ?? [{
             trade: application.trade,
             customName: application.trade,
@@ -354,7 +394,8 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
           if (application.profilePictureUri && !serverProfile.profilePictureUrl) {
             const form = new FormData();
-            await appendLocalFile(form, application.profilePictureUri, 'profile-picture');
+            if (!profilePictureMimeType) throw new Error('Choose a profile photo before uploading.');
+            await appendLocalFile(form, application.profilePictureUri, 'profile-picture', profilePictureMimeType);
             serverProfile = await apiUpload<ApiTechnicianProfile>(
               '/api/v1/technicians/profile/picture',
               form,
@@ -382,7 +423,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             const form = new FormData();
             form.append('type', 'NATIONAL_ID');
             form.append('title', 'National ID');
-            await appendLocalFile(form, application.idPhotoUri, 'national-id');
+            await appendLocalFile(form, application.idPhotoUri, 'national-id', idPhotoMimeType);
             await apiUpload('/api/v1/technicians/profile/documents', form);
           }
 
@@ -391,12 +432,14 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             if (documentExists('CERTIFICATE', title)) continue;
             await removeDeniedDocument('CERTIFICATE', title);
             const experience = experiences[Math.min(index, experiences.length - 1)];
+            const mimeType = certificateMimeTypes[index];
+            if (!mimeType) throw new Error(`Choose Certificate ${index + 1} again before uploading.`);
             const form = new FormData();
             form.append('type', 'CERTIFICATE');
             form.append('title', title);
             form.append('certificateType', 'TVET_CERTIFICATE');
             form.append('customCategoryName', experience?.customName || 'General');
-            await appendLocalFile(form, uri, `certificate-${index + 1}`);
+            await appendLocalFile(form, uri, `certificate-${index + 1}`, mimeType);
             await apiUpload('/api/v1/technicians/profile/documents', form);
           }
 
