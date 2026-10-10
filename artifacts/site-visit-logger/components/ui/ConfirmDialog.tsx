@@ -37,15 +37,16 @@ export function ConfirmDialog({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss"
-        testID="confirm-backdrop"
-        onPress={busy ? undefined : onCancel}
-        style={styles.backdrop}
-      >
-        {/* Swallows taps so pressing the card itself never dismisses it. */}
-        <Pressable style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => undefined}>
+      <View style={styles.backdrop}>
+        {/* Behind the card rather than around it, so no button sits inside another. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+          testID="confirm-backdrop"
+          onPress={busy ? undefined : onCancel}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.title, { color: colors.foreground }]}>{title}</Text>
           <Text style={[styles.message, { color: colors.mutedForeground }]}>{message}</Text>
           {/* Stacked, confirm on top: long labels such as "Decline extra work"
@@ -61,8 +62,8 @@ export function ConfirmDialog({
             />
             <Button label={cancelLabel} variant="outline" onPress={onCancel} disabled={busy} size="small" testID="confirm-cancel-button" />
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }

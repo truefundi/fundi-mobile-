@@ -148,6 +148,8 @@ export type Job = {
    * payload then carries the uploaded URL instead.
    */
   videoUri?: string;
+  /** When a Schedule request should be visited, as an ISO date-time. Only set when urgency is Schedule. */
+  scheduledFor?: string;
   status: JobStatus;
   /** ISO timestamp of the last status change — drives the simulated timers. */
   statusSince: string;
@@ -172,6 +174,19 @@ export const EMERGENCY_VISIT_FEE = 110;
 
 /** Fundi's cut of the visit fee. The repair itself settles between the two parties. */
 export const COMMISSION_RATE = 0.3;
+
+/** "Tue 8 Oct, 10:00" — the day and time a scheduled visit was booked for. */
+export function formatSchedule(iso: string): string {
+  const date = new Date(iso);
+  const day = date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return `${day}, ${time}`;
+}
+
+/** Urgency as the customer reads it, with the booked time for a scheduled visit. */
+export function urgencyText(job: Pick<Job, 'urgency' | 'scheduledFor'>): string {
+  return job.urgency === 'Schedule' && job.scheduledFor ? `Schedule · ${formatSchedule(job.scheduledFor)}` : job.urgency;
+}
 
 export function visitFeeFor(urgency: Job['urgency']): number {
   return urgency === 'Emergency' ? EMERGENCY_VISIT_FEE : VISIT_FEE;

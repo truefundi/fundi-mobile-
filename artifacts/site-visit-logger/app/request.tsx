@@ -1,4 +1,4 @@
-import * as Haptics from 'expo-haptics';
+import { vibrate, notify } from '@/lib/haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -10,27 +10,39 @@ import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollV
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { FieldLabel } from '@/components/ui/FieldLabel';
 import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { useColors } from '@/hooks/useColors';
+import { urgencyText } from '@/constants/jobs';
+import { PLACE_ICON, type SavedPlace } from '@/constants/places';
+import { SchedulePicker } from '@/components/request/SchedulePicker';
+import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 
 type Urgency = 'Emergency' | 'Today' | 'Schedule';
 
-/** Shown until the customer types an address or taps "Use current". */
-const PLACEHOLDER_ADDRESS = 'Add your service address';
-
 /** Long clips are slow to send on mobile data; a minute or two shows the problem. */
 const MAX_VIDEO_SECONDS = 120;
 
-const STEP_NAMES = ['Problem', 'Location', 'Timing', 'Review'] as const;
+/** Two steps: everything we need on one screen, then a review that can be corrected in place. */
+const STEP_NAMES = ['Details', 'Review'] as const;
 const LAST_STEP = STEP_NAMES.length;
+
+const URGENCIES: Urgency[] = ['Emergency', 'Today', 'Schedule'];
 
 const URGENCY_COPY: Record<Urgency, { text: string; icon: keyof typeof Ionicons.glyphMap }> = {
   Emergency: { text: 'Need someone immediately', icon: 'flash-outline' },
   Today: { text: 'As soon as possible today', icon: 'sunny-outline' },
   Schedule: { text: 'Choose a preferred time', icon: 'calendar-outline' },
 };
+
+const PROBLEM_REQUIRED = 'Tell us what happened so we can find the right technician.';
+const ADDRESS_REQUIRED = 'Add the address where the service is needed.';
+const SCHEDULE_REQUIRED = 'Choose the day and time you want the technician to come.';
+
+/** Which review line is open for editing. */
+type Editing = 'problem' | 'attached' | 'location' | 'urgency' | null;
 
 function formatDuration(seconds: number): string {
   const whole = Math.round(seconds);
@@ -43,44 +55,70 @@ export default function RequestScreen() {
   const { width, height } = useWindowDimensions();
   // Side by side the photo and video buttons truncate on small phones; stack them there.
   const stackMedia = width < 360;
-  // On short screens the map would push the address field below the fold.
-  const mapHeight = height < 700 ? 120 : 190;
+  // On narrow phones "Find my technician" only fits without the arrow and with a slimmer Back.
+  const narrow = width < 360;
+  // Everything now shares one screen, so the map stays small enough to keep the fields in view.
+  const mapHeight = height < 700 ? 96 : 120;
   const router = useRouter();
   const { service: serviceParam, emergency } = useLocalSearchParams<{ service?: string; emergency?: string }>();
   const service = serviceParam || 'General Maintenance';
   const { addRequest } = useFundi();
+  const { savedPlaces, preferences } = useProfile();
+  // A default saved place fills the address in before the customer gets there.
+  const defaultAddress = savedPlaces.find((place) => place.id === preferences.defaultPlaceId)?.address;
   const [step, setStep] = useState(1);
   const [problem, setProblem] = useState('');
   const [urgency, setUrgency] = useState<Urgency>(emergency === 'true' ? 'Emergency' : 'Today');
+  // Only used when urgency is Schedule: the booked visit time.
+  const [scheduledFor, setScheduledFor] = useState<string>();
   const [photoUri, setPhotoUri] = useState<string>();
   const [videoUri, setVideoUri] = useState<string>();
   const [videoSeconds, setVideoSeconds] = useState<number>();
   const [isPickingVideo, setIsPickingVideo] = useState(false);
-  const [locationLabel, setLocationLabel] = useState(PLACEHOLDER_ADDRESS);
+  const [address, setAddress] = useState(defaultAddress ?? '');
   const [isLocating, setIsLocating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Each required field shows its own message under itself; `error` is for everything else.
+  const [problemError, setProblemError] = useState('');
+  const [addressError, setAddressError] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
   const [error, setError] = useState('');
   const [confirmLeave, setConfirmLeave] = useState(false);
+  // Review: the line being corrected, and its unsaved value.
+  const [editing, setEditing] = useState<Editing>(null);
+  const [draftProblem, setDraftProblem] = useState('');
+  const [draftAddress, setDraftAddress] = useState('');
+  const [draftUrgency, setDraftUrgency] = useState<Urgency>('Today');
+  const [draftScheduledFor, setDraftScheduledFor] = useState<string>();
+  const [draftError, setDraftError] = useState('');
 
-  const hasAddress = locationLabel !== PLACEHOLDER_ADDRESS && locationLabel.trim().length > 0;
+  // Saved places can arrive a moment after the form opens; fill the default in then, unless an address was already typed.
+  useEffect(() => {
+    if (defaultAddress) setAddress((current) => (current.trim() ? current : defaultAddress));
+  }, [defaultAddress]);
+
+  const hasAddress = address.trim().length > 0;
   // Anything typed or attached is worth a "discard?" before the form closes.
-  const hasProgress = problem.trim().length > 0 || !!photoUri || !!videoUri || hasAddress;
+  const hasProgress = problem.trim().length > 0 || !!photoUri || !!videoUri || (hasAddress && address !== defaultAddress);
 
   const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
-  /** The top arrow steps back through the form; only on step one does it close it. */
+  /** On the review the arrow first closes an open editor, then goes back to the details. */
   const goBack = () => {
     setError('');
+    if (editing) {
+      closeEditor();
+      return;
+    }
     if (step > 1) {
-      setStep((value) => value - 1);
+      setStep(1);
       return;
     }
     if (hasProgress) setConfirmLeave(true);
     else leave();
   };
 
-  // Android's hardware back follows the same rules as the arrow: step back,
-  // and ask before discarding a filled-in form.
+  // Android's hardware back follows the same rules as the arrow.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -101,7 +139,7 @@ export default function RequestScreen() {
     const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.78 });
     if (!result.canceled && result.assets[0]?.uri) {
       setPhotoUri(result.assets[0].uri);
-      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await vibrate();
     }
   };
 
@@ -131,7 +169,7 @@ export default function RequestScreen() {
       }
       setVideoUri(asset.uri);
       setVideoSeconds(seconds);
-      if (Platform.OS !== 'web') await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await vibrate();
     } catch {
       setError('We could not open your videos. Try again.');
     } finally {
@@ -164,18 +202,19 @@ export default function RequestScreen() {
     }
   };
 
-  const useCurrentLocation = async () => {
-    setError('');
+  /** Fills whichever address field asked: the details step, or the review's editor. */
+  const useCurrentLocation = async (apply: (value: string) => void, fail: (message: string) => void) => {
+    fail('');
     setIsLocating(true);
     try {
       if (Platform.OS === 'web') {
         navigator.geolocation.getCurrentPosition(
           async (position) => {
-            setLocationLabel(await describeCoordinates(position.coords.latitude, position.coords.longitude));
+            apply(await describeCoordinates(position.coords.latitude, position.coords.longitude));
             setIsLocating(false);
           },
           () => {
-            setError('Allow location access to use your current location.');
+            fail('Allow location access to use your current location.');
             setIsLocating(false);
           },
         );
@@ -183,51 +222,60 @@ export default function RequestScreen() {
       }
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) {
-        setError('Allow location access to use your current location.');
+        fail('Allow location access to use your current location.');
         setIsLocating(false);
         return;
       }
       const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      setLocationLabel(await describeCoordinates(current.coords.latitude, current.coords.longitude));
+      apply(await describeCoordinates(current.coords.latitude, current.coords.longitude));
     } catch {
-      setError('We could not read your location. Try again.');
+      fail('We could not read your location. Try again.');
     } finally {
       setIsLocating(false);
     }
   };
 
-  /** Each step is checked before moving on, so a gap is fixed where it happens. */
-  const validate = (current: number): string => {
-    if (current === 1 && !problem.trim()) return 'Tell us what happened so we can find the right technician.';
-    if (current === 2 && !hasAddress) return 'Add a service location before continuing.';
-    return '';
+  /** Both required fields are checked together, so every gap shows at once under its own field. */
+  const checkDetails = (): boolean => {
+    const problemMessage = problem.trim() ? '' : PROBLEM_REQUIRED;
+    const addressMessage = hasAddress ? '' : ADDRESS_REQUIRED;
+    const scheduleMessage = urgency === 'Schedule' && !scheduledFor ? SCHEDULE_REQUIRED : '';
+    setProblemError(problemMessage);
+    setAddressError(addressMessage);
+    setScheduleError(scheduleMessage);
+    return !problemMessage && !addressMessage && !scheduleMessage;
   };
 
   const next = () => {
-    const problemWithStep = validate(step);
-    if (problemWithStep) {
-      setError(problemWithStep);
-      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+    setError('');
+    if (step === 1) {
+      if (!checkDetails()) {
+        notify('warning');
+        return;
+      }
+      setStep(2);
       return;
     }
-    setError('');
-    if (step < LAST_STEP) setStep((value) => value + 1);
-    else submit();
+    submit();
   };
 
   const submit = async () => {
-    for (const check of [1, 2]) {
-      const message = validate(check);
-      if (message) {
-        setError(message);
-        setStep(check);
-        return;
-      }
+    if (!checkDetails()) {
+      setStep(1);
+      return;
     }
     setIsSubmitting(true);
     try {
-      const jobId = await addRequest({ service, problem: problem.trim(), urgency, locationLabel, photoUri, videoUri });
-      if (Platform.OS !== 'web') await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const jobId = await addRequest({
+        service,
+        problem: problem.trim(),
+        urgency,
+        scheduledFor: urgency === 'Schedule' ? scheduledFor : undefined,
+        locationLabel: address.trim(),
+        photoUri,
+        videoUri,
+      });
+      await notify('success');
       // Hand straight over to the job screen, which picks the stage to show.
       router.replace(`/job/${jobId}`);
     } catch {
@@ -237,20 +285,161 @@ export default function RequestScreen() {
     }
   };
 
-  const editStep = (target: number) => {
+  /** Opens one review line for editing, starting from what is saved. */
+  const openEditor = (line: Exclude<Editing, null>) => {
     setError('');
-    setStep(target);
+    setDraftError('');
+    setDraftProblem(problem);
+    setDraftAddress(address);
+    setDraftUrgency(urgency);
+    setDraftScheduledFor(scheduledFor);
+    setEditing(line);
   };
 
-  // Shown right under the field it is about, so it is never hidden behind the pinned buttons.
-  const errorView = error ? (
-    <View style={styles.errorRow} accessibilityLiveRegion="polite">
-      <Feather name="alert-circle" size={15} color={colors.destructive} />
-      <Text testID="request-error" style={[styles.error, { color: colors.destructive }]}>{error}</Text>
-    </View>
-  ) : null;
+  const closeEditor = () => {
+    setDraftError('');
+    setEditing(null);
+  };
+
+  /** Saves the open line and stays on the review. */
+  const saveEditor = () => {
+    if (editing === 'problem') {
+      if (!draftProblem.trim()) return setDraftError(PROBLEM_REQUIRED);
+      setProblem(draftProblem);
+      setProblemError('');
+    }
+    if (editing === 'location') {
+      if (!draftAddress.trim()) return setDraftError(ADDRESS_REQUIRED);
+      setAddress(draftAddress);
+      setAddressError('');
+    }
+    if (editing === 'urgency') {
+      if (draftUrgency === 'Schedule' && !draftScheduledFor) return setDraftError(SCHEDULE_REQUIRED);
+      setUrgency(draftUrgency);
+      setScheduledFor(draftUrgency === 'Schedule' ? draftScheduledFor : undefined);
+      setScheduleError('');
+    }
+    vibrate();
+    closeEditor();
+  };
+
+  const errorView = (message: string, testID = 'request-error') =>
+    message ? (
+      <View style={styles.errorRow} accessibilityLiveRegion="polite">
+        <Feather name="alert-circle" size={15} color={colors.destructive} />
+        <Text testID={testID} style={[styles.error, { color: colors.destructive }]}>{message}</Text>
+      </View>
+    ) : null;
 
   const attachments = [photoUri ? 'Photo' : null, videoUri ? 'Video' : null].filter(Boolean).join(' and ');
+
+  const media = (
+    <View style={[styles.mediaRow, stackMedia && styles.mediaColumn]}>
+      <MediaButton
+        testID="add-photo-button"
+        icon="camera-outline"
+        label={photoUri ? 'Photo added' : 'Add photo'}
+        hint={photoUri ? 'Tap to retake' : 'Take a picture'}
+        thumbnailUri={photoUri}
+        onPress={addPhoto}
+        onRemove={photoUri ? () => setPhotoUri(undefined) : undefined}
+      />
+      <MediaButton
+        testID="add-video-button"
+        icon="videocam-outline"
+        label={videoUri ? 'Video added' : 'Add video'}
+        hint={videoUri ? (videoSeconds ? `${formatDuration(videoSeconds)} · tap to change` : 'Tap to change') : `Up to ${MAX_VIDEO_SECONDS / 60} minutes`}
+        attached={!!videoUri}
+        busy={isPickingVideo}
+        onPress={addVideo}
+        onRemove={
+          videoUri
+            ? () => {
+                setVideoUri(undefined);
+                setVideoSeconds(undefined);
+              }
+            : undefined
+        }
+      />
+    </View>
+  );
+
+  /** The editor that opens inside a review line, with its own Save and Cancel. */
+  const editor = (line: Exclude<Editing, null>) => (
+    <View style={styles.editor}>
+      {line === 'problem' ? (
+        <TextInput
+          accessibilityLabel="Describe the problem"
+          testID="review-problem-input"
+          value={draftProblem}
+          onChangeText={(value) => {
+            setDraftProblem(value);
+            setDraftError('');
+          }}
+          multiline
+          textAlignVertical="top"
+          autoFocus
+          style={[
+            styles.problemInput,
+            styles.editorInput,
+            { backgroundColor: colors.background, borderColor: draftError ? colors.destructive : colors.border, color: colors.foreground },
+          ]}
+        />
+      ) : null}
+      {line === 'attached' ? media : null}
+      {line === 'location' ? (
+        <AddressFields
+          value={draftAddress}
+          onChange={(value) => {
+            setDraftAddress(value);
+            setDraftError('');
+          }}
+          places={savedPlaces}
+          hasError={!!draftError}
+          isLocating={isLocating}
+          onUseCurrent={() => useCurrentLocation(setDraftAddress, setDraftError)}
+          testIDPrefix="review-"
+          inputBackground={colors.background}
+        />
+      ) : null}
+      {line === 'urgency' ? (
+        <>
+          <UrgencyPicker
+            value={draftUrgency}
+            onChange={(value) => {
+              setDraftUrgency(value);
+              setDraftError('');
+            }}
+            compact
+            testIDPrefix="review-"
+          />
+          {draftUrgency === 'Schedule' ? (
+            <SchedulePicker
+              value={draftScheduledFor}
+              onChange={(value) => {
+                setDraftScheduledFor(value);
+                setDraftError('');
+              }}
+              hasError={!!draftError}
+              testIDPrefix="review-"
+            />
+          ) : null}
+        </>
+      ) : null}
+      {errorView(draftError, 'review-edit-error')}
+      {line !== 'attached' ? errorView(error) : null}
+      <View style={styles.editorActions}>
+        {line === 'attached' ? (
+          <Button label="Done" size="small" icon="checkmark" onPress={closeEditor} testID="review-done" style={styles.editorAction} />
+        ) : (
+          <>
+            <Button label="Cancel" variant="outline" size="small" onPress={closeEditor} testID="review-cancel" style={styles.editorAction} />
+            <Button label="Save" size="small" icon="checkmark" onPress={saveEditor} testID="review-save" style={styles.editorAction} />
+          </>
+        )}
+      </View>
+    </View>
+  );
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -258,7 +447,7 @@ export default function RequestScreen() {
         <BackButton
           onPress={goBack}
           testID="request-back-button"
-          accessibilityLabel={step > 1 ? 'Previous step' : 'Close request'}
+          accessibilityLabel={editing ? 'Close the editor' : step > 1 ? 'Back to details' : 'Close request'}
         />
         <Text style={[styles.stepText, { color: colors.mutedForeground }]}>
           Step {step} of {LAST_STEP} · {STEP_NAMES[step - 1]}
@@ -269,25 +458,23 @@ export default function RequestScreen() {
         <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${(step / LAST_STEP) * 100}%` }]} />
       </View>
 
-      <KeyboardAwareScrollViewCompat
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
+      <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {step === 1 && (
           <>
             <PageHeading
               eyebrow={service}
-              title="Tell us what happened"
-              subtitle="A few details help us find the right person for the job."
+              title="Tell us what you need"
+              subtitle="Fill in the fields marked * and we will find a nearby technician."
             />
-            <Text style={[styles.fieldLabel, { color: colors.foreground }]}>What is the problem?</Text>
+
+            <FieldLabel label="What is the problem?" required style={styles.firstLabel} />
             <TextInput
               accessibilityLabel="Describe the problem"
               testID="problem-input"
               value={problem}
               onChangeText={(value) => {
                 setProblem(value);
-                if (error) setError('');
+                if (problemError) setProblemError('');
               }}
               placeholder="For example: the kitchen tap has been leaking since this morning."
               placeholderTextColor={colors.mutedForeground}
@@ -295,153 +482,107 @@ export default function RequestScreen() {
               textAlignVertical="top"
               style={[
                 styles.problemInput,
-                { backgroundColor: colors.card, borderColor: error && !problem.trim() ? colors.destructive : colors.border, color: colors.foreground },
+                { backgroundColor: colors.card, borderColor: problemError ? colors.destructive : colors.border, color: colors.foreground },
               ]}
             />
-            {errorView}
+            {errorView(problemError, 'problem-error')}
 
-            <Text style={[styles.fieldLabel, { color: colors.foreground }]}>
-              Photo or video <Text style={[styles.optional, { color: colors.mutedForeground }]}>(optional)</Text>
-            </Text>
-            <View style={[styles.mediaRow, stackMedia && styles.mediaColumn]}>
-              <MediaButton
-                testID="add-photo-button"
-                icon="camera-outline"
-                label={photoUri ? 'Photo added' : 'Add photo'}
-                hint={photoUri ? 'Tap to retake' : 'Take a picture'}
-                thumbnailUri={photoUri}
-                onPress={addPhoto}
-                onRemove={photoUri ? () => setPhotoUri(undefined) : undefined}
-              />
-              <MediaButton
-                testID="add-video-button"
-                icon="videocam-outline"
-                label={videoUri ? 'Video added' : 'Add video'}
-                hint={videoUri ? (videoSeconds ? `${formatDuration(videoSeconds)} · tap to change` : 'Tap to change') : `Up to ${MAX_VIDEO_SECONDS / 60} minutes`}
-                attached={!!videoUri}
-                busy={isPickingVideo}
-                onPress={addVideo}
-                onRemove={
-                  videoUri
-                    ? () => {
-                        setVideoUri(undefined);
-                        setVideoSeconds(undefined);
-                      }
-                    : undefined
-                }
-              />
+            <FieldLabel label="Photo or video" optional style={styles.sectionLabel} />
+            {media}
+
+            <FieldLabel label="Where is the service needed?" required style={styles.sectionLabel} />
+            <View style={[styles.mapPlaceholder, { height: mapHeight, backgroundColor: colors.secondary, borderColor: colors.border }]}>
+              <View style={[styles.mapGrid, { backgroundColor: colors.infoMuted }]} />
+              <View style={[styles.mapPin, { backgroundColor: colors.primary }]}>
+                <Ionicons name="location" size={18} color={colors.primaryForeground} />
+              </View>
+              <Text numberOfLines={1} style={[styles.mapLabel, { color: hasAddress ? colors.foreground : colors.primary }]}>
+                {hasAddress ? address : 'Service location'}
+              </Text>
             </View>
+            <AddressFields
+              value={address}
+              onChange={(value) => {
+                setAddress(value);
+                if (addressError) setAddressError('');
+              }}
+              places={savedPlaces}
+              hasError={!!addressError}
+              isLocating={isLocating}
+              onUseCurrent={() => useCurrentLocation(setAddress, setError)}
+            />
+            {errorView(addressError, 'address-error')}
+
+            <FieldLabel label="How urgent is it?" required style={styles.sectionLabel} />
+            <UrgencyPicker
+              value={urgency}
+              onChange={(value) => {
+                setUrgency(value);
+                setScheduleError('');
+              }}
+            />
+            {/* Schedule opens its calendar right under the choice. */}
+            {urgency === 'Schedule' ? (
+              <SchedulePicker
+                value={scheduledFor}
+                onChange={(value) => {
+                  setScheduledFor(value);
+                  setScheduleError('');
+                }}
+                hasError={!!scheduleError}
+              />
+            ) : null}
+            {errorView(scheduleError, 'schedule-error')}
+            {errorView(error)}
           </>
         )}
         {step === 2 && (
           <>
             <PageHeading
-              eyebrow="Service location"
-              title="Where is the service needed?"
-              subtitle="We use this to match you with nearby technicians."
-            />
-            <View style={[styles.mapPlaceholder, { height: mapHeight, backgroundColor: colors.secondary, borderColor: colors.border }]}>
-              <View style={[styles.mapGrid, { backgroundColor: colors.infoMuted }]} />
-              <View style={[styles.mapPin, { backgroundColor: colors.primary }]}>
-                <Ionicons name="location" size={20} color={colors.primaryForeground} />
-              </View>
-              <Text numberOfLines={2} style={[styles.mapLabel, { color: hasAddress ? colors.foreground : colors.primary }]}>
-                {hasAddress ? locationLabel : 'Service location'}
-              </Text>
-            </View>
-            <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Address</Text>
-            <View
-              style={[
-                styles.addressCard,
-                { backgroundColor: colors.card, borderColor: error && !hasAddress ? colors.destructive : colors.border },
-              ]}
-            >
-              <Ionicons name="location-outline" size={22} color={colors.primary} />
-              <TextInput
-                accessibilityLabel="Service address"
-                testID="address-input"
-                value={hasAddress ? locationLabel : ''}
-                onChangeText={(value) => {
-                  setLocationLabel(value.length > 0 ? value : PLACEHOLDER_ADDRESS);
-                  setError('');
-                }}
-                placeholder="Street, area or landmark"
-                placeholderTextColor={colors.mutedForeground}
-                multiline
-                style={[styles.addressText, { color: colors.foreground }]}
-              />
-            </View>
-            {errorView}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Use my current location"
-              accessibilityState={{ busy: isLocating }}
-              testID="use-current-location-button"
-              onPress={isLocating ? undefined : useCurrentLocation}
-              style={({ pressed }) => [styles.useCurrent, { backgroundColor: colors.secondary, opacity: pressed ? 0.75 : 1 }]}
-            >
-              {isLocating ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="navigate" size={16} color={colors.primary} />}
-              <Text style={[styles.useText, { color: colors.primary }]}>{isLocating ? 'Finding you…' : 'Use my current location'}</Text>
-            </Pressable>
-          </>
-        )}
-        {step === 3 && (
-          <>
-            <PageHeading
-              eyebrow="Timing"
-              title="How urgent is it?"
-              subtitle="Choose when you would like a qualified technician to arrive."
-            />
-            <View accessibilityRole="radiogroup" style={styles.urgencyList}>
-              {(['Emergency', 'Today', 'Schedule'] as Urgency[]).map((option) => {
-                const selected = urgency === option;
-                return (
-                  <Pressable
-                    key={option}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected }}
-                    testID={`urgency-${option}`}
-                    onPress={() => setUrgency(option)}
-                    style={({ pressed }) => [
-                      styles.urgencyCard,
-                      { backgroundColor: selected ? colors.secondary : colors.card, borderColor: selected ? colors.primary : colors.border, opacity: pressed ? 0.85 : 1 },
-                    ]}
-                  >
-                    <View style={[styles.radio, { borderColor: selected ? colors.primary : colors.input }]}>
-                      {selected && <View style={[styles.radioFill, { backgroundColor: colors.primary }]} />}
-                    </View>
-                    <View style={styles.urgencyCopy}>
-                      <Text style={[styles.urgencyTitle, { color: colors.foreground }]}>{option}</Text>
-                      <Text style={[styles.urgencyText, { color: colors.mutedForeground }]}>{URGENCY_COPY[option].text}</Text>
-                    </View>
-                    <Ionicons name={URGENCY_COPY[option].icon} size={22} color={selected ? colors.primary : colors.mutedForeground} />
-                  </Pressable>
-                );
-              })}
-            </View>
-          </>
-        )}
-        {step === 4 && (
-          <>
-            <PageHeading
               eyebrow="Almost there"
               title="Review your request"
-              subtitle="Tap any line to change it before we start matching."
+              subtitle="Tap a line to change it. Your change is saved right here."
             />
             <View style={[styles.reviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <ReviewRow label="Service" value={service} />
-              <ReviewRow label="Problem" value={problem} onEdit={() => editStep(1)} />
-              <ReviewRow label="Attached" value={attachments || 'Nothing attached'} muted={!attachments} onEdit={() => editStep(1)} />
-              <ReviewRow label="Location" value={locationLabel} onEdit={() => editStep(2)} />
-              <ReviewRow label="Urgency" value={urgency} onEdit={() => editStep(3)} last />
+              <ReviewRow
+                label="Problem"
+                value={problem}
+                onEdit={() => openEditor('problem')}
+                open={editing === 'problem'}
+                editor={editing === 'problem' ? editor('problem') : null}
+              />
+              <ReviewRow
+                label="Attached"
+                value={attachments || 'Nothing attached'}
+                muted={!attachments}
+                onEdit={() => openEditor('attached')}
+                open={editing === 'attached'}
+                editor={editing === 'attached' ? editor('attached') : null}
+              />
+              <ReviewRow
+                label="Location"
+                value={address}
+                onEdit={() => openEditor('location')}
+                open={editing === 'location'}
+                editor={editing === 'location' ? editor('location') : null}
+              />
+              <ReviewRow
+                label="Urgency"
+                value={urgencyText({ urgency, scheduledFor })}
+                onEdit={() => openEditor('urgency')}
+                open={editing === 'urgency'}
+                editor={editing === 'urgency' ? editor('urgency') : null}
+                last
+              />
             </View>
             <Notice tone="brand" icon="shield-checkmark-outline" text="You will review any visit fee and repair quote before paying." />
+            {editing ? null : errorView(error)}
           </>
         )}
-        {step > 2 ? errorView : null}
       </KeyboardAwareScrollViewCompat>
 
-      {/* Pinned, like the journey stages, so the next step is always in reach. */}
+      {/* Pinned, so the next step is always in reach. */}
       <View
         style={[
           styles.footer,
@@ -449,12 +590,14 @@ export default function RequestScreen() {
         ]}
       >
         {step > 1 ? (
-          <Button label="Back" variant="outline" onPress={goBack} testID="request-previous-button" style={styles.backAction} />
+          <Button label="Back" variant="outline" onPress={goBack} testID="request-previous-button" style={narrow ? styles.backActionNarrow : styles.backAction} />
         ) : null}
         <Button
           label={step === LAST_STEP ? 'Find my technician' : 'Continue'}
-          icon="arrow-forward"
+          icon={narrow && step === LAST_STEP ? undefined : 'arrow-forward'}
           loading={isSubmitting}
+          // An open editor has to be saved or cancelled first, so nothing half-edited is sent.
+          disabled={!!editing}
           onPress={next}
           testID={step === LAST_STEP ? 'submit-request-button' : 'request-continue-button'}
           style={styles.nextAction}
@@ -474,6 +617,126 @@ export default function RequestScreen() {
         }}
         onCancel={() => setConfirmLeave(false)}
       />
+    </View>
+  );
+}
+
+type AddressFieldsProps = {
+  value: string;
+  onChange: (value: string) => void;
+  places: SavedPlace[];
+  hasError: boolean;
+  isLocating: boolean;
+  onUseCurrent: () => void;
+  testIDPrefix?: string;
+  inputBackground?: string;
+};
+
+/** Saved-place chips, the address box and "use my current location" — on the details step and in the review editor. */
+function AddressFields({ value, onChange, places, hasError, isLocating, onUseCurrent, testIDPrefix = '', inputBackground }: AddressFieldsProps) {
+  const colors = useColors();
+  return (
+    <>
+      {places.length > 0 ? (
+        <View style={styles.placeRow}>
+          {places.map((place) => {
+            const selected = value === place.address;
+            return (
+              <Pressable
+                key={place.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                accessibilityLabel={`Use ${place.label}: ${place.address}`}
+                testID={`${testIDPrefix}request-place-${place.id}`}
+                onPress={() => onChange(place.address)}
+                style={({ pressed }) => [
+                  styles.placeChip,
+                  { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.card, opacity: pressed ? 0.8 : 1 },
+                ]}
+              >
+                <Ionicons name={PLACE_ICON[place.kind]} size={15} color={selected ? colors.primaryForeground : colors.primary} />
+                <Text numberOfLines={1} style={[styles.placeChipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                  {place.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+      <View
+        style={[
+          styles.addressCard,
+          { backgroundColor: inputBackground ?? colors.card, borderColor: hasError ? colors.destructive : colors.border },
+        ]}
+      >
+        <Ionicons name="location-outline" size={22} color={colors.primary} />
+        <TextInput
+          accessibilityLabel="Service address"
+          testID={`${testIDPrefix}address-input`}
+          value={value}
+          onChangeText={onChange}
+          placeholder="Street, area or landmark"
+          placeholderTextColor={colors.mutedForeground}
+          multiline
+          style={[styles.addressText, { color: colors.foreground }]}
+        />
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Use my current location"
+        accessibilityState={{ busy: isLocating }}
+        testID={`${testIDPrefix}use-current-location-button`}
+        onPress={isLocating ? undefined : onUseCurrent}
+        style={({ pressed }) => [styles.useCurrent, { backgroundColor: colors.secondary, opacity: pressed ? 0.75 : 1 }]}
+      >
+        {isLocating ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="navigate" size={16} color={colors.primary} />}
+        <Text style={[styles.useText, { color: colors.primary }]}>{isLocating ? 'Finding you…' : 'Use my current location'}</Text>
+      </Pressable>
+    </>
+  );
+}
+
+/** The three urgency choices; compact inside the review editor. */
+function UrgencyPicker({
+  value,
+  onChange,
+  compact,
+  testIDPrefix = '',
+}: {
+  value: Urgency;
+  onChange: (value: Urgency) => void;
+  compact?: boolean;
+  testIDPrefix?: string;
+}) {
+  const colors = useColors();
+  return (
+    <View accessibilityRole="radiogroup" style={[styles.urgencyList, compact && styles.urgencyListCompact]}>
+      {URGENCIES.map((option) => {
+        const selected = value === option;
+        return (
+          <Pressable
+            key={option}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
+            testID={`${testIDPrefix}urgency-${option}`}
+            onPress={() => onChange(option)}
+            style={({ pressed }) => [
+              styles.urgencyCard,
+              compact && styles.urgencyCardCompact,
+              { backgroundColor: selected ? colors.secondary : colors.card, borderColor: selected ? colors.primary : colors.border, opacity: pressed ? 0.85 : 1 },
+            ]}
+          >
+            <View style={[styles.radio, { borderColor: selected ? colors.primary : colors.input }]}>
+              {selected && <View style={[styles.radioFill, { backgroundColor: colors.primary }]} />}
+            </View>
+            <View style={styles.urgencyCopy}>
+              <Text style={[styles.urgencyTitle, { color: colors.foreground }]}>{option}</Text>
+              <Text style={[styles.urgencyText, { color: colors.mutedForeground }]}>{URGENCY_COPY[option].text}</Text>
+            </View>
+            <Ionicons name={URGENCY_COPY[option].icon} size={22} color={selected ? colors.primary : colors.mutedForeground} />
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -536,29 +799,44 @@ function MediaButton({ testID, icon, label, hint, thumbnailUri, attached, busy, 
   );
 }
 
-function ReviewRow({ label, value, onEdit, muted, last = false }: { label: string; value: string; onEdit?: () => void; muted?: boolean; last?: boolean }) {
+type ReviewRowProps = {
+  label: string;
+  value: string;
+  onEdit?: () => void;
+  muted?: boolean;
+  last?: boolean;
+  /** True while this line's editor is showing. */
+  open?: boolean;
+  editor?: React.ReactNode;
+};
+
+function ReviewRow({ label, value, onEdit, muted, last = false, open, editor }: ReviewRowProps) {
   const colors = useColors();
   const content = (
     <>
-      <Text style={[styles.reviewLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      <Text style={[styles.reviewValue, { color: muted ? colors.mutedForeground : colors.foreground }]} numberOfLines={3}>
+      <Text style={[styles.reviewLabel, { color: open ? colors.primary : colors.mutedForeground }]}>{label}</Text>
+      <Text style={[styles.reviewValue, { color: muted ? colors.mutedForeground : colors.foreground }]} numberOfLines={open ? 1 : 3}>
         {value}
       </Text>
-      {onEdit ? <Feather name="edit-2" size={15} color={colors.primary} /> : null}
+      {onEdit && !open ? <Feather name="edit-2" size={15} color={colors.primary} /> : null}
     </>
   );
-  const rowStyle = [styles.reviewRow, !last && { borderBottomWidth: 1, borderBottomColor: colors.border }];
-  if (!onEdit) return <View style={rowStyle}>{content}</View>;
+  const border = !last ? { borderBottomWidth: 1, borderBottomColor: colors.border } : null;
+  if (!onEdit) return <View style={[styles.reviewRow, border]}>{content}</View>;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Change ${label.toLowerCase()}`}
-      testID={`review-edit-${label.toLowerCase()}`}
-      onPress={onEdit}
-      style={({ pressed }) => [rowStyle, { opacity: pressed ? 0.6 : 1 }]}
-    >
-      {content}
-    </Pressable>
+    <View style={border}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Change ${label.toLowerCase()}`}
+        accessibilityState={{ expanded: !!open }}
+        testID={`review-edit-${label.toLowerCase()}`}
+        onPress={open ? undefined : onEdit}
+        style={({ pressed }) => [styles.reviewRow, { opacity: pressed && !open ? 0.6 : 1 }]}
+      >
+        {content}
+      </Pressable>
+      {open ? editor : null}
+    </View>
   );
 }
 
@@ -570,9 +848,9 @@ const styles = StyleSheet.create({
   progressTrack: { height: 3 },
   progressFill: { height: 3 },
   content: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 28 },
-  fieldLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 22, marginBottom: 8 },
-  optional: { fontFamily: 'Inter_400Regular', fontSize: 13 },
-  problemInput: { minHeight: 140, borderWidth: 1, borderRadius: 14, padding: 14, fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 21 },
+  firstLabel: { marginTop: 22 },
+  sectionLabel: { marginTop: 26 },
+  problemInput: { minHeight: 120, borderWidth: 1, borderRadius: 14, padding: 14, fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 21 },
   mediaRow: { flexDirection: 'row', gap: 10 },
   mediaColumn: { flexDirection: 'column' },
   mediaCell: { flex: 1, minWidth: 0 },
@@ -583,16 +861,21 @@ const styles = StyleSheet.create({
   mediaHint: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
   thumbnail: { width: 38, height: 38, borderRadius: 9 },
   removeButton: { position: 'absolute', top: -7, right: -7, width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  mapPlaceholder: { borderRadius: 16, borderWidth: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, marginTop: 22 },
-  mapGrid: { ...StyleSheet.absoluteFillObject, opacity: 0.35 },
-  mapPin: { width: 45, height: 45, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
-  mapLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 10, textAlign: 'center' },
+  mapPlaceholder: { borderRadius: 16, borderWidth: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, marginBottom: 12 },
+  mapGrid: { ...StyleSheet.absoluteFill, opacity: 0.35 },
+  mapPin: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  mapLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 8, textAlign: 'center' },
+  placeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  placeChip: { minHeight: 38, maxWidth: '100%', borderRadius: 19, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 13 },
+  placeChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 13, flexShrink: 1 },
   addressCard: { minHeight: 56, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 13, paddingVertical: 6 },
   addressText: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 15, lineHeight: 20, paddingVertical: 8 },
   useCurrent: { minHeight: 44, borderRadius: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, alignSelf: 'flex-start', paddingHorizontal: 16, marginTop: 12 },
   useText: { fontFamily: 'Inter_700Bold', fontSize: 13 },
-  urgencyList: { gap: 12, marginTop: 22 },
-  urgencyCard: { minHeight: 76, borderWidth: 1.5, borderRadius: 15, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  urgencyList: { gap: 10 },
+  urgencyListCompact: { gap: 8 },
+  urgencyCard: { minHeight: 70, borderWidth: 1.5, borderRadius: 15, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  urgencyCardCompact: { minHeight: 60, paddingVertical: 10 },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   radioFill: { width: 11, height: 11, borderRadius: 6 },
   urgencyCopy: { flex: 1 },
@@ -602,9 +885,14 @@ const styles = StyleSheet.create({
   reviewRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12 },
   reviewLabel: { width: 70, fontFamily: 'Inter_500Medium', fontSize: 13 },
   reviewValue: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 14, lineHeight: 20 },
+  editor: { paddingBottom: 14 },
+  editorInput: { minHeight: 100 },
+  editorActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  editorAction: { flex: 1 },
   errorRow: { flexDirection: 'row', gap: 7, alignItems: 'flex-start', marginTop: 10 },
   error: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 },
   footer: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1 },
   backAction: { minWidth: 96 },
+  backActionNarrow: { minWidth: 76 },
   nextAction: { flex: 1 },
 });

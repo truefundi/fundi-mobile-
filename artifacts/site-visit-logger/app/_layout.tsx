@@ -15,6 +15,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { FundiProvider } from '@/context/FundiContext';
+import { ProfileProvider } from '@/context/ProfileContext';
 import { WorkProvider } from '@/context/WorkContext';
 import { configureApi, checkApiHealth } from '@/lib/api';
 
@@ -52,6 +53,10 @@ function RootLayoutNav() {
         <Stack.Screen name="rate/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="payments" options={{ headerShown: false }} />
         <Stack.Screen name="notifications" options={{ headerShown: false }} />
+        <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
+        <Stack.Screen name="saved-locations" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen name="help" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>
   );
@@ -77,15 +82,17 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <FundiProvider>
-              <WorkProvider>
-                <GestureHandlerRootView>
-                  <KeyboardProvider>
-                    <RootLayoutNav />
-                  </KeyboardProvider>
-                </GestureHandlerRootView>
-              </WorkProvider>
-            </FundiProvider>
+            <ProfileProvider>
+              <FundiProvider>
+                <WorkProvider>
+                  <GestureHandlerRootView>
+                    <KeyboardProvider>
+                      <RootLayoutNav />
+                    </KeyboardProvider>
+                  </GestureHandlerRootView>
+                </WorkProvider>
+              </FundiProvider>
+            </ProfileProvider>
           </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>

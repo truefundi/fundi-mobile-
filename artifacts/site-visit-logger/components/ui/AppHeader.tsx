@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ModeSlider } from '@/components/ui/ModeSlider';
 import { DEFAULT_LOCATION } from '@/constants/profile';
 import { isClosed } from '@/constants/jobs';
-import { useAuth } from '@/context/AuthContext';
+import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { useColors } from '@/hooks/useColors';
 
@@ -33,7 +33,7 @@ export function AppHeader() {
   // On small phones a matching 104pt right flank leaves the greeting ~70pt and
   // it wraps; there the bell keeps only its own width and the text gets the rest.
   const narrow = width < 360;
-  const { account } = useAuth();
+  const { profile: account } = useProfile();
   const { jobs } = useFundi();
 
   const firstName = account?.name.split(' ')[0] ?? '';

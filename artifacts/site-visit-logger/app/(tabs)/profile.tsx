@@ -1,18 +1,23 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { useRouter, type Href } from 'expo-router';
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { ModeSlider } from '@/components/ui/ModeSlider';
 import { PageHeading } from '@/components/ui/PageHeading';
-import { formatPhone, initialsOf } from '@/constants/auth';
+import { formatPhone } from '@/constants/auth';
 import { formatMoney, isClosed } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { profileKey } from '@/constants/storage';
 import { useAuth } from '@/context/AuthContext';
+import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
+import { pickProfilePhoto } from '@/lib/profilePhoto';
 
 type Link = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -25,9 +30,9 @@ const LINKS: Link[] = [
   { icon: 'briefcase-outline', label: 'My services', href: '/activity' },
   { icon: 'card-outline', label: 'Payments', href: '/payments' },
   { icon: 'notifications-outline', label: 'Notifications', href: '/notifications' },
-  { icon: 'location-outline', label: 'Saved locations' },
-  { icon: 'help-circle-outline', label: 'Help & support' },
-  { icon: 'settings-outline', label: 'Settings' },
+  { icon: 'location-outline', label: 'Saved locations', href: '/saved-locations' },
+  { icon: 'help-circle-outline', label: 'Help & support', href: '/help' },
+  { icon: 'settings-outline', label: 'Settings', href: '/settings' },
 ];
 
 /** Which irreversible action is waiting on a confirmation. */
@@ -40,9 +45,12 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { jobs } = useFundi();
   const { mode, setMode, status, profile, mine, done, earnings } = useWork();
-  const { account, signOut, deleteAccount } = useAuth();
+  const { signOut, deleteAccount } = useAuth();
+  const { profile: account, updateProfile } = useProfile();
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isSavingPhoto, setIsSavingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState('');
 
   const completed = jobs.filter((job) => job.status === 'COMPLETED').length;
   const active = jobs.filter((job) => !isClosed(job.status)).length;
@@ -56,11 +64,31 @@ export default function ProfileScreen() {
     setIsBusy(true);
     try {
       // Both paths clear the session, so the router drops back to sign-in.
-      if (pendingAction === 'delete') await deleteAccount();
-      else await signOut();
+      if (pendingAction === 'delete') {
+        const phone = account.phone;
+        await deleteAccount();
+        // The server account is gone, so this device's picture, places and settings go with it.
+        await AsyncStorage.removeItem(profileKey(phone)).catch(() => undefined);
+      } else await signOut();
     } finally {
       setIsBusy(false);
       setPendingAction(null);
+    }
+  };
+
+  /** The camera on the avatar: pick a picture and save it straight away. */
+  const changePhoto = async () => {
+    setPhotoError('');
+    try {
+      const result = await pickProfilePhoto('library');
+      if ('denied' in result) setPhotoError('Allow access to your photos to choose a profile picture.');
+      if (!('uri' in result)) return;
+      setIsSavingPhoto(true);
+      await updateProfile({ name: account.name, location: account.location, photoUri: result.uri });
+    } catch {
+      setPhotoError('That picture could not be saved. Try another one.');
+    } finally {
+      setIsSavingPhoto(false);
     }
   };
 
@@ -83,9 +111,34 @@ export default function ProfileScreen() {
       <PageHeading eyebrow="Your Fundi account" title="Profile" />
 
       <View style={[styles.profileCard, { backgroundColor: colors.primary }]}>
-        <View style={[styles.avatar, { backgroundColor: colors.primaryForeground }]}>
-          <Text style={[styles.avatarText, { color: colors.primary }]}>{initialsOf(account.name)}</Text>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={account.photoUri ? 'Change your profile picture' : 'Add a profile picture'}
+          accessibilityState={{ busy: isSavingPhoto }}
+          testID="profile-photo-button"
+          onPress={isSavingPhoto ? undefined : changePhoto}
+          hitSlop={4}
+          style={({ pressed }) => [styles.avatarButton, { opacity: pressed ? 0.85 : 1 }]}
+        >
+          <View style={[styles.avatar, { backgroundColor: colors.primaryForeground }]}>
+            {account.photoUri ? (
+              <Image testID="profile-photo" source={{ uri: account.photoUri }} style={styles.avatarImage} contentFit="cover" />
+            ) : (
+              <Ionicons name="camera-outline" size={26} color={colors.primary} />
+            )}
+            {isSavingPhoto ? (
+              <View style={[styles.avatarBusy, { backgroundColor: colors.primaryForeground }]}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : null}
+          </View>
+          {/* With a picture in place the camera moves to a badge, so the face stays visible. */}
+          {account.photoUri ? (
+            <View style={[styles.cameraBadge, { backgroundColor: colors.foreground, borderColor: colors.primary }]}>
+              <Ionicons name="camera" size={12} color={colors.primaryForeground} />
+            </View>
+          ) : null}
+        </Pressable>
         <View style={styles.profileCopy}>
           <Text testID="profile-name" numberOfLines={2} style={[styles.name, { color: colors.primaryForeground }]}>{account.name}</Text>
           <View style={styles.verifiedRow}>
@@ -96,8 +149,25 @@ export default function ProfileScreen() {
             <Ionicons name="location-outline" size={13} color={colors.primaryForeground} />
             <Text numberOfLines={1} style={[styles.contact, styles.contactFlex, { color: colors.secondary }]}>{account.location}</Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Update profile"
+            testID="profile-edit-button"
+            onPress={() => router.push('/edit-profile')}
+            hitSlop={6}
+            style={({ pressed }) => [styles.editButton, { backgroundColor: colors.primaryForeground, opacity: pressed ? 0.85 : 1 }]}
+          >
+            <Feather name="edit-2" size={13} color={colors.primary} />
+            <Text style={[styles.editText, { color: colors.primary }]}>Update profile</Text>
+          </Pressable>
         </View>
       </View>
+      {photoError ? (
+        <View style={styles.photoErrorRow} accessibilityLiveRegion="polite">
+          <Feather name="alert-circle" size={15} color={colors.destructive} />
+          <Text testID="profile-photo-error" style={[styles.photoError, { color: colors.destructive }]}>{photoError}</Text>
+        </View>
+      ) : null}
 
       {/* The role reads as a card here — what you are now, then the slider that
           moves you — so the same drag as the home screen sits under a label
@@ -266,8 +336,15 @@ function Stat({ value, label }: { value: string; label: string }) {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   profileCard: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 18, padding: 18, marginTop: 20 },
-  avatar: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontFamily: 'Inter_700Bold', fontSize: 20 },
+  avatarButton: { width: 64, height: 64 },
+  avatar: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  avatarImage: { width: 64, height: 64 },
+  avatarBusy: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', opacity: 0.85 },
+  cameraBadge: { position: 'absolute', right: -2, bottom: -2, width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  editButton: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', borderRadius: 16, paddingHorizontal: 13, minHeight: 32, marginTop: 12 },
+  editText: { fontFamily: 'Inter_700Bold', fontSize: 12 },
+  photoErrorRow: { flexDirection: 'row', gap: 7, alignItems: 'flex-start', marginTop: 10 },
+  photoError: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 },
   profileCopy: { flex: 1 },
   name: { fontFamily: 'Inter_700Bold', fontSize: 19 },
   verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
