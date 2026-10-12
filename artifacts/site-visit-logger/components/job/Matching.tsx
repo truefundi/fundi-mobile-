@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { Job } from '@/constants/jobs';
+import { urgencyText, type Job } from '@/constants/jobs';
 import { MapPanel } from '@/components/ui/MapPanel';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
@@ -52,7 +52,7 @@ export function Matching({ job, onCancel }: { job: Job; onCancel: () => void }) 
           {job.problem}
         </Text>
         <View style={[styles.metaRow, { borderTopColor: colors.border }]}>
-          <Meta label="Urgency" value={job.urgency} />
+          <Meta label="Urgency" value={urgencyText(job)} />
           <Meta label="Location" value={job.locationLabel} />
         </View>
       </SectionCard>
@@ -65,7 +65,7 @@ function Meta({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.meta}>
       <Text style={[styles.metaLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      <Text style={[styles.metaValue, { color: colors.foreground }]} numberOfLines={1}>
+      <Text style={[styles.metaValue, { color: colors.foreground }]} numberOfLines={2}>
         {value}
       </Text>
     </View>

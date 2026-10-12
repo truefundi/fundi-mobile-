@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
-import { useAuth } from '@/context/AuthContext';
+import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { useColors } from '@/hooks/useColors';
 
@@ -19,7 +19,7 @@ export default function InvoiceScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getJob } = useFundi();
-  const { account } = useAuth();
+  const { profile: account } = useProfile();
   const customer = account?.name ?? '—';
   const customerPhone = account ? formatPhone(account.phone) : undefined;
   const job = id ? getJob(id) : undefined;

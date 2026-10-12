@@ -1,9 +1,10 @@
 import { Feather } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
+import { vibrate } from '@/lib/haptics';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, PanResponder, Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { initialsOf } from '@/constants/auth';
-import { useAuth } from '@/context/AuthContext';
+import { useProfile } from '@/context/ProfileContext';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 
@@ -49,7 +50,7 @@ type Props = {
  */
 export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slider' }: Props) {
   const colors = useColors();
-  const { account } = useAuth();
+  const { profile: account } = useProfile();
   const { mode, setMode } = useWork();
   const working = mode === 'working';
 
@@ -71,7 +72,7 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
 
   const change = useMemo(
     () => () => {
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      vibrate('medium');
       // The effect above owns the animation to the far end once the role flips.
       setMode(working ? 'hiring' : 'working');
     },
@@ -173,9 +174,13 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
         ]}
         {...pan.panHandlers}
       >
-        <Text style={[styles.knobText, { fontSize: size.initials, color: colors.primary }]}>
-          {account ? initialsOf(account.name) : ''}
-        </Text>
+        {account?.photoUri ? (
+          <Image source={{ uri: account.photoUri }} style={{ width: knob, height: knob, borderRadius: knob / 2 }} contentFit="cover" />
+        ) : (
+          <Text style={[styles.knobText, { fontSize: size.initials, color: colors.primary }]}>
+            {account ? initialsOf(account.name) : ''}
+          </Text>
+        )}
         {/* The badge says which side the avatar is standing on right now. */}
         <View
           style={[

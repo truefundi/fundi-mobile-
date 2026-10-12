@@ -1,4 +1,4 @@
-import * as Haptics from 'expo-haptics';
+import { notify } from '@/lib/haptics';
 import React, { useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { formatPhone, OTP_LENGTH, RESEND_AFTER_MS } from '@/constants/auth';
@@ -28,11 +28,11 @@ export function OtpStep({ verification }: { verification: Verification }) {
     setError('');
     try {
       await verifyCode(entered);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      await notify('success');
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'We could not check that code. Try again.');
       setCode('');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
+      await notify('error');
       input.current?.focus();
     } finally {
       setIsVerifying(false);

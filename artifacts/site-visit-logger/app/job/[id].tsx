@@ -1,7 +1,6 @@
 import React, { useState, type ReactNode } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { vibrate } from '@/lib/haptics';
 import { useFundi } from '@/context/FundiContext';
 import { AdditionalWork } from '@/components/job/AdditionalWork';
 import { Arrived } from '@/components/job/Arrived';
@@ -74,7 +73,7 @@ export default function JobScreen() {
   const job = id ? getJob(id) : undefined;
 
   const tap = () => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    vibrate();
   };
 
   if (!isHydrated) return <LoadingState label="Loading your job…" fullScreen />;

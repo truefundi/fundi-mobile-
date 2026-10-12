@@ -29,3 +29,12 @@ export const LEGACY_JOBS_KEY = '@fundi/jobs';
 export function workKey(phone: string): string {
   return `@fundi/work/${phone}`;
 }
+
+/**
+ * What the customer changed about themselves on this device — picture, name,
+ * area, saved places and preferences — until the backend's `PATCH /me` and
+ * upload endpoints exist. Kept apart from the session, which the server owns.
+ */
+export function profileKey(phone: string): string {
+  return `@fundi/profile/${phone}`;
+}

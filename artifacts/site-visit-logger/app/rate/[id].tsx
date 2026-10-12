@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { notify } from '@/lib/haptics';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Rating } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -80,7 +80,7 @@ export default function RateScreen() {
     };
     setIsSubmitting(true);
     submitRating(job.id, rating);
-    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    notify('success');
     router.replace(`/job/${job.id}`);
   };
 
