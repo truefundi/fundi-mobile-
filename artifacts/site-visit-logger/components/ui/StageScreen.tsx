@@ -28,7 +28,7 @@ export function StageScreen({ eyebrow, title, subtitle, children, footer, onBack
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 24 : insets.top + 8 }]}>
+      <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 8 : insets.top + 8 }]}>
         {hideBack ? <View style={styles.backSpacer} /> : <BackButton onPress={goBack} testID="stage-back-button" />}
       </View>
       <ScrollView

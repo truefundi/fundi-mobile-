@@ -6,6 +6,7 @@
  * Until that is reviewed they cannot go online, so customers only ever reach
  * technicians whose papers someone has actually read.
  */
+/** Technician profile and availability types shared by work screens. */
 export const TRADES = [
   'Electrical',
   'Plumbing',
@@ -21,6 +22,7 @@ export type Trade = string;
 
 /** These states come from the backend verification status. */
 export type WorkStatus = 'none' | 'pending' | 'verified' | 'rejected';
+export type ServiceExperienceStatus = 'PENDING' | 'APPROVED' | 'DENIED' | 'SUSPENDED';
 
 export type WorkProfile = {
   id?: string;
@@ -46,7 +48,14 @@ export type WorkProfile = {
   certificateUris: string[];
   certificateMimeTypes?: Array<string | undefined>;
   certificateSizeBytes?: Array<number | undefined>;
-  serviceExperiences?: Array<{ trade: string; customName: string; yearsOfExperience: number }>;
+  serviceExperiences?: Array<{
+    id?: string;
+    trade: string;
+    customName: string;
+    yearsOfExperience: number;
+    status?: ServiceExperienceStatus;
+    reviewNote?: string | null;
+  }>;
   documents?: Array<{
     id: string;
     type: 'NATIONAL_ID' | 'CERTIFICATE';
@@ -56,7 +65,6 @@ export type WorkProfile = {
     createdAt: string;
     reviewNote: string | null;
   }>;
-  
   submittedAt: string;
 };
 

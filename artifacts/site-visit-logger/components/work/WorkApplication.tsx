@@ -20,14 +20,19 @@ type FileData = {
 
 async function readBrowserFileMetadata(file: FileData): Promise<FileData> {
   if (Platform.OS !== 'web') return file;
-  const response = await fetch(file.uri);
-  if (!response.ok) throw new Error('We could not read that file. Please choose it again.');
-  const blob = await response.blob();
-  return {
-    ...file,
-    size: blob.size,
-    mimeType: inferUploadMimeType(file.name ?? file.uri, file.mimeType ?? blob.type),
-  };
+  try {
+    const response = await fetch(file.uri);
+    if (!response.ok) throw new Error('We could not read that file. Please choose it again.');
+    const blob = await response.blob();
+    return {
+      ...file,
+      size: blob.size,
+      mimeType: inferUploadMimeType(file.name ?? file.uri, file.mimeType ?? blob.type),
+    };
+  } catch (error) {
+    console.error('Web file reading error:', error);
+    return file;
+  }
 }
 
 async function capture(): Promise<FileData | null> {
@@ -105,11 +110,13 @@ export function WorkApplication() {
       size: profile.profilePictureSizeBytes,
       mimeType: profile.profilePictureMimeType,
     } : null);
+    
     setIdPhoto(profile.idPhotoUri ? {
       uri: profile.idPhotoUri,
       size: profile.idPhotoSizeBytes,
       mimeType: profile.idPhotoMimeType,
     } : null);
+    
     setCertificates(profile.certificateUris?.map((uri, index) => ({
       uri,
       size: profile.certificateSizeBytes?.[index],
@@ -127,7 +134,8 @@ export function WorkApplication() {
 
   const getFileError = (file: FileData | null, allowPdf = false) => {
     if (!file) return '';
-    if (/^https?:\/\//i.test(file.uri)) return '';
+    if (/^https?:\/\//i.test(file.uri)) return ''; // Skip size checks for already uploaded remote URLs
+    
     if (file.size === undefined || !Number.isFinite(file.size) || file.size < 0) {
       return `We couldn't check this file's size. Please choose it again (maximum ${MAX_UPLOAD_SIZE_LABEL}).`;
     }
@@ -191,6 +199,7 @@ export function WorkApplication() {
           (asset.type === 'image' ? 'image/jpeg' : undefined),
       };
     }
+    
     const result = await DocumentPicker.getDocumentAsync({
       type: ['image/*', 'application/pdf'],
       copyToCacheDirectory: true,
@@ -231,6 +240,7 @@ export function WorkApplication() {
         );
       }
     };
+
     if (Platform.OS === 'web') {
       void select('library');
       return;
@@ -267,6 +277,7 @@ export function WorkApplication() {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) throw new Error('Location permission is required to register your service area.');
       const position = await Location.getCurrentPositionAsync({});
+      
       const formattedExperiences = serviceExperiences.map((exp) => ({
         trade: exp.trade,
         customName: exp.trade === 'Others' ? exp.customName.trim() : exp.trade,
@@ -310,11 +321,11 @@ export function WorkApplication() {
   const RequiredAsterisk = () => <Text style={{ color: colors.destructive }}> *</Text>;
 
   return (
-    <ScrollView contentContainerStyle={styles.screen}>
+    <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
       <View style={[styles.intro, { backgroundColor: colors.secondary }]}>
         <Ionicons name="shield-checkmark-outline" size={22} color={colors.primary} />
         <Text style={[styles.introText, { color: colors.secondaryForeground }]}>
-          Complete your profile details and submit your verified trade qualifications to start accepting jobs[cite: 1, 3].
+          Complete your profile details and submit your verified trade qualifications to start accepting jobs.
         </Text>
       </View>
 
@@ -602,7 +613,7 @@ export function WorkApplication() {
       </Pressable>
 
       <Text style={[styles.note, { color: colors.mutedForeground }]}>
-        All required fields across profile and qualifications must be complete before submission[cite: 3].
+        All required fields across profile and qualifications must be complete before submission.
       </Text>
     </ScrollView>
   );

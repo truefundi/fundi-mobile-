@@ -64,9 +64,12 @@ type ApiTechnicianProfile = {
   gender: WorkProfile['gender'];
   yearsOfExperience: number;
   serviceExperiences: Array<{
+    id?: string;
     customName: string | null;
     category: { name: string } | null;
     yearsOfExperience: number;
+    status?: 'PENDING' | 'APPROVED' | 'DENIED' | 'SUSPENDED';
+    reviewNote?: string | null;
   }>;
   verificationStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
   availabilityStatus: 'ONLINE' | 'OFFLINE';
@@ -91,11 +94,19 @@ function mapProfile(
   documents: ApiTechnicianDocument[],
   local: WorkProfile | null,
 ): WorkProfile {
+  // 1. Identify server documents
+  const nationalIdDoc = documents.find((d) => d.type === 'NATIONAL_ID' && d.status !== 'DENIED');
+  const certDocs = documents.filter((d) => d.type === 'CERTIFICATE' && d.status !== 'DENIED');
+
   const experiences = profile.serviceExperiences.map((service) => ({
+    id: service.id,
     trade: service.category?.name ?? service.customName ?? 'General Maintenance',
     customName: service.customName ?? '',
     yearsOfExperience: service.yearsOfExperience,
+    status: service.status ?? 'PENDING',
+    reviewNote: service.reviewNote ?? null,
   }));
+
   return {
     ...local,
     id: profile.id,
@@ -110,12 +121,17 @@ function mapProfile(
     paymentMethod: profile.paymentMethod ?? undefined,
     paymentNumber: profile.paymentNumber ?? '',
     profilePictureUrl: profile.profilePictureUrl,
+    
+    // 2. Fallback to server documents if local draft is cleared by logout
+    idPhotoUri: local?.idPhotoUri || (nationalIdDoc ? `https://remote-doc/${nationalIdDoc.id}` : ''),
+    certificateUris: local?.certificateUris?.length 
+      ? local.certificateUris 
+      : certDocs.map((d) => `https://remote-doc/${d.id}`),
+
     trade: (experiences[0]?.trade ?? 'General Maintenance') as WorkProfile['trade'],
     yearsExperience: profile.yearsOfExperience,
     serviceExperiences: experiences,
     documents,
-    idPhotoUri: local?.idPhotoUri ?? '',
-    certificateUris: local?.certificateUris ?? [],
     submittedAt: profile.createdAt,
   };
 }
@@ -211,8 +227,11 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState((current) => {
         const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID' && document.status !== 'DENIED');
         const hasCertificate = documents.some((document) => document.type === 'CERTIFICATE' && document.status !== 'DENIED');
-        // Check if server profile already has profile picture AND documents exist on server
-        const applicationNeedsFiles = !serverProfile.profilePictureUrl || !hasNationalId || !hasCertificate;
+
+        // Safely check for either the URL or the raw Object Key in case the backend hasn't been updated yet
+        const hasProfilePic = !!(serverProfile.profilePictureUrl || (serverProfile as any).profilePictureObjectKey);
+
+        const applicationNeedsFiles = !hasProfilePic || !hasNationalId || !hasCertificate;
         const next: Stored = {
           ...current,
           status: statusFromApi(serverProfile.verificationStatus),

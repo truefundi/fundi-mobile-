@@ -1,6 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SwitchRow } from '@/components/ui/SwitchRow';
 import { WorkApplication } from '@/components/work/WorkApplication';
@@ -37,12 +38,11 @@ function WorkPending() {
   return (
     <View style={[styles.statusCard, { backgroundColor: colors.warningMuted }]}>
       <Feather name="clock" size={26} color={colors.warning} />
-      <Text style={[styles.title, { color: colors.foreground }]}>Documents under review</Text>
+      <Text style={[styles.title, { color: colors.foreground }]}>Application & Trades under review</Text>
       <Text style={[styles.body, { color: colors.mutedForeground }]}>
-        {profile
-          ? `Your ${profile.trade.toLowerCase()} application is waiting for an administrator to review it.`
-          : 'Your application is waiting for an administrator to review it.'}
+        Your application is waiting for an administrator to review your details and trades.
       </Text>
+      
       {profile?.submittedAt ? (
         <Text style={[styles.body, { color: colors.mutedForeground }]}>
           Submitted {new Date(profile.submittedAt).toLocaleString()}
@@ -50,17 +50,38 @@ function WorkPending() {
       ) : null}
       {profile?.fullName ? (
         <Text style={[styles.body, { color: colors.mutedForeground }]}>
-          {profile.fullName} · {profile.phoneNumber}
+          {profile.fullName} • {profile.phoneNumber}
         </Text>
       ) : null}
       {profile?.baseAddress ? (
         <Text style={[styles.body, { color: colors.mutedForeground }]}>{profile.baseAddress}</Text>
       ) : null}
-      {profile?.serviceExperiences?.map((experience, index) => (
-        <Text key={`${experience.trade}-${index}`} style={[styles.body, { color: colors.mutedForeground }]}>
-          {experience.trade} · {experience.yearsOfExperience} years
-        </Text>
-      ))}
+
+      <Text style={[styles.body, styles.documentTitle, { color: colors.foreground, marginTop: 12 }]}>
+        Submitted Trades:
+      </Text>
+      {profile?.serviceExperiences?.map((experience, index) => {
+        const statusColor = 
+          experience.status === 'APPROVED' ? colors.success :
+          experience.status === 'DENIED' || experience.status === 'SUSPENDED' ? colors.destructive :
+          colors.warning;
+
+        return (
+          <View key={`${experience.trade}-${index}`} style={styles.documentLine}>
+            <Text style={[styles.body, { color: colors.foreground }]}>
+              • {experience.trade || experience.customName} ({experience.yearsOfExperience} yrs)
+            </Text>
+            <Text style={[styles.body, { color: statusColor, fontFamily: 'Inter_600SemiBold' }]}>
+              Status: {experience.status ?? 'PENDING'}
+              {experience.reviewNote ? ` — ${experience.reviewNote}` : ''}
+            </Text>
+          </View>
+        );
+      })}
+
+      <Text style={[styles.body, styles.documentTitle, { color: colors.foreground, marginTop: 12 }]}>
+        Documents:
+      </Text>
       {profile?.documents?.map((document) => (
         <View key={document.id} style={styles.documentLine}>
           <Text style={[styles.body, styles.documentTitle, { color: colors.foreground }]}>{document.title}</Text>
@@ -69,8 +90,9 @@ function WorkPending() {
           </Text>
         </View>
       ))}
+
       {applicationError || retryError ? (
-        <>
+        <View style={styles.retryContainer}>
           <Text style={[styles.body, { color: colors.destructive }]}>{retryError ?? applicationError}</Text>
           <Pressable
             accessibilityRole="button"
@@ -81,7 +103,7 @@ function WorkPending() {
           >
             <Text style={[styles.body, styles.retry, { color: colors.primary }]}>{retrying ? 'Retrying…' : 'Retry'}</Text>
           </Pressable>
-        </>
+        </View>
       ) : null}
     </View>
   );
@@ -90,15 +112,23 @@ function WorkPending() {
 function WorkRejected() {
   const colors = useColors();
   const { profile } = useWork();
+
   return (
     <View style={[styles.statusCard, { backgroundColor: colors.destructiveMuted }]}>
       <Feather name="alert-circle" size={26} color={colors.destructive} />
       <Text style={[styles.title, { color: colors.foreground }]}>Application needs changes</Text>
       <Text style={[styles.body, { color: colors.mutedForeground }]}>
-        Review the feedback, update your details or documents, then retry your submission.
+        Review the feedback on your documents or specific trades, update your details, then retry your submission.
       </Text>
+      
+      {profile?.serviceExperiences?.filter((exp) => exp.status === 'DENIED' || exp.status === 'SUSPENDED').map((exp, idx) => (
+        <Text key={`exp-err-${idx}`} style={[styles.body, { color: colors.destructive, marginTop: 4 }]}>
+          Trade ({exp.trade || exp.customName}): {exp.reviewNote ?? 'Needs revision'}
+        </Text>
+      ))}
+
       {profile?.documents?.filter((document) => document.status === 'DENIED').map((document) => (
-        <Text key={document.id} style={[styles.body, { color: colors.destructive }]}>
+        <Text key={`doc-err-${document.id}`} style={[styles.body, { color: colors.destructive, marginTop: 4 }]}>
           {document.title}{document.reviewNote ? ` — ${document.reviewNote}` : ''}
         </Text>
       ))}
@@ -127,7 +157,7 @@ function WorkApproved() {
         <Feather name="check-circle" size={24} color={colors.primary} />
         <Text style={[styles.title, { color: colors.foreground }]}>Technician verified</Text>
         <Text style={[styles.body, { color: colors.mutedForeground }]}>
-          {profile?.trade ?? 'Your profile'} is approved. Job offers and job lifecycle actions will appear here when those backend APIs are available.
+          Your approved trades are live. Job offers and job lifecycle actions will appear here when those backend APIs are available.
         </Text>
       </View>
     </View>
@@ -149,8 +179,11 @@ export function WorkHome(_props: { query?: string }) {
       />
     );
   }
+
   if (submissionFailed) return <WorkApplication />;
+  
   if (status === 'pending') return <WorkPending />;
+  
   if (status === 'rejected') {
     return (
       <View style={styles.screen}>
@@ -159,7 +192,9 @@ export function WorkHome(_props: { query?: string }) {
       </View>
     );
   }
+  
   if (status === 'verified') return <WorkApproved />;
+  
   return <WorkApplication />;
 }
 
@@ -168,8 +203,9 @@ const styles = StyleSheet.create({
   statusCard: { alignItems: 'center', gap: 9, borderRadius: 16, paddingVertical: 24, paddingHorizontal: 22 },
   title: { fontFamily: 'Inter_700Bold', fontSize: 17, letterSpacing: -0.3, textAlign: 'center' },
   body: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, textAlign: 'center' },
-  documentLine: { width: '100%', alignItems: 'center', gap: 1, marginTop: 5 },
+  documentLine: { width: '100%', alignItems: 'center', gap: 2, marginTop: 5 },
   documentTitle: { fontFamily: 'Inter_600SemiBold' },
-  retry: { fontFamily: 'Inter_700Bold', padding: 8 },
+  retryContainer: { alignItems: 'center', marginTop: 12 },
+  retry: { fontFamily: 'Inter_700Bold', padding: 8, marginTop: 4 },
   error: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 17, textAlign: 'center' },
 });

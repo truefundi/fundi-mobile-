@@ -36,7 +36,7 @@ export default function SignInScreen() {
         contentContainerStyle={[
           styles.content,
           {
-            paddingTop: Platform.OS === 'web' ? 67 : insets.top + 20,
+            paddingTop: Platform.OS === 'web' ? 20 : insets.top + 20,
             paddingBottom: Platform.OS === 'web' ? 34 : insets.bottom + 28,
           },
         ]}
