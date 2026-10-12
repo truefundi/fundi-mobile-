@@ -75,35 +75,6 @@ export function RegisterStep({ onBack, onLogin }: Props) {
         />
       </View>
 
-      <Text style={[styles.label, { color: colors.foreground }]}>I want to</Text>
-      <View style={styles.roleRow}>
-        {([
-          ['CUSTOMER', 'Hire a technician'],
-          ['TECHNICIAN', 'Work as a technician'],
-        ] as const).map(([value, label]) => {
-          const selected = role === value;
-          return (
-            <Pressable
-              key={value}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              onPress={() => setRole(value)}
-              style={[
-                styles.roleOption,
-                {
-                  borderColor: selected ? colors.primary : colors.border,
-                  backgroundColor: selected ? colors.primary : colors.card,
-                },
-              ]}
-            >
-              <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
       <Text style={[styles.label, { color: colors.foreground }]}>Phone number</Text>
       {/* The mask carries the format now that the written rule below is gone. */}
       <PhoneField

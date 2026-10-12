@@ -2,7 +2,6 @@ import { Feather } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { EmptyState } from '@/components/ui/EmptyState';
 import { SwitchRow } from '@/components/ui/SwitchRow';
 import { WorkApplication } from '@/components/work/WorkApplication';
 import { restoreSession } from '@/lib/auth-api';
@@ -166,19 +165,7 @@ function WorkApproved() {
 
 /** Technician verification is server-owned; mock same-device jobs are not shown in working mode. */
 export function WorkHome(_props: { query?: string }) {
-  const { account } = useAuth();
   const { status, submissionFailed } = useWork();
-
-  if (account?.role !== 'TECHNICIAN') {
-    return (
-      <EmptyState
-        icon="tool"
-        tone="waiting"
-        title="Technician account required"
-        text="Sign out and register a new account as a technician to submit a work application."
-      />
-    );
-  }
 
   if (submissionFailed) return <WorkApplication />;
   

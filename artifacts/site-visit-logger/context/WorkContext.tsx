@@ -184,6 +184,7 @@ type WorkContextValue = {
   status: WorkStatus;
   profile: WorkProfile | null;
   applicationError: string | null;
+  submissionFailed: boolean;
   refreshApplication: () => Promise<void>;
   apply: (profile: TechnicianApplication) => Promise<void>;
   offers: Job[];
@@ -273,16 +274,6 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState(EMPTY);
       return;
     }
-    if (account?.role !== 'TECHNICIAN') {
-      setState((current) => ({
-        ...current,
-        isAvailable: false,
-        status: 'none',
-        profile: null,
-        applicationError: null,
-      }));
-      return;
-    }
     let mounted = true;
     AsyncStorage.getItem(storageKey)
       .then((raw) => {
@@ -328,6 +319,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       status: state.status,
       profile: state.profile,
       applicationError: state.applicationError,
+      submissionFailed: state.submissionFailed,
       refreshApplication,
       apply: async (application) => {
         if (!account) throw new Error('Sign in before submitting a technician application.');

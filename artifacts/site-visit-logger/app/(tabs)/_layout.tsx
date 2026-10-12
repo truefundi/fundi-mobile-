@@ -71,7 +71,7 @@ function ClassicTabLayout() {
           borderTopWidth: isWeb ? 1 : 0,
           borderTopColor: colors.border,
           elevation: 0,
-          ...(isWeb ? { height: 84 } : {}),
+          ...(isWeb ? { height: 64, paddingBottom: 6, paddingTop: 4 } : {}),
         },
         tabBarBackground: () =>
           isIOS ? (

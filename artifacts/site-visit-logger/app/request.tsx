@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, Modal, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { BackButton } from '@/components/ui/BackButton';
@@ -14,103 +14,92 @@ import { FieldLabel } from '@/components/ui/FieldLabel';
 import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { useColors } from '@/hooks/useColors';
-import { urgencyText } from '@/constants/jobs';
+import { SERVICES } from '@/constants/services';
 import { PLACE_ICON, type SavedPlace } from '@/constants/places';
-import { SchedulePicker } from '@/components/request/SchedulePicker';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 
-type Urgency = 'Emergency' | 'Today' | 'Schedule';
-
-/** Long clips are slow to send on mobile data; a minute or two shows the problem. */
 const MAX_VIDEO_SECONDS = 120;
+const MAX_PHOTOS = 5;
 
-/** Two steps: everything we need on one screen, then a review that can be corrected in place. */
 const STEP_NAMES = ['Details', 'Review'] as const;
 const LAST_STEP = STEP_NAMES.length;
 
-const URGENCIES: Urgency[] = ['Emergency', 'Today', 'Schedule'];
-
-const URGENCY_COPY: Record<Urgency, { text: string; icon: keyof typeof Ionicons.glyphMap }> = {
-  Emergency: { text: 'Need someone immediately', icon: 'flash-outline' },
-  Today: { text: 'As soon as possible today', icon: 'sunny-outline' },
-  Schedule: { text: 'Choose a preferred time', icon: 'calendar-outline' },
-};
-
 const PROBLEM_REQUIRED = 'Tell us what happened so we can find the right technician.';
 const ADDRESS_REQUIRED = 'Add the address where the service is needed.';
-const SCHEDULE_REQUIRED = 'Choose the day and time you want the technician to come.';
 
-/** Which review line is open for editing. */
-type Editing = 'problem' | 'attached' | 'location' | 'urgency' | null;
+type Editing = 'service' | 'problem' | 'attached' | 'location' | null;
 
 function formatDuration(seconds: number): string {
   const whole = Math.round(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
+type FileData = {
+  uri: string;
+  name?: string;
+  size?: number;
+  mimeType?: string;
+};
+
 export default function RequestScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
-  // Side by side the photo and video buttons truncate on small phones; stack them there.
-  const stackMedia = width < 360;
-  // On narrow phones "Find my technician" only fits without the arrow and with a slimmer Back.
+  const { width } = useWindowDimensions();
   const narrow = width < 360;
-  // Everything now shares one screen, so the map stays small enough to keep the fields in view.
-  const mapHeight = height < 700 ? 96 : 120;
   const router = useRouter();
-  const { service: serviceParam, emergency } = useLocalSearchParams<{ service?: string; emergency?: string }>();
-  const service = serviceParam || 'General Maintenance';
+  const { service: serviceParam } = useLocalSearchParams<{ service?: string }>();
+  
+  const [service, setService] = useState(serviceParam || SERVICES[0]?.label || 'General Maintenance');
   const { addRequest } = useFundi();
   const { savedPlaces, preferences } = useProfile();
-  // A default saved place fills the address in before the customer gets there.
   const defaultAddress = savedPlaces.find((place) => place.id === preferences.defaultPlaceId)?.address;
+
   const [step, setStep] = useState(1);
   const [problem, setProblem] = useState('');
-  const [urgency, setUrgency] = useState<Urgency>(emergency === 'true' ? 'Emergency' : 'Today');
-  // Only used when urgency is Schedule: the booked visit time.
-  const [scheduledFor, setScheduledFor] = useState<string>();
-  const [photoUri, setPhotoUri] = useState<string>();
+  
+  const [photos, setPhotos] = useState<FileData[]>([]);
   const [photoError, setPhotoError] = useState('');
-  const [photoSizeBytes, setPhotoSizeBytes] = useState<number>();
-  const [photoMimeType, setPhotoMimeType] = useState<string>();
-  const [videoUri, setVideoUri] = useState<string>();
+  const [video, setVideo] = useState<FileData | null>(null);
   const [videoError, setVideoError] = useState('');
-  const [videoSizeBytes, setVideoSizeBytes] = useState<number>();
-  const [videoMimeType, setVideoMimeType] = useState<string>();
   const [videoSeconds, setVideoSeconds] = useState<number>();
   const [isPickingVideo, setIsPickingVideo] = useState(false);
+
   const [address, setAddress] = useState(defaultAddress ?? '');
+  const [currentAddressCoords, setCurrentAddressCoords] = useState<string>('');
+  const [isUsingCurrentLocation, setIsUsingCurrentLocation] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Each required field shows its own message under itself; `error` is for everything else.
   const [problemError, setProblemError] = useState('');
   const [addressError, setAddressError] = useState('');
-  const [scheduleError, setScheduleError] = useState('');
   const [error, setError] = useState('');
   const [confirmLeave, setConfirmLeave] = useState(false);
-  // Review: the line being corrected, and its unsaved value.
+
+  // Payment mock popup states
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
+  const [paymentStep, setPaymentStep] = useState<'prompt' | 'success' | 'finding'>('prompt');
+
   const [editing, setEditing] = useState<Editing>(null);
+  const [draftService, setDraftService] = useState(service);
   const [draftProblem, setDraftProblem] = useState('');
   const [draftAddress, setDraftAddress] = useState('');
-  const [draftUrgency, setDraftUrgency] = useState<Urgency>('Today');
-  const [draftScheduledFor, setDraftScheduledFor] = useState<string>();
+  const [draftCoords, setDraftCoords] = useState('');
+  const [draftPhotos, setDraftPhotos] = useState<FileData[]>([]);
+  const [draftVideo, setDraftVideo] = useState<FileData | null>(null);
   const [draftError, setDraftError] = useState('');
 
-  // Saved places can arrive a moment after the form opens; fill the default in then, unless an address was already typed.
   useEffect(() => {
     if (defaultAddress) setAddress((current) => (current.trim() ? current : defaultAddress));
   }, [defaultAddress]);
 
   const hasAddress = address.trim().length > 0;
-  // Anything typed or attached is worth a "discard?" before the form closes.
-  const hasProgress = problem.trim().length > 0 || !!photoUri || !!videoUri || (hasAddress && address !== defaultAddress);
+  const hasProgress = problem.trim().length > 0 || photos.length > 0 || !!video || (hasAddress && address !== defaultAddress);
 
   const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
-  /** On the review the arrow first closes an open editor, then goes back to the details. */
   const goBack = () => {
     setError('');
     if (editing) {
@@ -125,193 +114,145 @@ export default function RequestScreen() {
     else leave();
   };
 
-  // Android's hardware back follows the same rules as the arrow.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (step === 1 && !hasProgress) return false;
       goBack();
       return true;
     });
     return () => subscription.remove();
   });
 
-  const addPhoto = async (source: 'camera' | 'library') => {
-    setPhotoError('');
+  const handleAddPhoto = async (currentPhotos: FileData[], setPhotoList: React.Dispatch<React.SetStateAction<FileData[]>>, setErr: (msg: string) => void) => {
+    setErr('');
+    if (currentPhotos.length >= MAX_PHOTOS) {
+      setErr(`You can attach a maximum of ${MAX_PHOTOS} photos.`);
+      return;
+    }
     try {
       let result: ImagePicker.ImagePickerResult;
-      if (source === 'camera') {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (Platform.OS === 'web') {
+        result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78, allowsMultipleSelection: true });
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
-          setPhotoError('Allow camera access to take a photo.');
+          setErr('Allow access to your photos to attach one.');
           return;
         }
-        result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.78 });
-      } else {
-        if (Platform.OS !== 'web') {
-          const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!permission.granted) {
-            setPhotoError('Allow access to your photos to attach one.');
-            return;
-          }
+        result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78, allowsMultipleSelection: true });
+      }
+      const assets = result.canceled ? [] : result.assets;
+      if (assets.length === 0) return;
+
+      const newPhotos: FileData[] = [];
+      for (const asset of assets) {
+        if (!asset.uri) continue;
+        const mimeType = inferUploadMimeType(asset.fileName ?? asset.uri, asset.mimeType) ?? 'image/jpeg';
+        if (asset.fileSize && asset.fileSize > MAX_UPLOAD_SIZE_BYTES) {
+          setErr(`Each photo must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+          continue;
         }
-        result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78 });
+        newPhotos.push({
+          uri: asset.uri,
+          name: asset.fileName ?? undefined,
+          size: asset.fileSize ?? undefined,
+          mimeType,
+        });
       }
-      const asset = result.canceled ? undefined : result.assets[0];
-      if (!asset?.uri) return;
-      if (asset.type && asset.type !== 'image' && asset.type !== 'livePhoto') {
-        setPhotoError('Choose a photo, not a video.');
-        return;
-      }
-      const mimeType = inferUploadMimeType(asset.fileName ?? asset.uri, asset.mimeType);
-      const isPhoto = asset.type === 'image' || mimeType?.startsWith('image/');
-      if (!isPhoto) {
-        setPhotoError('Choose a photo, not a video or document.');
-        return;
-      }
-      const verifiedMimeType = mimeType ?? 'image/jpeg';
-      if (asset.fileSize === undefined) {
-        setPhotoError(`We couldn't check this photo's size. Choose another photo up to ${MAX_UPLOAD_SIZE_LABEL}.`);
-        return;
-      }
-      if (asset.fileSize > MAX_UPLOAD_SIZE_BYTES) {
-        setPhotoError(`This photo is larger than ${MAX_UPLOAD_SIZE_LABEL}. Choose a smaller photo.`);
-        return;
-      }
-      setPhotoUri(asset.uri);
-      setPhotoSizeBytes(asset.fileSize);
-      setPhotoMimeType(verifiedMimeType);
+
+      setPhotoList((current) => [...current, ...newPhotos].slice(0, MAX_PHOTOS));
       await vibrate();
     } catch {
-      setPhotoError('We could not open that photo. Please try again.');
+      setErr('We could not open that photo. Please try again.');
     }
   };
 
-  /**
-   * Videos come from the library rather than the camera: it works the same on
-   * Android, iOS and web, and needs no microphone permission.
-   */
-  const addVideo = async () => {
-    setVideoError('');
-    setIsPickingVideo(true);
+  const handleAddVideo = async (setVid: React.Dispatch<React.SetStateAction<FileData | null>>, setVidErr: (msg: string) => void) => {
+    setVidErr('');
     try {
       if (Platform.OS !== 'web') {
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
-          setVideoError('Allow access to your videos to attach one.');
+          setVidErr('Allow access to your videos to attach one.');
           return;
         }
       }
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 1 });
       const asset = result.canceled ? undefined : result.assets[0];
       if (!asset?.uri) return;
-      if (asset.type && asset.type !== 'video') {
-        setVideoError('Choose a video file for this attachment.');
-        return;
-      }
       const mimeType = inferUploadMimeType(asset.fileName ?? asset.uri, asset.mimeType);
-      const isVideo = asset.type === 'video' || mimeType?.startsWith('video/');
-      if (!isVideo) {
-        setVideoError('Choose a video, not a photo or document.');
-        return;
-      }
       if (!mimeType) {
-        setVideoError('We could not verify this video type. Choose another video file.');
+        setVidErr('We could not verify this video type.');
         return;
       }
-      if (asset.fileSize === undefined) {
-        setVideoError(`We couldn't check this video's size. Choose another video up to ${MAX_UPLOAD_SIZE_LABEL}.`);
+      if (asset.fileSize && asset.fileSize > MAX_UPLOAD_SIZE_BYTES) {
+        setVidErr(`Video must be under ${MAX_UPLOAD_SIZE_LABEL}.`);
         return;
       }
-      if (asset.fileSize > MAX_UPLOAD_SIZE_BYTES) {
-        setVideoError(`This video is larger than ${MAX_UPLOAD_SIZE_LABEL}. Choose a smaller video.`);
-        return;
-      }
-      // Duration is in milliseconds, and missing on some web browsers.
       const seconds = asset.duration ? asset.duration / 1000 : undefined;
       if (seconds && seconds > MAX_VIDEO_SECONDS) {
-        setVideoError(`That video is ${formatDuration(seconds)} long. Choose one under ${MAX_VIDEO_SECONDS / 60} minutes.`);
+        setVidErr(`Video is too long. Max duration is ${MAX_VIDEO_SECONDS / 60} minutes.`);
         return;
       }
-      setVideoUri(asset.uri);
-      setVideoSizeBytes(asset.fileSize);
-      setVideoMimeType(mimeType);
+      setVid({
+        uri: asset.uri,
+        name: asset.fileName ?? undefined,
+        size: asset.fileSize ?? undefined,
+        mimeType,
+      });
       setVideoSeconds(seconds);
       await vibrate();
     } catch {
-      setVideoError('We could not open your videos. Try again.');
-    } finally {
-      setIsPickingVideo(false);
+      setVidErr('Could not open video.');
     }
   };
 
-  /**
-   * Coordinates are useless to a technician on the doorstep, so turn them into
-   * a street address where the platform supports it. Reverse geocoding is not
-   * available on web and can fail offline, in which case the coordinates stand
-   * in and the customer can still type over them.
-   */
-  const describeCoordinates = async (latitude: number, longitude: number) => {
-    const fallback = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-    if (Platform.OS === 'web') return fallback;
-    try {
-      const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
-      if (!place) return fallback;
-      const parts = [
-        [place.streetNumber, place.street].filter(Boolean).join(' '),
-        place.district,
-        place.city,
-        place.region,
-      ].filter((part): part is string => !!part && part.trim().length > 0);
-      const unique = parts.filter((part, index) => parts.indexOf(part) === index);
-      return unique.length > 0 ? unique.join(', ') : fallback;
-    } catch {
-      return fallback;
+  const toggleCurrentLocation = async (enabled: boolean, applyCoords: (val: string) => void, failVal: (msg: string) => void) => {
+    setIsUsingCurrentLocation(enabled);
+    if (!enabled) {
+      applyCoords('');
+      return;
     }
-  };
-
-  /** Fills whichever address field asked: the details step, or the review's editor. */
-  const useCurrentLocation = async (apply: (value: string) => void, fail: (message: string) => void) => {
-    fail('');
+    failVal('');
     setIsLocating(true);
     try {
+      let coordsText = '';
       if (Platform.OS === 'web') {
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            apply(await describeCoordinates(position.coords.latitude, position.coords.longitude));
-            setIsLocating(false);
-          },
-          () => {
-            fail('Allow location access to use your current location.');
-            setIsLocating(false);
-          },
-        );
-        return;
+        await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              coordsText = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
+              resolve(null);
+            },
+            () => reject(new Error('Permission denied'))
+          );
+        });
+      } else {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (!perm.granted) {
+          failVal('Location permission required.');
+          setIsLocating(false);
+          setIsUsingCurrentLocation(false);
+          return;
+        }
+        const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        coordsText = `${current.coords.latitude.toFixed(6)}, ${current.coords.longitude.toFixed(6)}`;
       }
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (!permission.granted) {
-        fail('Allow location access to use your current location.');
-        setIsLocating(false);
-        return;
-      }
-      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      apply(await describeCoordinates(current.coords.latitude, current.coords.longitude));
+      applyCoords(coordsText);
     } catch {
-      fail('We could not read your location. Try again.');
+      failVal('Could not fetch coordinates.');
+      setIsUsingCurrentLocation(false);
     } finally {
       setIsLocating(false);
     }
   };
 
-  /** Both required fields are checked together, so every gap shows at once under its own field. */
   const checkDetails = (): boolean => {
-    const problemMessage = problem.trim() ? '' : PROBLEM_REQUIRED;
-    const addressMessage = hasAddress ? '' : ADDRESS_REQUIRED;
-    const scheduleMessage = urgency === 'Schedule' && !scheduledFor ? SCHEDULE_REQUIRED : '';
-    setProblemError(problemMessage);
-    setAddressError(addressMessage);
-    setScheduleError(scheduleMessage);
-    return !problemMessage && !addressMessage && !scheduleMessage;
+    const pErr = problem.trim() ? '' : PROBLEM_REQUIRED;
+    const aErr = hasAddress ? '' : ADDRESS_REQUIRED;
+    setProblemError(pErr);
+    setAddressError(aErr);
+    return !pErr && !aErr;
   };
 
   const next = () => {
@@ -324,65 +265,55 @@ export default function RequestScreen() {
       setStep(2);
       return;
     }
-    submit();
+    // On step 2 (Review), proceed to payment mock popup flow
+    setShowPaymentModal(true);
+    setPaymentStep('prompt');
   };
 
-  const submit = async () => {
-    if (!checkDetails()) {
-      setStep(1);
-      return;
-    }
-    if (photoError) {
-      setStep(1);
-      return;
-    }
-    if (photoUri && (photoSizeBytes === undefined || photoSizeBytes > MAX_UPLOAD_SIZE_BYTES)) {
-      setPhotoError(`Choose a photo up to ${MAX_UPLOAD_SIZE_LABEL}.`);
-      setStep(1);
-      return;
-    }
-    if (videoError) {
-      setStep(1);
-      return;
-    }
-    if (videoUri && (videoSizeBytes === undefined || videoSizeBytes > MAX_UPLOAD_SIZE_BYTES)) {
-      setVideoError(`Choose a video up to ${MAX_UPLOAD_SIZE_LABEL}.`);
-      setStep(1);
-      return;
-    }
-    setIsSubmitting(true);
+  const handlePayServiceFee = async () => {
+    setIsPaying(true);
     try {
+      await new Promise((res) => setTimeout(res, 1200)); // Simulate payment transaction
+      setPaymentStep('success');
+      await notify('success');
+      
+      await new Promise((res) => setTimeout(res, 1000));
+      setPaymentStep('finding');
+
+      // Submit request backend sync
       const jobId = await addRequest({
         service,
         problem: problem.trim(),
-        urgency,
-        scheduledFor: urgency === 'Schedule' ? scheduledFor : undefined,
+        urgency: 'Today',
         locationLabel: address.trim(),
-        photoUri,
-        photoSizeBytes,
-        photoMimeType,
-        videoUri,
-        videoSizeBytes,
-        videoMimeType,
+        photoUri: photos[0]?.uri,
+        photoSizeBytes: photos[0]?.size,
+        photoMimeType: photos[0]?.mimeType,
+        videoUri: video?.uri,
+        videoSizeBytes: video?.size,
+        videoMimeType: video?.mimeType,
       });
-      await notify('success');
-      // Hand straight over to the job screen, which picks the stage to show.
+
+      await new Promise((res) => setTimeout(res, 1500)); // Show finding technician state briefly
+      setShowPaymentModal(false);
       router.replace(`/job/${jobId}`);
     } catch {
-      setError('Your request could not be sent. Please try again.');
+      setError('Payment or request submission failed.');
+      setShowPaymentModal(false);
     } finally {
-      setIsSubmitting(false);
+      setIsPaying(false);
     }
   };
 
-  /** Opens one review line for editing, starting from what is saved. */
-  const openEditor = (line: Exclude<Editing, null>) => {
+  const openEditor = (line: Editing) => {
     setError('');
     setDraftError('');
+    setDraftService(service);
     setDraftProblem(problem);
     setDraftAddress(address);
-    setDraftUrgency(urgency);
-    setDraftScheduledFor(scheduledFor);
+    setDraftCoords(currentAddressCoords);
+    setDraftPhotos([...photos]);
+    setDraftVideo(video);
     setEditing(line);
   };
 
@@ -391,165 +322,85 @@ export default function RequestScreen() {
     setEditing(null);
   };
 
-  /** Saves the open line and stays on the review. */
   const saveEditor = () => {
-    if (editing === 'problem') {
+    if (editing === 'service') {
+      setService(draftService);
+    } else if (editing === 'problem') {
       if (!draftProblem.trim()) return setDraftError(PROBLEM_REQUIRED);
       setProblem(draftProblem);
       setProblemError('');
-    }
-    if (editing === 'location') {
+    } else if (editing === 'attached') {
+      setPhotos([...draftPhotos]);
+      setVideo(draftVideo);
+    } else if (editing === 'location') {
       if (!draftAddress.trim()) return setDraftError(ADDRESS_REQUIRED);
       setAddress(draftAddress);
+      setCurrentAddressCoords(draftCoords);
       setAddressError('');
-    }
-    if (editing === 'urgency') {
-      if (draftUrgency === 'Schedule' && !draftScheduledFor) return setDraftError(SCHEDULE_REQUIRED);
-      setUrgency(draftUrgency);
-      setScheduledFor(draftUrgency === 'Schedule' ? draftScheduledFor : undefined);
-      setScheduleError('');
     }
     vibrate();
     closeEditor();
   };
 
-  const errorView = (message: string, testID = 'request-error') =>
-    message ? (
+  const errorView = (msg: string, testID = 'request-error') =>
+    msg ? (
       <View accessibilityLiveRegion="polite" style={styles.errorRow}>
         <Feather name="alert-circle" size={15} color={colors.destructive} />
-        <Text testID={testID} style={[styles.error, { color: colors.destructive }]}>{message}</Text>
+        <Text testID={testID} style={[styles.error, { color: colors.destructive }]}>{msg}</Text>
       </View>
     ) : null;
 
-  const attachments = [photoUri ? 'Photo' : null, videoUri ? 'Video' : null].filter(Boolean).join(' and ');
+  const renderMediaPicker = (currentPhotos: FileData[], setPhotoList: React.Dispatch<React.SetStateAction<FileData[]>>, currentVid: FileData | null, setVid: React.Dispatch<React.SetStateAction<FileData | null>>, errState: string, setErrState: (m: string) => void) => (
+    <View style={styles.mediaContainer}>
+      <View style={styles.photoGrid}>
+        {currentPhotos.map((p, idx) => (
+          <View key={idx} style={styles.thumbnailWrap}>
+            <Image source={{ uri: p.uri }} style={styles.thumbnail} />
+            <Pressable
+              onPress={() => setPhotoList(currentPhotos.filter((_, i) => i !== idx))}
+              style={[styles.removeThumb, { backgroundColor: colors.destructive }]}
+            >
+              <Feather name="x" size={12} color="#fff" />
+            </Pressable>
+          </View>
+        ))}
+        {currentPhotos.length < MAX_PHOTOS && (
+          <Pressable
+            onPress={() => handleAddPhoto(currentPhotos, setPhotoList, setErrState)}
+            style={[styles.addThumbBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+          >
+            <Ionicons name="camera-outline" size={20} color={colors.primary} />
+            <Text style={[styles.addThumbText, { color: colors.primary }]}>Add Photo</Text>
+          </Pressable>
+        )}
+      </View>
+      {errState ? <Text style={[styles.mediaError, { color: colors.destructive }]}>{errState}</Text> : null}
 
-  const media = (
-    <View style={[styles.mediaRow, stackMedia && styles.mediaColumn]}>
-      <MediaButton
-        testID="add-photo-button"
-        icon="camera-outline"
-        label={photoUri ? 'Photo added' : 'Add photo'}
-        hint={photoUri ? 'Tap to retake' : 'Take a picture'}
-        error={photoError}
-        thumbnailUri={photoUri}
-        onPress={() => {
-          if (Platform.OS === 'web') {
-            void addPhoto('library');
-            return;
-          }
-          Alert.alert('Add a photo', undefined, [
-            { text: 'Take a photo', onPress: () => { void addPhoto('camera'); } },
-            { text: 'Choose from photos', onPress: () => { void addPhoto('library'); } },
-            { text: 'Cancel', style: 'cancel' },
-          ]);
-        }}
-        onRemove={photoUri ? () => {
-          setPhotoUri(undefined);
-          setPhotoSizeBytes(undefined);
-          setPhotoMimeType(undefined);
-          setPhotoError('');
-        } : undefined}
-      />
-      <MediaButton
-        testID="add-video-button"
-        icon="videocam-outline"
-        label={videoUri ? 'Video added' : 'Add video'}
-        hint={videoUri ? (videoSeconds ? `${formatDuration(videoSeconds)} · tap to change` : 'Tap to change') : `Up to ${MAX_VIDEO_SIZE_LABEL} · ${MAX_VIDEO_SECONDS / 60} min`}
-        error={videoError}
-        attached={!!videoUri}
-        busy={isPickingVideo}
-        onPress={addVideo}
-        onRemove={
-          videoUri
-            ? () => {
-                setVideoUri(undefined);
-                setVideoSeconds(undefined);
-                setVideoSizeBytes(undefined);
-                setVideoMimeType(undefined);
-                setVideoError('');
-              }
-            : undefined
-        }
-      />
-    </View>
-  );
-
-  /** The editor that opens inside a review line, with its own Save and Cancel. */
-  const editor = (line: Exclude<Editing, null>) => (
-    <View style={styles.editor}>
-      {line === 'problem' ? (
-        <TextInput
-          accessibilityLabel="Describe the problem"
-          testID="review-problem-input"
-          value={draftProblem}
-          onChangeText={(value) => {
-            setDraftProblem(value);
-            setDraftError('');
-          }}
-          multiline
-          textAlignVertical="top"
-          autoFocus
-          style={[
-            styles.problemInput,
-            styles.editorInput,
-            { backgroundColor: colors.background, borderColor: draftError ? colors.destructive : colors.border, color: colors.foreground },
-          ]}
-        />
-      ) : null}
-      {line === 'attached' ? media : null}
-      {line === 'location' ? (
-        <AddressFields
-          value={draftAddress}
-          onChange={(value) => {
-            setDraftAddress(value);
-            setDraftError('');
-          }}
-          places={savedPlaces}
-          hasError={!!draftError}
-          isLocating={isLocating}
-          onUseCurrent={() => useCurrentLocation(setDraftAddress, setDraftError)}
-          testIDPrefix="review-"
-          inputBackground={colors.background}
-        />
-      ) : null}
-      {line === 'urgency' ? (
-        <>
-          <UrgencyPicker
-            value={draftUrgency}
-            onChange={(value) => {
-              setDraftUrgency(value);
-              setDraftError('');
-            }}
-            compact
-            testIDPrefix="review-"
-          />
-          {draftUrgency === 'Schedule' ? (
-            <SchedulePicker
-              value={draftScheduledFor}
-              onChange={(value) => {
-                setDraftScheduledFor(value);
-                setDraftError('');
-              }}
-              hasError={!!draftError}
-              testIDPrefix="review-"
-            />
-          ) : null}
-        </>
-      ) : null}
-      {errorView(draftError, 'review-edit-error')}
-      {line !== 'attached' ? errorView(error) : null}
-      <View style={styles.editorActions}>
-        {line === 'attached' ? (
-          <Button label="Done" size="small" icon="checkmark" onPress={closeEditor} testID="review-done" style={styles.editorAction} />
+      <View style={{ marginTop: 10 }}>
+        {currentVid ? (
+          <View style={[styles.videoAttachedCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Ionicons name="videocam" size={18} color={colors.primary} />
+            <Text style={[styles.videoAttachedText, { color: colors.foreground }]} numberOfLines={1}>
+              Video attached {videoSeconds ? `(${formatDuration(videoSeconds)})` : ''}
+            </Text>
+            <Pressable onPress={() => setVid(null)}>
+              <Feather name="x" size={16} color={colors.destructive} />
+            </Pressable>
+          </View>
         ) : (
-          <>
-            <Button label="Cancel" variant="outline" size="small" onPress={closeEditor} testID="review-cancel" style={styles.editorAction} />
-            <Button label="Save" size="small" icon="checkmark" onPress={saveEditor} testID="review-save" style={styles.editorAction} />
-          </>
+          <Pressable
+            onPress={() => handleAddVideo(setVid, setErrState)}
+            style={[styles.addVideoBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+          >
+            <Ionicons name="videocam-outline" size={18} color={colors.primary} />
+            <Text style={[styles.addVideoText, { color: colors.primary }]}>Add Video (max 2 mins)</Text>
+          </Pressable>
         )}
       </View>
     </View>
   );
+
+  const attachmentSummary = [photos.length ? `${photos.length} photo(s)` : null, video ? 'Video' : null].filter(Boolean).join(' and ');
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -557,7 +408,7 @@ export default function RequestScreen() {
         <BackButton
           onPress={goBack}
           testID="request-back-button"
-          accessibilityLabel={editing ? 'Close the editor' : step > 1 ? 'Back to details' : 'Close request'}
+          accessibilityLabel={editing ? 'Close editor' : step > 1 ? 'Back to details' : 'Close request'}
         />
         <Text style={[styles.stepText, { color: colors.mutedForeground }]}>
           Step {step} of {LAST_STEP} · {STEP_NAMES[step - 1]}
@@ -574,19 +425,43 @@ export default function RequestScreen() {
             <PageHeading
               eyebrow={service}
               title="Tell us what you need"
-              subtitle="Fill in the fields marked * and we will find a nearby technician."
+              subtitle="Fill in the required fields to connect with a verified technician."
             />
 
-            <FieldLabel label="What is the problem?" required style={styles.firstLabel} />
+            <FieldLabel label="Service Type" required style={styles.firstLabel} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.serviceScroll}>
+              {SERVICES.map((s) => {
+                const selected = service === s.label;
+                return (
+                  <Pressable
+                    key={s.label}
+                    onPress={() => setService(s.label)}
+                    style={[
+                      styles.serviceChip,
+                      {
+                        backgroundColor: selected ? colors.primary : colors.card,
+                        borderColor: selected ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.serviceChipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                      {s.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <FieldLabel label="What is the problem?" required style={styles.sectionLabel} />
             <TextInput
               accessibilityLabel="Describe the problem"
               testID="problem-input"
               value={problem}
-              onChangeText={(value) => {
-                setProblem(value);
+              onChangeText={(val) => {
+                setProblem(val);
                 if (problemError) setProblemError('');
               }}
-              placeholder="For example: the kitchen tap has been leaking since this morning."
+              placeholder="For example: the kitchen tap has been leaking..."
               placeholderTextColor={colors.mutedForeground}
               multiline
               textAlignVertical="top"
@@ -597,51 +472,23 @@ export default function RequestScreen() {
             />
             {errorView(problemError, 'problem-error')}
 
-            <FieldLabel label="Photo or video" optional style={styles.sectionLabel} />
-            {media}
+            <FieldLabel label={`Photos (up to ${MAX_PHOTOS}) & Video (1 max)`} optional style={styles.sectionLabel} />
+            {renderMediaPicker(photos, setPhotos, video, setVideo, photoError, setPhotoError)}
 
             <FieldLabel label="Where is the service needed?" required style={styles.sectionLabel} />
-            <View style={[styles.mapPlaceholder, { height: mapHeight, backgroundColor: colors.secondary, borderColor: colors.border }]}>
-              <View style={[styles.mapGrid, { backgroundColor: colors.infoMuted }]} />
-              <View style={[styles.mapPin, { backgroundColor: colors.primary }]}>
-                <Ionicons name="location" size={18} color={colors.primaryForeground} />
-              </View>
-              <Text numberOfLines={1} style={[styles.mapLabel, { color: hasAddress ? colors.foreground : colors.primary }]}>
-                {hasAddress ? address : 'Service location'}
-              </Text>
-            </View>
             <AddressFields
               value={address}
-              onChange={(value) => {
-                setAddress(value);
+              onChange={(val) => {
+                setAddress(val);
                 if (addressError) setAddressError('');
               }}
               places={savedPlaces}
               hasError={!!addressError}
               isLocating={isLocating}
-              onUseCurrent={() => useCurrentLocation(setAddress, setError)}
+              isUsingCurrentLocation={isUsingCurrentLocation}
+              onToggleCurrentLocation={(val) => toggleCurrentLocation(val, setCurrentAddressCoords, setError)}
             />
             {errorView(addressError, 'address-error')}
-
-            <FieldLabel label="How urgent is it?" required style={styles.sectionLabel} />
-            <UrgencyPicker
-              value={urgency}
-              onChange={(value) => {
-                setUrgency(value);
-                setScheduleError('');
-              }}
-            />
-            {urgency === 'Schedule' ? (
-              <SchedulePicker
-                value={scheduledFor}
-                onChange={(value) => {
-                  setScheduledFor(value);
-                  setScheduleError('');
-                }}
-                hasError={!!scheduleError}
-              />
-            ) : null}
-            {errorView(scheduleError, 'schedule-error')}
             {errorView(error)}
           </>
         )}
@@ -650,42 +497,111 @@ export default function RequestScreen() {
             <PageHeading
               eyebrow="Almost there"
               title="Review your request"
-              subtitle="Tap a line to change it. Your change is saved right here."
+              subtitle="Tap any line to change details before proceeding."
             />
             <View style={[styles.reviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <ReviewRow label="Service" value={service} />
+              <ReviewRow
+                label="Service"
+                value={service}
+                onEdit={() => openEditor('service')}
+                open={editing === 'service'}
+                editor={
+                  <View style={styles.editor}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.serviceScroll}>
+                      {SERVICES.map((s) => {
+                        const sel = draftService === s.label;
+                        return (
+                          <Pressable
+                            key={s.label}
+                            onPress={() => setDraftService(s.label)}
+                            style={[
+                              styles.serviceChip,
+                              { backgroundColor: sel ? colors.primary : colors.background, borderColor: sel ? colors.primary : colors.border },
+                            ]}
+                          >
+                            <Text style={[styles.serviceChipText, { color: sel ? colors.primaryForeground : colors.foreground }]}>
+                              {s.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                    <View style={styles.editorActions}>
+                      <Button label="Cancel" variant="outline" size="small" onPress={closeEditor} style={styles.editorAction} />
+                      <Button label="Save" size="small" icon="checkmark" onPress={saveEditor} style={styles.editorAction} />
+                    </View>
+                  </View>
+                }
+              />
               <ReviewRow
                 label="Problem"
                 value={problem}
                 onEdit={() => openEditor('problem')}
                 open={editing === 'problem'}
-                editor={editing === 'problem' ? editor('problem') : null}
+                editor={
+                  <View style={styles.editor}>
+                    <TextInput
+                      value={draftProblem}
+                      onChangeText={(val) => setDraftProblem(val)}
+                      multiline
+                      style={[styles.problemInput, styles.editorInput, { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border }]}
+                    />
+                    {errorView(draftError)}
+                    <View style={styles.editorActions}>
+                      <Button label="Cancel" variant="outline" size="small" onPress={closeEditor} style={styles.editorAction} />
+                      <Button label="Save" size="small" icon="checkmark" onPress={saveEditor} style={styles.editorAction} />
+                    </View>
+                  </View>
+                }
               />
               <ReviewRow
                 label="Attached"
-                value={attachments || 'Nothing attached'}
-                muted={!attachments}
+                value={attachmentSummary || 'Nothing attached'}
+                muted={!attachmentSummary}
                 onEdit={() => openEditor('attached')}
                 open={editing === 'attached'}
-                editor={editing === 'attached' ? editor('attached') : null}
+                editor={
+                  <View style={styles.editor}>
+                    {renderMediaPicker(draftPhotos, setDraftPhotos, draftVideo, setDraftVideo, '', () => {})}
+                    <View style={styles.editorActions}>
+                      <Button label="Cancel" variant="outline" size="small" onPress={closeEditor} style={styles.editorAction} />
+                      <Button label="Save" size="small" icon="checkmark" onPress={saveEditor} style={styles.editorAction} />
+                    </View>
+                  </View>
+                }
               />
               <ReviewRow
-                label="Location"
+                label="Address Label"
                 value={address}
                 onEdit={() => openEditor('location')}
                 open={editing === 'location'}
-                editor={editing === 'location' ? editor('location') : null}
+                editor={
+                  <View style={styles.editor}>
+                    <AddressFields
+                      value={draftAddress}
+                      onChange={(val) => setDraftAddress(val)}
+                      places={savedPlaces}
+                      hasError={false}
+                      isLocating={isLocating}
+                      isUsingCurrentLocation={isUsingCurrentLocation}
+                      onToggleCurrentLocation={(val) => toggleCurrentLocation(val, setDraftCoords, setError)}
+                      inputBackground={colors.background}
+                    />
+                    <View style={styles.editorActions}>
+                      <Button label="Cancel" variant="outline" size="small" onPress={closeEditor} style={styles.editorAction} />
+                      <Button label="Save" size="small" icon="checkmark" onPress={saveEditor} style={styles.editorAction} />
+                    </View>
+                  </View>
+                }
               />
               <ReviewRow
-                label="Urgency"
-                value={urgencyText({ urgency, scheduledFor })}
-                onEdit={() => openEditor('urgency')}
-                open={editing === 'urgency'}
-                editor={editing === 'urgency' ? editor('urgency') : null}
+                label="Current Address"
+                value={currentAddressCoords || 'Not enabled'}
+                muted={!currentAddressCoords}
                 last
               />
             </View>
-            <Notice tone="brand" icon="shield-checkmark-outline" text="You will review any visit fee and repair quote before paying." />
+            <Notice tone="brand" icon="shield-checkmark-outline" text="Proceed to payment to lock in your booking and dispatch a technician." />
             {editing ? null : errorView(error)}
           </>
         )}
@@ -697,19 +613,60 @@ export default function RequestScreen() {
           { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 14 },
         ]}
       >
-        {step > 1 ? (
-          <Button label="Back" variant="outline" onPress={goBack} testID="request-previous-button" style={narrow ? styles.backActionNarrow : styles.backAction} />
-        ) : null}
         <Button
-          label={step === LAST_STEP ? 'Find my technician' : 'Continue'}
+          label={step === LAST_STEP ? 'Proceed to payment (Service Fee)' : 'Continue'}
           icon={narrow && step === LAST_STEP ? undefined : 'arrow-forward'}
           loading={isSubmitting}
           disabled={!!editing}
           onPress={next}
-          testID={step === LAST_STEP ? 'submit-request-button' : 'request-continue-button'}
           style={styles.nextAction}
         />
       </View>
+
+      {/* Payment and Finding Technician Popup Modal */}
+      <Modal visible={showPaymentModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {paymentStep === 'prompt' && (
+              <>
+                <View style={[styles.modalIconWrap, { backgroundColor: colors.secondary }]}>
+                  <Ionicons name="card-outline" size={28} color={colors.primary} />
+                </View>
+                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Service Fee Payment</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.mutedForeground }]}>
+                  A standard dispatch and service verification fee of <Text style={{ fontWeight: '700', color: colors.foreground }}>FRW 2,500</Text> is required to dispatch a technician to your location.
+                </Text>
+                <View style={styles.modalActions}>
+                  <Button label="Cancel" variant="outline" onPress={() => setShowPaymentModal(false)} style={styles.modalBtn} />
+                  <Button label="Pay Now" loading={isPaying} onPress={handlePayServiceFee} style={styles.modalBtn} />
+                </View>
+              </>
+            )}
+
+            {paymentStep === 'success' && (
+              <>
+                <View style={[styles.modalIconWrap, { backgroundColor: '#e6f4ea' }]}>
+                  <Ionicons name="checkmark-circle" size={32} color="#137333" />
+                </View>
+                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Payment Successful!</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.mutedForeground }]}>
+                  Your service fee has been received and confirmed.
+                </Text>
+              </>
+            )}
+
+            {paymentStep === 'finding' && (
+              <>
+                <ActivityIndicator size="large" color={colors.primary} style={{ marginVertical: 12 }} />
+                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Finding the right technician...</Text>
+                <Text style={[styles.modalSubtitle, { color: colors.mutedForeground }]}>
+                  Sharing your request with nearby verified {service} specialists.
+                </Text>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <ConfirmDialog
         visible={confirmLeave}
@@ -734,30 +691,39 @@ type AddressFieldsProps = {
   places: SavedPlace[];
   hasError: boolean;
   isLocating: boolean;
-  onUseCurrent: () => void;
-  testIDPrefix?: string;
+  isUsingCurrentLocation: boolean;
+  onToggleCurrentLocation: (enabled: boolean) => void;
   inputBackground?: string;
 };
 
-function AddressFields({ value, onChange, places, hasError, isLocating, onUseCurrent, testIDPrefix = '', inputBackground }: AddressFieldsProps) {
+function AddressFields({ value, onChange, places, hasError, isLocating, isUsingCurrentLocation, onToggleCurrentLocation, inputBackground }: AddressFieldsProps) {
   const colors = useColors();
   return (
     <>
-      {places.length > 0 ? (
+      <View style={styles.toggleRow}>
+        <Text style={[styles.toggleLabel, { color: colors.foreground }]}>Use Current Location</Text>
+        <Pressable
+          onPress={() => onToggleCurrentLocation(!isUsingCurrentLocation)}
+          style={[
+            styles.toggleSwitch,
+            { backgroundColor: isUsingCurrentLocation ? colors.primary : colors.muted, borderColor: colors.border },
+          ]}
+        >
+          <View style={[styles.toggleThumb, isUsingCurrentLocation ? styles.thumbRight : styles.thumbLeft, { backgroundColor: colors.card }]} />
+        </Pressable>
+      </View>
+
+      {places.length > 0 && !isUsingCurrentLocation ? (
         <View style={styles.placeRow}>
           {places.map((place) => {
             const selected = value === place.address;
             return (
               <Pressable
                 key={place.id}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                accessibilityLabel={`Use ${place.label}: ${place.address}`}
-                testID={`${testIDPrefix}request-place-${place.id}`}
                 onPress={() => onChange(place.address)}
-                style={({ pressed }) => [
+                style={[
                   styles.placeChip,
-                  { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.card, opacity: pressed ? 0.8 : 1 },
+                  { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.card },
                 ]}
               >
                 <Ionicons name={PLACE_ICON[place.kind]} size={15} color={selected ? colors.primaryForeground : colors.primary} />
@@ -769,6 +735,7 @@ function AddressFields({ value, onChange, places, hasError, isLocating, onUseCur
           })}
         </View>
       ) : null}
+
       <View
         style={[
           styles.addressCard,
@@ -778,7 +745,6 @@ function AddressFields({ value, onChange, places, hasError, isLocating, onUseCur
         <Ionicons name="location-outline" size={22} color={colors.primary} />
         <TextInput
           accessibilityLabel="Service address"
-          testID={`${testIDPrefix}address-input`}
           value={value}
           onChangeText={onChange}
           placeholder="Street, area or landmark"
@@ -786,127 +752,9 @@ function AddressFields({ value, onChange, places, hasError, isLocating, onUseCur
           multiline
           style={[styles.addressText, { color: colors.foreground }]}
         />
+        {isLocating ? <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} /> : null}
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Use my current location"
-        accessibilityState={{ busy: isLocating }}
-        testID={`${testIDPrefix}use-current-location-button`}
-        onPress={isLocating ? undefined : onUseCurrent}
-        style={({ pressed }) => [styles.useCurrent, { backgroundColor: colors.secondary, opacity: pressed ? 0.75 : 1 }]}
-      >
-        {isLocating ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="navigate" size={16} color={colors.primary} />}
-        <Text style={[styles.useText, { color: colors.primary }]}>{isLocating ? 'Finding you…' : 'Use my current location'}</Text>
-      </Pressable>
     </>
-  );
-}
-
-function UrgencyPicker({
-  value,
-  onChange,
-  compact,
-  testIDPrefix = '',
-}: {
-  value: Urgency;
-  onChange: (value: Urgency) => void;
-  compact?: boolean;
-  testIDPrefix?: string;
-}) {
-  const colors = useColors();
-  return (
-    <View accessibilityRole="radiogroup" style={[styles.urgencyList, compact && styles.urgencyListCompact]}>
-      {URGENCIES.map((option) => {
-        const selected = value === option;
-        return (
-          <Pressable
-            key={option}
-            accessibilityRole="radio"
-            accessibilityState={{ selected }}
-            testID={`${testIDPrefix}urgency-${option}`}
-            onPress={() => onChange(option)}
-            style={({ pressed }) => [
-              styles.urgencyCard,
-              compact && styles.urgencyCardCompact,
-              { backgroundColor: selected ? colors.secondary : colors.card, borderColor: selected ? colors.primary : colors.border, opacity: pressed ? 0.85 : 1 },
-            ]}
-          >
-            <View style={[styles.radio, { borderColor: selected ? colors.primary : colors.input }]}>
-              {selected && <View style={[styles.radioFill, { backgroundColor: colors.primary }]} />}
-            </View>
-            <View style={styles.urgencyCopy}>
-              <Text style={[styles.urgencyTitle, { color: colors.foreground }]}>{option}</Text>
-              <Text style={[styles.urgencyText, { color: colors.mutedForeground }]}>{URGENCY_COPY[option].text}</Text>
-            </View>
-            <Ionicons name={URGENCY_COPY[option].icon} size={22} color={selected ? colors.primary : colors.mutedForeground} />
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-type MediaButtonProps = {
-  testID: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  hint: string;
-  error?: string;
-  thumbnailUri?: string;
-  attached?: boolean;
-  busy?: boolean;
-  onPress: () => void;
-  onRemove?: () => void;
-};
-
-function MediaButton({ testID, icon, label, hint, error, thumbnailUri, attached, busy, onPress, onRemove }: MediaButtonProps) {
-  const colors = useColors();
-  const isAttached = attached || !!thumbnailUri;
-  return (
-    <View style={styles.mediaCell}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        accessibilityHint={hint}
-        testID={testID}
-        onPress={busy ? undefined : onPress}
-        style={({ pressed }) => [
-          styles.mediaButton,
-          { borderColor: isAttached ? colors.primary : colors.border, backgroundColor: isAttached ? colors.secondary : colors.card, opacity: pressed ? 0.75 : 1 },
-        ]}
-      >
-        {busy ? (
-          <ActivityIndicator size="small" color={colors.primary} />
-        ) : thumbnailUri ? (
-          <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} />
-        ) : (
-          <View style={[styles.mediaIcon, { backgroundColor: isAttached ? colors.primary : colors.secondary }]}>
-            <Ionicons name={isAttached ? 'checkmark' : icon} size={19} color={isAttached ? colors.primaryForeground : colors.primary} />
-          </View>
-        )}
-        <View style={styles.mediaCopy}>
-          <Text numberOfLines={1} style={[styles.mediaText, { color: colors.foreground }]}>{label}</Text>
-          <Text numberOfLines={1} style={[styles.mediaHint, { color: colors.mutedForeground }]}>{hint}</Text>
-        </View>
-      </Pressable>
-      {error ? (
-        <Text accessibilityLiveRegion="polite" style={[styles.mediaError, { color: colors.destructive }]}>
-          {error}
-        </Text>
-      ) : null}
-      {onRemove ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Remove ${label.toLowerCase().replace(' added', '')}`}
-          testID={`${testID}-remove`}
-          onPress={onRemove}
-          hitSlop={8}
-          style={[styles.removeButton, { backgroundColor: colors.foreground, borderColor: colors.card }]}
-        >
-          <Feather name="x" size={12} color={colors.card} />
-        </Pressable>
-      ) : null}
-    </View>
   );
 }
 
@@ -936,10 +784,6 @@ function ReviewRow({ label, value, onEdit, muted, last = false, open, editor }: 
   return (
     <View style={border}>
       <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Change ${label.toLowerCase()}`}
-        accessibilityState={{ expanded: !!open }}
-        testID={`review-edit-${label.toLowerCase()}`}
         onPress={open ? undefined : onEdit}
         style={({ pressed }) => [styles.reviewRow, { opacity: pressed && !open ? 0.6 : 1 }]}
       >
@@ -960,45 +804,40 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 28 },
   firstLabel: { marginTop: 22 },
   sectionLabel: { marginTop: 26 },
+  serviceScroll: { gap: 8, paddingVertical: 4 },
+  serviceChip: { minHeight: 38, borderRadius: 19, borderWidth: 1, paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center' },
+  serviceChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   problemInput: { minHeight: 120, borderWidth: 1, borderRadius: 14, padding: 14, fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 21 },
-  mediaRow: { flexDirection: 'row', gap: 10 },
-  mediaColumn: { flexDirection: 'column' },
-  mediaCell: { flex: 1, minWidth: 0 },
-  mediaButton: { minHeight: 64, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 11, paddingVertical: 10 },
-  mediaIcon: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  mediaCopy: { flex: 1 },
-  mediaText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  mediaHint: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
-  mediaError: { fontFamily: 'Inter_500Medium', fontSize: 11, lineHeight: 15, marginTop: 6 },
-  thumbnail: { width: 38, height: 38, borderRadius: 9 },
-  removeButton: { position: 'absolute', top: -7, right: -7, width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  mapPlaceholder: { borderRadius: 16, borderWidth: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, marginBottom: 12 },
-  mapGrid: { ...StyleSheet.absoluteFillObject, opacity: 0.35 },
-  mapPin: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  mapLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 8, textAlign: 'center' },
+  mediaContainer: { gap: 8 },
+  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  thumbnailWrap: { position: 'relative', width: 64, height: 64, borderRadius: 10, overflow: 'hidden' },
+  thumbnail: { width: '100%', height: '100%' },
+  removeThumb: { position: 'absolute', top: 2, right: 2, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  addThumbBtn: { width: 64, height: 64, borderRadius: 10, borderWidth: 1, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', gap: 2 },
+  addThumbText: { fontSize: 10, fontWeight: '600' },
+  mediaError: { fontFamily: 'Inter_500Medium', fontSize: 11, lineHeight: 15, marginTop: 2 },
+  videoAttachedCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderWidth: 1, borderRadius: 10 },
+  videoAttachedText: { fontSize: 13, flex: 1, marginLeft: 8, fontWeight: '500' },
+  addVideoBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, borderWidth: 1, borderStyle: 'dashed', borderRadius: 10 },
+  addVideoText: { fontSize: 13, fontWeight: '600' },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  toggleLabel: { fontSize: 13, fontWeight: '600' },
+  toggleSwitch: { width: 44, height: 24, borderRadius: 12, borderWidth: 1, padding: 2, justifyContent: 'center' },
+  toggleThumb: { width: 18, height: 18, borderRadius: 9 },
+  thumbLeft: { alignSelf: 'flex-start' },
+  thumbRight: { alignSelf: 'flex-end' },
   placeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   placeChip: { minHeight: 38, maxWidth: '100%', borderRadius: 19, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 13 },
   placeChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 13, flexShrink: 1 },
   addressCard: { minHeight: 56, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 13, paddingVertical: 6 },
-  addressText: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 15, lineHeight: 20, paddingVertical: 8 },
-  useCurrent: { minHeight: 44, borderRadius: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, alignSelf: 'flex-start', paddingHorizontal: 16, marginTop: 12 },
-  useText: { fontFamily: 'Inter_700Bold', fontSize: 13 },
-  urgencyList: { gap: 10 },
-  urgencyListCompact: { gap: 8 },
-  urgencyCard: { minHeight: 70, borderWidth: 1.5, borderRadius: 15, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  urgencyCardCompact: { minHeight: 60, paddingVertical: 10 },
-  radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  radioFill: { width: 11, height: 11, borderRadius: 6 },
-  urgencyCopy: { flex: 1 },
-  urgencyTitle: { fontFamily: 'Inter_700Bold', fontSize: 15 },
-  urgencyText: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 4 },
+  addressText: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 15, lineHeight: 20, paddingTop: Platform.OS === 'ios' ? 0 : 4, paddingBottom: 0, textAlignVertical: 'center' },
   reviewCard: { borderWidth: 1, borderRadius: 15, paddingHorizontal: 14, marginTop: 22, marginBottom: 14 },
   reviewRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12 },
-  reviewLabel: { width: 70, fontFamily: 'Inter_500Medium', fontSize: 13 },
+  reviewLabel: { width: 95, fontFamily: 'Inter_500Medium', fontSize: 13 },
   reviewValue: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 14, lineHeight: 20 },
-  editor: { paddingBottom: 14 },
+  editor: { paddingBottom: 14, gap: 10 },
   editorInput: { minHeight: 100 },
-  editorActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  editorActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
   editorAction: { flex: 1 },
   errorRow: { flexDirection: 'row', gap: 7, alignItems: 'flex-start', marginTop: 10 },
   error: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18 },
@@ -1006,4 +845,11 @@ const styles = StyleSheet.create({
   backAction: { minWidth: 96 },
   backActionNarrow: { minWidth: 76 },
   nextAction: { flex: 1 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContent: { width: '100%', maxWidth: 360, borderRadius: 20, borderWidth: 1, padding: 24, alignItems: 'center', gap: 12 },
+  modalIconWrap: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
+  modalTitle: { fontFamily: 'Inter_700Bold', fontSize: 18, textAlign: 'center' },
+  modalSubtitle: { fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 10 },
+  modalActions: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 6 },
+  modalBtn: { flex: 1 },
 });
