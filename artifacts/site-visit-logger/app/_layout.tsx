@@ -19,6 +19,7 @@ import { FundiProvider } from '@/context/FundiContext';
 import { ProfileProvider } from '@/context/ProfileContext';
 import { WorkProvider } from '@/context/WorkContext';
 import { configureApi, checkApiHealth } from '@/lib/api';
+import { ChatProvider } from '@/context/ChatContext';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -100,6 +101,7 @@ function RootLayoutNav() {
       </Stack.Protected>
       <Stack.Protected guard={!!account}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="select-technician" options={{ headerShown: false }} />
         {/* Every screen below draws its own back control, so the stack header is off. */}
         <Stack.Screen name="request" options={{ headerShown: false }} />
         <Stack.Screen name="job/[id]" options={{ headerShown: false, gestureEnabled: false }} />
@@ -165,11 +167,13 @@ export default function RootLayout() {
             <ProfileProvider>
               <FundiProvider>
                 <WorkProvider>
-                  <GestureHandlerRootView>
-                    <KeyboardProvider>
-                      <RootLayoutNav />
-                    </KeyboardProvider>
-                  </GestureHandlerRootView>
+                  <ChatProvider>
+                    <GestureHandlerRootView>
+                      <KeyboardProvider>
+                        <RootLayoutNav />
+                      </KeyboardProvider>
+                    </GestureHandlerRootView>
+                  </ChatProvider>
                 </WorkProvider>
               </FundiProvider>
             </ProfileProvider>

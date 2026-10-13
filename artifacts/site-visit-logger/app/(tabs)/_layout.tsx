@@ -42,6 +42,10 @@ function NativeTabLayout() {
         <Icon sf={working ? { default: 'briefcase', selected: 'briefcase.fill' } : { default: 'clock', selected: 'clock.fill' }} />
         <Label>{working ? 'Jobs' : 'Activity'}</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="chat">
+        <Icon sf={{ default: 'bubble.left.and.bubble.right', selected: 'bubble.left.and.bubble.right.fill' }} />
+        <Label>Chats</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="profile">
         <Icon sf={{ default: 'person', selected: 'person.fill' }} />
         <Label>Profile</Label>
@@ -112,6 +116,13 @@ function ClassicTabLayout() {
             ) : (
               <Feather name={working ? 'sliders' : 'tool'} size={22} color={color} />
             ),
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'Chats',
+          tabBarIcon: ({ color }) => <Feather name="message-square" size={21} color={color} />,
         }}
       />
       <Tabs.Screen

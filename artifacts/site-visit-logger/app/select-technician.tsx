@@ -1,0 +1,182 @@
+import React, { useMemo, useState } from 'react';
+import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather, Ionicons } from '@expo/vector-icons';
+import { useColors } from '@/hooks/useColors';
+import { BackButton } from '@/components/ui/BackButton';
+import { PageHeading } from '@/components/ui/PageHeading';
+import { MOCK_MARKETPLACE_TECHNICIANS, type MarketplaceTechnician } from '@/constants/technicians';
+import { useChat } from '@/context/ChatContext';
+
+export default function SelectTechnicianScreen() {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { service, problem, location, jobId } = useLocalSearchParams<{
+    service?: string;
+    problem?: string;
+    location?: string;
+    jobId?: string;
+  }>();
+  const { createOrGetThread } = useChat();
+  const [availableOnly, setAvailableOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
+
+  const technicians = useMemo(() => {
+    const requestedService = (service ?? '').toLowerCase();
+    const matchesService = (tech: MarketplaceTechnician) => {
+      if (!requestedService) return true;
+      const offered = tech.service.toLowerCase();
+      if (offered.includes(requestedService)) return true;
+      if (requestedService === 'home repair') return offered.includes('carpentry') || offered.includes('roofing');
+      return false;
+    };
+
+    return MOCK_MARKETPLACE_TECHNICIANS
+      .filter((tech) => (!availableOnly || tech.isAvailable) && matchesService(tech))
+      .sort((a, b) => sortBy === 'distance' ? a.distanceKm - b.distanceKm : b.rating - a.rating);
+  }, [availableOnly, service, sortBy]);
+
+  const handleSelectTech = (tech: MarketplaceTechnician) => {
+    // Create a chat thread with the selected technician and attach the structured request template
+    const threadId = createOrGetThread(
+      tech.name,
+      'technician',
+      jobId,
+      {
+        id: jobId || `request-${Date.now()}`,
+        serviceName: service || 'General Service',
+        problem: problem || 'Service requested',
+        address: location || 'Specified Location',
+        photos: [],
+        videos: [],
+        createdAt: new Date().toISOString(),
+        status: 'PENDING',
+      },
+      tech.phoneNumber,
+    );
+    router.replace({ pathname: '/(tabs)/chat', params: { threadId } });
+  };
+
+  return (
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8 }]}>
+        <BackButton onPress={() => router.back()} />
+        <Text style={[styles.titleTop, { color: colors.foreground }]}>Choose Technician</Text>
+        <View style={{ width: 34 }} />
+      </View>
+
+      <FlatList
+        data={technicians}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.content}
+        ListHeaderComponent={
+          <View style={styles.listHeader}>
+            <PageHeading
+              eyebrow={service || 'Available Specialists'}
+              title="Select a verified expert"
+              subtitle="Browse specialists by availability, rating, and proximity."
+            />
+            <View style={styles.filters}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: !availableOnly }}
+                onPress={() => setAvailableOnly(false)}
+                style={[styles.filterChip, { backgroundColor: !availableOnly ? colors.primary : colors.card, borderColor: colors.border }]}
+              >
+                <Text style={[styles.filterText, { color: !availableOnly ? colors.primaryForeground : colors.foreground }]}>All matches</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: availableOnly }}
+                onPress={() => setAvailableOnly(true)}
+                style={[styles.filterChip, { backgroundColor: availableOnly ? colors.primary : colors.card, borderColor: colors.border }]}
+              >
+                <Text style={[styles.filterText, { color: availableOnly ? colors.primaryForeground : colors.foreground }]}>Available</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: sortBy === 'distance' }}
+                onPress={() => setSortBy('distance')}
+                style={[styles.filterChip, { backgroundColor: sortBy === 'distance' ? colors.secondary : colors.card, borderColor: colors.border }]}
+              >
+                <Text style={[styles.filterText, { color: sortBy === 'distance' ? colors.primary : colors.foreground }]}>Nearest</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: sortBy === 'rating' }}
+                onPress={() => setSortBy('rating')}
+                style={[styles.filterChip, { backgroundColor: sortBy === 'rating' ? colors.secondary : colors.card, borderColor: colors.border }]}
+              >
+                <Text style={[styles.filterText, { color: sortBy === 'rating' ? colors.primary : colors.foreground }]}>Top rated</Text>
+              </Pressable>
+            </View>
+          </View>
+        }
+        ListEmptyComponent={
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+            No technicians match this service and availability filter yet.
+          </Text>
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            disabled={!item.isAvailable}
+            onPress={() => handleSelectTech(item)}
+            style={[
+              styles.card,
+              { backgroundColor: colors.card, borderColor: colors.border, opacity: item.isAvailable ? 1 : 0.6 },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
+                <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{item.name[0]}</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={[styles.techName, { color: colors.foreground }]}>{item.name}</Text>
+                <Text style={[styles.techService, { color: colors.mutedForeground }]}>{item.service}</Text>
+              </View>
+              <View style={[styles.statusBadge, { backgroundColor: item.isAvailable ? colors.success + '20' : colors.muted }]}>
+                <Text style={{ color: item.isAvailable ? colors.success : colors.mutedForeground, fontSize: 11, fontWeight: '600' }}>
+                  {item.isAvailable ? 'Available' : 'Busy'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={[styles.metaRow, { borderTopColor: colors.border }]}>
+              <View style={styles.metaItem}>
+                <Ionicons name="star" size={14} color="#F59E0B" />
+                <Text style={[styles.metaText, { color: colors.foreground }]}>{item.rating} ({item.reviewsCount} reviews)</Text>
+              </View>
+              <View style={styles.metaItem}>
+                <Ionicons name="location-outline" size={14} color={colors.primary} />
+                <Text style={[styles.metaText, { color: colors.foreground }]}>{item.distanceKm} km away</Text>
+              </View>
+            </View>
+          </Pressable>
+        )}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  topBar: { paddingHorizontal: 20, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  titleTop: { fontFamily: 'Inter_600SemiBold', fontSize: 16 },
+  content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32, gap: 12 },
+  listHeader: { gap: 16, marginBottom: 8 },
+  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterChip: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8 },
+  filterText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  emptyText: { fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center', paddingVertical: 24 },
+  card: { borderWidth: 1, borderRadius: 16, padding: 16, gap: 12 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center' },
+  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  techName: { fontFamily: 'Inter_600SemiBold', fontSize: 15 },
+  techService: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  metaRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 10, borderTopWidth: 1 },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaText: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+});

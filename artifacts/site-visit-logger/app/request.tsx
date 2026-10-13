@@ -102,7 +102,7 @@ export default function RequestScreen() {
       return;
     }
     if (step > 1) {
-      return; // Disallow going back via arrow on review page
+      return;
     }
     if (hasProgress) setConfirmLeave(true);
     else leave();
@@ -111,7 +111,7 @@ export default function RequestScreen() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (step > 1) return true; // Block hardware back on review page
+      if (step > 1) return true;
       goBack();
       return true;
     });
@@ -204,13 +204,11 @@ export default function RequestScreen() {
 
   const handleLocationAction = async (applyCoords: (val: string) => void, failVal: (msg: string) => void) => {
     if (isUsingCurrentLocation) {
-      // Remove location
       setIsUsingCurrentLocation(false);
       applyCoords('');
       return;
     }
 
-    // Add or Update location
     failVal('');
     setIsLocating(true);
     try {
@@ -285,7 +283,15 @@ export default function RequestScreen() {
         videoMimeType: video?.mimeType,
       });
       await notify('success');
-      router.replace(`/job/${jobId}`);
+      router.replace({
+        pathname: '/select-technician',
+        params: {
+          jobId,
+          service,
+          problem: problem.trim(),
+          location: address.trim(),
+        },
+      });
     } catch {
       setError('Your request could not be sent. Please try again.');
     } finally {
@@ -645,7 +651,6 @@ type AddressFieldsProps = {
 
 function AddressFields({ value, onChange, places, hasError, isLocating, isUsingCurrentLocation, onLocationAction, inputBackground }: AddressFieldsProps) {
   const colors = useColors();
-  const locationButtonLabel = isUsingCurrentLocation ? 'Remove Location' : currentAddressCoordsExists(isUsingCurrentLocation) ? 'Update Location' : 'Add Location';
 
   return (
     <>
@@ -665,13 +670,13 @@ function AddressFields({ value, onChange, places, hasError, isLocating, isUsingC
             return (
               <Pressable
                 key={place.id}
-                onPress={() => onChange(place.address)}
+                onPress={() => onChange(place.address)} // Sets the address label / landmark into the request field
                 style={[
                   styles.placeChip,
                   { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.card },
                 ]}
               >
-                <Ionicons name={PLACE_ICON[place.kind]} size={15} color={selected ? colors.primaryForeground : colors.primary} />
+                <Ionicons name={PLACE_ICON[place.kind] || 'location-outline'} size={15} color={selected ? colors.primaryForeground : colors.primary} />
                 <Text numberOfLines={1} style={[styles.placeChipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
                   {place.label}
                 </Text>
@@ -700,10 +705,6 @@ function AddressFields({ value, onChange, places, hasError, isLocating, isUsingC
       </View>
     </>
   );
-}
-
-function currentAddressCoordsExists(isUsingCurrentLocation: boolean) {
-  return isUsingCurrentLocation;
 }
 
 type ReviewRowProps = {
