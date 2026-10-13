@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { Animated, Easing, Image, Platform, StyleSheet, View } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -24,6 +25,59 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
+function StartupLoader() {
+  const progress = React.useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(progress, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+        Animated.timing(progress, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [progress]);
+
+  return (
+    <View style={styles.startup} accessibilityLabel="Loading Truefundi" accessibilityRole="progressbar">
+      <Image
+        source={require('../assets/images/fundilogo-transparent.png')}
+        style={styles.logo}
+        resizeMode="contain"
+      />
+      <View style={styles.progressTrack}>
+        <Animated.View
+          style={[
+            styles.progressBall,
+            {
+              transform: [
+                {
+                  translateX: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-14, 14],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
 /**
  * The whole app sits behind the account session: the guards below decide
  * which half of the stack exists, so a signed-out customer cannot reach a job
@@ -37,7 +91,7 @@ function RootLayoutNav() {
   }, [isHydrated]);
 
   // Nothing is routed until we know whether there is a session to restore.
-  if (!isHydrated) return null;
+  if (!isHydrated) return <StartupLoader />;
 
   return (
     <Stack screenOptions={{ headerBackTitle: 'Back' }}>
@@ -62,6 +116,32 @@ function RootLayoutNav() {
   );
 }
 
+const styles = StyleSheet.create({
+  startup: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  logo: {
+    width: 128,
+    height: 128,
+  },
+  progressTrack: {
+    width: 44,
+    height: 12,
+    marginTop: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressBall: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#f97316',
+  },
+});
+
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
@@ -75,7 +155,7 @@ export default function RootLayout() {
     void checkApiHealth().catch(() => undefined);
   }, []);
 
-  if (!fontsLoaded && !fontError) return null;
+  if (!fontsLoaded && !fontError) return <StartupLoader />;
 
   return (
     <SafeAreaProvider>

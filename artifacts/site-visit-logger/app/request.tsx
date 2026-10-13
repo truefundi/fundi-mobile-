@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Image, Modal, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View, ScrollView } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { BackButton } from '@/components/ui/BackButton';
@@ -77,11 +77,6 @@ export default function RequestScreen() {
   const [error, setError] = useState('');
   const [confirmLeave, setConfirmLeave] = useState(false);
 
-  // Payment mock popup states
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [isPaying, setIsPaying] = useState(false);
-  const [paymentStep, setPaymentStep] = useState<'prompt' | 'success' | 'finding'>('prompt');
-
   const [editing, setEditing] = useState<Editing>(null);
   const [draftService, setDraftService] = useState(service);
   const [draftProblem, setDraftProblem] = useState('');
@@ -107,8 +102,7 @@ export default function RequestScreen() {
       return;
     }
     if (step > 1) {
-      setStep(1);
-      return;
+      return; // Disallow going back via arrow on review page
     }
     if (hasProgress) setConfirmLeave(true);
     else leave();
@@ -117,6 +111,7 @@ export default function RequestScreen() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (step > 1) return true; // Block hardware back on review page
       goBack();
       return true;
     });
@@ -207,12 +202,15 @@ export default function RequestScreen() {
     }
   };
 
-  const toggleCurrentLocation = async (enabled: boolean, applyCoords: (val: string) => void, failVal: (msg: string) => void) => {
-    setIsUsingCurrentLocation(enabled);
-    if (!enabled) {
+  const handleLocationAction = async (applyCoords: (val: string) => void, failVal: (msg: string) => void) => {
+    if (isUsingCurrentLocation) {
+      // Remove location
+      setIsUsingCurrentLocation(false);
       applyCoords('');
       return;
     }
+
+    // Add or Update location
     failVal('');
     setIsLocating(true);
     try {
@@ -232,16 +230,15 @@ export default function RequestScreen() {
         if (!perm.granted) {
           failVal('Location permission required.');
           setIsLocating(false);
-          setIsUsingCurrentLocation(false);
           return;
         }
         const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         coordsText = `${current.coords.latitude.toFixed(6)}, ${current.coords.longitude.toFixed(6)}`;
       }
+      setIsUsingCurrentLocation(true);
       applyCoords(coordsText);
     } catch {
       failVal('Could not fetch coordinates.');
-      setIsUsingCurrentLocation(false);
     } finally {
       setIsLocating(false);
     }
@@ -265,22 +262,16 @@ export default function RequestScreen() {
       setStep(2);
       return;
     }
-    // On step 2 (Review), proceed to payment mock popup flow
-    setShowPaymentModal(true);
-    setPaymentStep('prompt');
+    submit();
   };
 
-  const handlePayServiceFee = async () => {
-    setIsPaying(true);
+  const submit = async () => {
+    if (!checkDetails()) {
+      setStep(1);
+      return;
+    }
+    setIsSubmitting(true);
     try {
-      await new Promise((res) => setTimeout(res, 1200)); // Simulate payment transaction
-      setPaymentStep('success');
-      await notify('success');
-      
-      await new Promise((res) => setTimeout(res, 1000));
-      setPaymentStep('finding');
-
-      // Submit request backend sync
       const jobId = await addRequest({
         service,
         problem: problem.trim(),
@@ -293,15 +284,12 @@ export default function RequestScreen() {
         videoSizeBytes: video?.size,
         videoMimeType: video?.mimeType,
       });
-
-      await new Promise((res) => setTimeout(res, 1500)); // Show finding technician state briefly
-      setShowPaymentModal(false);
+      await notify('success');
       router.replace(`/job/${jobId}`);
     } catch {
-      setError('Payment or request submission failed.');
-      setShowPaymentModal(false);
+      setError('Your request could not be sent. Please try again.');
     } finally {
-      setIsPaying(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -404,12 +392,16 @@ export default function RequestScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 24 : insets.top + 8 }]}>
-        <BackButton
-          onPress={goBack}
-          testID="request-back-button"
-          accessibilityLabel={editing ? 'Close editor' : step > 1 ? 'Back to details' : 'Close request'}
-        />
+      <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8 }]}>
+        {step === 1 ? (
+          <BackButton
+            onPress={goBack}
+            testID="request-back-button"
+            accessibilityLabel={editing ? 'Close editor' : 'Close request'}
+          />
+        ) : (
+          <View style={styles.topSpacer} />
+        )}
         <Text style={[styles.stepText, { color: colors.mutedForeground }]}>
           Step {step} of {LAST_STEP} · {STEP_NAMES[step - 1]}
         </Text>
@@ -486,7 +478,7 @@ export default function RequestScreen() {
               hasError={!!addressError}
               isLocating={isLocating}
               isUsingCurrentLocation={isUsingCurrentLocation}
-              onToggleCurrentLocation={(val) => toggleCurrentLocation(val, setCurrentAddressCoords, setError)}
+              onLocationAction={() => handleLocationAction(setCurrentAddressCoords, setError)}
             />
             {errorView(addressError, 'address-error')}
             {errorView(error)}
@@ -584,7 +576,7 @@ export default function RequestScreen() {
                       hasError={false}
                       isLocating={isLocating}
                       isUsingCurrentLocation={isUsingCurrentLocation}
-                      onToggleCurrentLocation={(val) => toggleCurrentLocation(val, setDraftCoords, setError)}
+                      onLocationAction={() => handleLocationAction(setDraftCoords, setError)}
                       inputBackground={colors.background}
                     />
                     <View style={styles.editorActions}>
@@ -601,7 +593,7 @@ export default function RequestScreen() {
                 last
               />
             </View>
-            <Notice tone="brand" icon="shield-checkmark-outline" text="Proceed to payment to lock in your booking and dispatch a technician." />
+            <Notice tone="brand" icon="shield-checkmark-outline" text="Find technician to dispatch a nearby verified specialist." />
             {editing ? null : errorView(error)}
           </>
         )}
@@ -614,7 +606,7 @@ export default function RequestScreen() {
         ]}
       >
         <Button
-          label={step === LAST_STEP ? 'Proceed to payment (Service Fee)' : 'Continue'}
+          label={step === LAST_STEP ? 'Find technician' : 'Continue'}
           icon={narrow && step === LAST_STEP ? undefined : 'arrow-forward'}
           loading={isSubmitting}
           disabled={!!editing}
@@ -622,51 +614,6 @@ export default function RequestScreen() {
           style={styles.nextAction}
         />
       </View>
-
-      {/* Payment and Finding Technician Popup Modal */}
-      <Modal visible={showPaymentModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            {paymentStep === 'prompt' && (
-              <>
-                <View style={[styles.modalIconWrap, { backgroundColor: colors.secondary }]}>
-                  <Ionicons name="card-outline" size={28} color={colors.primary} />
-                </View>
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Service Fee Payment</Text>
-                <Text style={[styles.modalSubtitle, { color: colors.mutedForeground }]}>
-                  A standard dispatch and service verification fee of <Text style={{ fontWeight: '700', color: colors.foreground }}>FRW 2,500</Text> is required to dispatch a technician to your location.
-                </Text>
-                <View style={styles.modalActions}>
-                  <Button label="Cancel" variant="outline" onPress={() => setShowPaymentModal(false)} style={styles.modalBtn} />
-                  <Button label="Pay Now" loading={isPaying} onPress={handlePayServiceFee} style={styles.modalBtn} />
-                </View>
-              </>
-            )}
-
-            {paymentStep === 'success' && (
-              <>
-                <View style={[styles.modalIconWrap, { backgroundColor: '#e6f4ea' }]}>
-                  <Ionicons name="checkmark-circle" size={32} color="#137333" />
-                </View>
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Payment Successful!</Text>
-                <Text style={[styles.modalSubtitle, { color: colors.mutedForeground }]}>
-                  Your service fee has been received and confirmed.
-                </Text>
-              </>
-            )}
-
-            {paymentStep === 'finding' && (
-              <>
-                <ActivityIndicator size="large" color={colors.primary} style={{ marginVertical: 12 }} />
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Finding the right technician...</Text>
-                <Text style={[styles.modalSubtitle, { color: colors.mutedForeground }]}>
-                  Sharing your request with nearby verified {service} specialists.
-                </Text>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
 
       <ConfirmDialog
         visible={confirmLeave}
@@ -692,26 +639,24 @@ type AddressFieldsProps = {
   hasError: boolean;
   isLocating: boolean;
   isUsingCurrentLocation: boolean;
-  onToggleCurrentLocation: (enabled: boolean) => void;
+  onLocationAction: () => void;
   inputBackground?: string;
 };
 
-function AddressFields({ value, onChange, places, hasError, isLocating, isUsingCurrentLocation, onToggleCurrentLocation, inputBackground }: AddressFieldsProps) {
+function AddressFields({ value, onChange, places, hasError, isLocating, isUsingCurrentLocation, onLocationAction, inputBackground }: AddressFieldsProps) {
   const colors = useColors();
+  const locationButtonLabel = isUsingCurrentLocation ? 'Remove Location' : currentAddressCoordsExists(isUsingCurrentLocation) ? 'Update Location' : 'Add Location';
+
   return (
     <>
-      <View style={styles.toggleRow}>
-        <Text style={[styles.toggleLabel, { color: colors.foreground }]}>Use Current Location</Text>
-        <Pressable
-          onPress={() => onToggleCurrentLocation(!isUsingCurrentLocation)}
-          style={[
-            styles.toggleSwitch,
-            { backgroundColor: isUsingCurrentLocation ? colors.primary : colors.muted, borderColor: colors.border },
-          ]}
-        >
-          <View style={[styles.toggleThumb, isUsingCurrentLocation ? styles.thumbRight : styles.thumbLeft, { backgroundColor: colors.card }]} />
-        </Pressable>
-      </View>
+      <Button
+        label={isUsingCurrentLocation ? 'Remove Location' : 'Add Location'}
+        variant="outline"
+        icon={isUsingCurrentLocation ? 'close-outline' : 'navigate-outline'}
+        onPress={onLocationAction}
+        loading={isLocating}
+        style={{ marginBottom: 12 }}
+      />
 
       {places.length > 0 && !isUsingCurrentLocation ? (
         <View style={styles.placeRow}>
@@ -752,10 +697,13 @@ function AddressFields({ value, onChange, places, hasError, isLocating, isUsingC
           multiline
           style={[styles.addressText, { color: colors.foreground }]}
         />
-        {isLocating ? <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} /> : null}
       </View>
     </>
   );
+}
+
+function currentAddressCoordsExists(isUsingCurrentLocation: boolean) {
+  return isUsingCurrentLocation;
 }
 
 type ReviewRowProps = {
@@ -820,12 +768,6 @@ const styles = StyleSheet.create({
   videoAttachedText: { fontSize: 13, flex: 1, marginLeft: 8, fontWeight: '500' },
   addVideoBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, borderWidth: 1, borderStyle: 'dashed', borderRadius: 10 },
   addVideoText: { fontSize: 13, fontWeight: '600' },
-  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  toggleLabel: { fontSize: 13, fontWeight: '600' },
-  toggleSwitch: { width: 44, height: 24, borderRadius: 12, borderWidth: 1, padding: 2, justifyContent: 'center' },
-  toggleThumb: { width: 18, height: 18, borderRadius: 9 },
-  thumbLeft: { alignSelf: 'flex-start' },
-  thumbRight: { alignSelf: 'flex-end' },
   placeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   placeChip: { minHeight: 38, maxWidth: '100%', borderRadius: 19, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 13 },
   placeChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 13, flexShrink: 1 },
@@ -845,11 +787,4 @@ const styles = StyleSheet.create({
   backAction: { minWidth: 96 },
   backActionNarrow: { minWidth: 76 },
   nextAction: { flex: 1 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalContent: { width: '100%', maxWidth: 360, borderRadius: 20, borderWidth: 1, padding: 24, alignItems: 'center', gap: 12 },
-  modalIconWrap: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
-  modalTitle: { fontFamily: 'Inter_700Bold', fontSize: 18, textAlign: 'center' },
-  modalSubtitle: { fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 10 },
-  modalActions: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 6 },
-  modalBtn: { flex: 1 },
 });
