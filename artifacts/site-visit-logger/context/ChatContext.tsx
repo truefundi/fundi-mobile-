@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import type { Coordinates } from '@/lib/location';
 
 export type ServiceRequestDetails = {
   id: string;
@@ -9,6 +10,8 @@ export type ServiceRequestDetails = {
   address: string;
   landmark?: string;
   distance?: string;
+  latitude?: number;
+  longitude?: number;
   thumbnailUri?: string;
   photos: string[];
   videos: string[];
@@ -45,6 +48,7 @@ export type ChatThread = {
   technicianPhone?: string;
   clientName?: string;
   technicianName?: string;
+  technicianLocation?: Coordinates;
   isAccepted?: boolean;
   isEnded?: boolean;
   otherParticipantName: string;
@@ -71,6 +75,7 @@ type ChatContextValue = {
     jobId?: string,
     requestDetails?: ServiceRequestDetails,
     otherPhone?: string,
+    technicianLocation?: Coordinates,
   ) => string;
 };
 
@@ -377,6 +382,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       jobId?: string,
       requestDetails?: ServiceRequestDetails,
       otherPhone?: string,
+      technicianLocation?: Coordinates,
     ) => {
       const existing = jobId
         ? threads.find((thread) => thread.jobId === jobId)
@@ -411,6 +417,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         technicianPhone: account?.role === 'TECHNICIAN' ? account.phone : otherPhone,
         clientName: account?.role === 'TECHNICIAN' ? otherName : account?.name,
         technicianName: account?.role === 'TECHNICIAN' ? account.name : otherName,
+        technicianLocation,
         isAccepted: false,
         isEnded: false,
         otherParticipantName: otherName,

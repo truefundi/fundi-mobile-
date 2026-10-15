@@ -89,7 +89,7 @@ export default function ActivityScreen() {
           <EmptyState
             icon="clipboard"
             title="No active services"
-            text="When you request a technician, you can follow the job here from matching through to payment."
+            text="Your requests and the technicians you select will appear here."
             action={{ label: 'Browse services', onPress: () => router.navigate('/services'), testID: 'activity-browse-button' }}
           />
         ) : (

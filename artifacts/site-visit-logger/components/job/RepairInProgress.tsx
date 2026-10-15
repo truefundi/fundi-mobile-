@@ -1,18 +1,15 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { formatMoney, repairTotal, type Job } from '@/constants/jobs';
-import { REPAIR_MS } from '@/constants/simulation';
 import { Notice } from '@/components/ui/Notice';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { Timeline, type TimelineStep } from '@/components/ui/Timeline';
-import { useCountdown } from '@/hooks/useCountdown';
 import { useColors } from '@/hooks/useColors';
 
 /** Spec 14 — work underway after the customer approved the quote. */
 export function RepairInProgress({ job }: { job: Job }) {
   const colors = useColors();
-  const { progress, remainingSeconds } = useCountdown(job.statusSince, REPAIR_MS);
   const approved = job.status === 'QUOTE_APPROVED';
 
   const steps: TimelineStep[] = [
@@ -29,23 +26,11 @@ export function RepairInProgress({ job }: { job: Job }) {
       title={approved ? 'Repair approved' : 'Repair in progress'}
       subtitle={
         approved
-          ? 'Your technician is getting started.'
-          : `${job.technician?.name.split(' ')[0] ?? 'Your technician'} is working on the repair now.`
+          ? 'Your approved quote is ready for the selected technician.'
+          : 'Your technician will confirm completion when the repair is done.'
       }
       hideBack
     >
-      {!approved && (
-        <SectionCard>
-          <Text style={[styles.etaLabel, { color: colors.mutedForeground }]}>ESTIMATED COMPLETION</Text>
-          <Text style={[styles.eta, { color: colors.foreground }]}>
-            {remainingSeconds > 0 ? `About ${Math.max(Math.ceil(remainingSeconds / 60), 1)} min left` : 'Finishing up'}
-          </Text>
-          <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}>
-            <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${Math.round(progress * 100)}%` }]} />
-          </View>
-        </SectionCard>
-      )}
-
       <SectionCard title="Job progress">
         <Timeline steps={steps} />
       </SectionCard>
@@ -64,10 +49,6 @@ export function RepairInProgress({ job }: { job: Job }) {
 }
 
 const styles = StyleSheet.create({
-  etaLabel: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.2 },
-  eta: { fontFamily: 'Inter_700Bold', fontSize: 22, marginTop: 4 },
-  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 13 },
-  progressFill: { height: 6, borderRadius: 3 },
   diagnosis: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 20 },
   totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, marginTop: 12, paddingTop: 11 },
   totalLabel: { fontFamily: 'Inter_500Medium', fontSize: 13 },

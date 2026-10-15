@@ -1,13 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AUTO_ADVANCE_MS,
-  AUTO_NEXT,
-  buildAdditionalWork,
-  buildQuote,
-  matchTechnician,
-  TECHNICIAN_DRIVEN,
-} from '@/constants/simulation';
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { jobsKey, LEGACY_JOBS_KEY } from '@/constants/storage';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { useAuth } from '@/context/AuthContext';
@@ -26,7 +18,18 @@ import {
 
 export type { Job, JobStatus } from '@/constants/jobs';
 
-type NewRequest = Pick<Job, 'service' | 'problem' | 'urgency' | 'locationLabel' | 'photoUri' | 'videoUri'> & {
+type RequestMedia = {
+  uri: string;
+  sizeBytes?: number;
+  mimeType?: string;
+};
+
+type NewRequest = Pick<
+  Job,
+  'service' | 'problem' | 'urgency' | 'locationLabel' | 'locationLatitude' | 'locationLongitude' | 'photoUri' | 'videoUri'
+> & {
+  photos?: RequestMedia[];
+  videos?: RequestMedia[];
   photoSizeBytes?: number;
   photoMimeType?: string;
   videoSizeBytes?: number;
@@ -51,8 +54,9 @@ type FundiContextValue = {
   recordSettlement: (id: string, method: SettlementMethod) => void;
   submitRating: (id: string, rating: Rating) => void;
   cancelJob: (id: string) => void;
-  /** A technician on this device takes the job and becomes the one on it. */
-  takeJob: (id: string, technician: Technician) => void;
+  /** Assigns a manually selected mock technician to the request. */
+  selectTechnician: (id: string, technician: Technician) => void;
+  linkChatThread: (id: string, threadId: string) => void;
   markArrived: (id: string) => void;
   submitDiagnosis: (id: string, quote: Quote) => void;
   completeRepair: (id: string) => void;
@@ -62,9 +66,9 @@ const FundiContext = createContext<FundiContextValue | undefined>(undefined);
 
 /** Customer-facing copy for the notification feed, one entry per status change. */
 const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = {
-  REQUESTED: { title: 'Request sent', text: 'We are looking for qualified technicians near you.' },
-  MATCHING: { title: 'Finding your technician', text: 'Checking who is available and close to you right now.' },
-  OFFERED: { title: 'Technician found', text: 'A qualified technician is available for your job.' },
+  REQUESTED: { title: 'Request sent', text: 'Choose an available technician for your request.' },
+  MATCHING: { title: 'Choose a technician', text: 'Browse the available local mock technicians.' },
+  OFFERED: { title: 'Technician selected', text: 'Review the technician you selected before continuing.' },
   ACCEPTED: { title: 'Technician accepted your request', text: 'Pay the visit fee to confirm the callout.' },
   VISIT_PAID: { title: 'Payment successful', text: 'Your visit fee has been received.' },
   EN_ROUTE: { title: 'Your technician is on the way', text: 'Follow the arrival time on the tracking screen.' },
@@ -99,15 +103,6 @@ function transition(job: Job, next: JobStatus): Job {
   const now = new Date().toISOString();
   const moved: Job = { ...job, status: next, statusSince: now };
 
-  if (next === 'OFFERED' && !moved.technician) {
-    moved.technician = matchTechnician(job.service);
-  }
-  if (next === 'DIAGNOSIS_COMPLETE' && !moved.quote) {
-    moved.quote = buildQuote(job.service);
-  }
-  if (next === 'ADDITIONAL_APPROVAL_REQUIRED' && !moved.additionalWork) {
-    moved.additionalWork = buildAdditionalWork(job.service);
-  }
   if (next === 'COMPLETED') {
     moved.completedAt = now;
   }
@@ -147,7 +142,6 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   const { account, isHydrated: sessionReady } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
-  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   // Job history belongs to the phone number that created it.
   const storageKey = account ? jobsKey(account.phone) : null;
@@ -196,77 +190,20 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     [update],
   );
 
-  /**
-   * Drives the stages that do not wait for the customer. Each pending job gets
-   * one timer keyed by `id:status`; re-running this effect reuses live timers
-   * rather than restarting them, and a deadline already in the past fires at
-   * once so a job resumed from storage catches up.
-   */
-  useEffect(() => {
-    if (!isHydrated) return;
-    const live = timers.current;
-    const wanted = new Set<string>();
-
-    for (const job of jobs) {
-      const next = AUTO_NEXT[job.status];
-      const duration = AUTO_ADVANCE_MS[job.status];
-      if (!next || duration === undefined) continue;
-      // A technician owns these stages once they have taken the job.
-      if (job.takenByTechnician && TECHNICIAN_DRIVEN.includes(job.status)) continue;
-
-      const key = `${job.id}:${job.status}`;
-      wanted.add(key);
-      if (live.has(key)) continue;
-
-      const elapsed = Date.now() - new Date(job.statusSince).getTime();
-      const remaining = Math.max(duration - elapsed, 0);
-      const timer = setTimeout(() => {
-        live.delete(key);
-        // The repair stage forks: offer the extra work once, then finish.
-        if (job.status === 'REPAIR_IN_PROGRESS') {
-          setJobs((current) =>
-            current.map((candidate) => {
-              if (candidate.id !== job.id || candidate.status !== 'REPAIR_IN_PROGRESS') return candidate;
-              const decided = candidate.additionalWork !== undefined;
-              return transition(candidate, decided ? 'REPAIR_COMPLETED' : 'ADDITIONAL_APPROVAL_REQUIRED');
-            }),
-          );
-          return;
-        }
-        setJobs((current) =>
-          current.map((candidate) =>
-            candidate.id === job.id && candidate.status === job.status ? transition(candidate, next) : candidate,
-          ),
-        );
-      }, remaining);
-      live.set(key, timer);
-    }
-
-    // Drop timers for jobs that moved on or disappeared.
-    for (const [key, timer] of live) {
-      if (!wanted.has(key)) {
-        clearTimeout(timer);
-        live.delete(key);
-      }
-    }
-  }, [isHydrated, jobs]);
-
-  useEffect(() => {
-    const live = timers.current;
-    return () => {
-      for (const timer of live.values()) clearTimeout(timer);
-      live.clear();
-    };
-  }, []);
-
-  const takeJob = useCallback(
+  const selectTechnician = useCallback(
     (id: string, technician: Technician) => {
       update(id, (job) =>
-        // Only a job still looking for someone can be taken.
-        job.status === 'MATCHING' || job.status === 'OFFERED'
-          ? transition({ ...job, technician, takenByTechnician: true }, 'OFFERED')
+        job.status === 'REQUESTED' || job.status === 'MATCHING' || job.status === 'OFFERED'
+          ? transition({ ...job, technician }, 'OFFERED')
           : job,
       );
+    },
+    [update],
+  );
+
+  const linkChatThread = useCallback(
+    (id: string, threadId: string) => {
+      update(id, (job) => ({ ...job, chatThreadId: threadId }));
     },
     [update],
   );
@@ -297,33 +234,52 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   );
 
   const addRequest = useCallback(async (request: NewRequest) => {
-    if (request.photoUri) {
-      if (request.photoSizeBytes === undefined || !Number.isFinite(request.photoSizeBytes) || request.photoSizeBytes < 0) {
-        throw new Error(`Choose a photo again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
+    const photos = request.photos ?? (request.photoUri
+      ? [{ uri: request.photoUri, sizeBytes: request.photoSizeBytes, mimeType: request.photoMimeType }]
+      : []);
+    const videos = request.videos ?? (request.videoUri
+      ? [{ uri: request.videoUri, sizeBytes: request.videoSizeBytes, mimeType: request.videoMimeType }]
+      : []);
+
+    for (const photo of photos) {
+      if (photo.sizeBytes === undefined || !Number.isFinite(photo.sizeBytes) || photo.sizeBytes < 0) {
+        throw new Error(`Choose each photo again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
       }
-      if (request.photoSizeBytes > MAX_UPLOAD_SIZE_BYTES) {
-        throw new Error(`Your photo must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+      if (photo.sizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+        throw new Error(`Each photo must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
       }
-      if (!inferUploadMimeType(request.photoUri, request.photoMimeType)?.startsWith('image/')) {
-        throw new Error('Choose a photo, not a video or document.');
+      if (!inferUploadMimeType(photo.uri, photo.mimeType)?.startsWith('image/')) {
+        throw new Error('Choose photos, not videos or documents.');
       }
     }
-    if (request.videoUri) {
-      if (request.videoSizeBytes === undefined || !Number.isFinite(request.videoSizeBytes) || request.videoSizeBytes < 0) {
-        throw new Error(`Choose a video again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
+    for (const video of videos) {
+      if (video.sizeBytes === undefined || !Number.isFinite(video.sizeBytes) || video.sizeBytes < 0) {
+        throw new Error(`Choose the video again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
       }
-      if (request.videoSizeBytes > MAX_UPLOAD_SIZE_BYTES) {
-        throw new Error(`Your video must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+      if (video.sizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+        throw new Error(`Video must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
       }
-      if (!inferUploadMimeType(request.videoUri, request.videoMimeType)?.startsWith('video/')) {
+      if (!inferUploadMimeType(video.uri, video.mimeType)?.startsWith('video/')) {
         throw new Error('Choose a video, not a photo or document.');
       }
     }
-    const { photoSizeBytes, photoMimeType, videoSizeBytes, videoMimeType, ...jobRequest } = request;
+    const {
+      photos: _photos,
+      videos: _videos,
+      photoSizeBytes: _photoSizeBytes,
+      photoMimeType: _photoMimeType,
+      videoSizeBytes: _videoSizeBytes,
+      videoMimeType: _videoMimeType,
+      ...jobRequest
+    } = request;
     const now = new Date().toISOString();
     const id = makeId('job');
     const base: Job = {
       ...jobRequest,
+      photoUri: photos[0]?.uri,
+      photoUris: photos.map((photo) => photo.uri),
+      videoUri: videos[0]?.uri,
+      videoUris: videos.map((video) => video.uri),
       id,
       reference: makeReference(),
       status: 'REQUESTED',
@@ -363,12 +319,13 @@ export function FundiProvider({ children }: { children: ReactNode }) {
         update(id, (job) => transition({ ...job, settlementMethod: method }, 'PAYMENT_REPORTED')),
       submitRating: (id, rating) => update(id, (job) => ({ ...job, rating })),
       cancelJob: (id) => advance(id, 'CANCELLED'),
-      takeJob,
+      selectTechnician,
+      linkChatThread,
       markArrived,
       submitDiagnosis,
       completeRepair,
     };
-  }, [addRequest, advance, completeRepair, isHydrated, jobs, markArrived, submitDiagnosis, takeJob, update]);
+  }, [addRequest, advance, completeRepair, isHydrated, jobs, linkChatThread, markArrived, selectTechnician, submitDiagnosis, update]);
 
   return <FundiContext.Provider value={value}>{children}</FundiContext.Provider>;
 }

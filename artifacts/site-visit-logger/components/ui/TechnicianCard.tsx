@@ -38,7 +38,11 @@ export function TechnicianCard({ technician, caption, compact }: Props) {
       {!compact && (
         <View style={[styles.stats, { borderTopColor: colors.border }]}>
           <Stat icon="clock" label="ETA" value={`${technician.etaMinutes} min`} />
-          <Stat icon="map-pin" label="Distance" value={`${technician.distanceKm} km`} />
+          <Stat
+            icon="map-pin"
+            label="Distance"
+            value={technician.distanceKm === undefined ? 'Unavailable' : `${technician.distanceKm} km`}
+          />
           <Stat icon="award" label="Experience" value={`${technician.yearsExperience} yrs`} />
         </View>
       )}

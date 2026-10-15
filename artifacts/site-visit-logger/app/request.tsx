@@ -19,6 +19,7 @@ import { PLACE_ICON, type SavedPlace } from '@/constants/places';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
+import { normalizeLocationSelection } from '@/lib/location';
 
 const MAX_VIDEO_SECONDS = 120;
 const MAX_PHOTOS = 5;
@@ -270,11 +271,25 @@ export default function RequestScreen() {
     }
     setIsSubmitting(true);
     try {
+      const selectedLocation = normalizeLocationSelection({
+        coordinates: currentAddressCoords,
+        address: address.trim(),
+      });
       const jobId = await addRequest({
         service,
         problem: problem.trim(),
         urgency: 'Today',
         locationLabel: address.trim(),
+        locationLatitude: selectedLocation.latitude,
+        locationLongitude: selectedLocation.longitude,
+        photos: photos.map((photo) => ({
+          uri: photo.uri,
+          sizeBytes: photo.size,
+          mimeType: photo.mimeType,
+        })),
+        videos: video
+          ? [{ uri: video.uri, sizeBytes: video.size, mimeType: video.mimeType }]
+          : [],
         photoUri: photos[0]?.uri,
         photoSizeBytes: photos[0]?.size,
         photoMimeType: photos[0]?.mimeType,
@@ -285,12 +300,7 @@ export default function RequestScreen() {
       await notify('success');
       router.replace({
         pathname: '/select-technician',
-        params: {
-          jobId,
-          service,
-          problem: problem.trim(),
-          location: address.trim(),
-        },
+        params: { jobId },
       });
     } catch {
       setError('Your request could not be sent. Please try again.');

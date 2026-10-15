@@ -1,8 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { FlatList, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Image,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { useColors } from '@/hooks/useColors';
 import { useChat, type ChatMessage, type ServiceRequestDetails } from '@/context/ChatContext';
 import { AppHeader } from '@/components/ui/AppHeader';
@@ -10,12 +24,54 @@ import { Button } from '@/components/ui/Button';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useAuth } from '@/context/AuthContext';
+import { useWork } from '@/context/WorkContext';
+import { distanceMeters, formatDistance, googleMapsUrl } from '@/lib/location';
+
+function RequestVideo({ uri }: { uri: string }) {
+  const colors = useColors();
+  const player = useVideoPlayer(uri, (videoPlayer) => {
+    videoPlayer.loop = false;
+  });
+  const [loading, setLoading] = useState(player.status !== 'readyToPlay');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const subscription = player.addListener('statusChange', (event) => {
+      setLoading(event.status === 'loading' || event.status === 'idle');
+      setError(event.status === 'error' ? event.error?.message ?? 'This video could not be loaded.' : '');
+    });
+    return () => subscription.remove();
+  }, [player]);
+
+  return (
+    <View style={styles.videoFrame}>
+      {error ? (
+        <Text style={[styles.mediaError, { color: colors.mutedForeground }]}>{error}</Text>
+      ) : (
+        <>
+          <VideoView
+            player={player}
+            style={styles.videoPlayer}
+            nativeControls
+            contentFit="contain"
+            allowsPictureInPicture
+          />
+          {loading ? (
+            <View style={styles.videoLoading}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : null}
+        </>
+      )}
+    </View>
+  );
+}
 
 function getDateSeparatorLabel(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
-  
+
   const yesterday = new Date();
   yesterday.setDate(now.getDate() - 1);
   const isYesterday = date.toDateString() === yesterday.toDateString();
@@ -31,23 +87,42 @@ export default function ChatTabScreen() {
   const router = useRouter();
   const { threadId: requestedThreadId } = useLocalSearchParams<{ threadId?: string }>();
   const { account } = useAuth();
+  const { profile: technicianProfile } = useWork();
   const { threads, activeThreadId, setActiveThreadId, sendMessage, updateRequestStatus, sendPriceOffer, respondToOffer } = useChat();
 
   const [replyText, setReplyText] = useState('');
   const [selectedRequestModal, setSelectedRequestModal] = useState<ServiceRequestDetails | null>(null);
-  
-  // Counter Offer Modal State
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [loadingImages, setLoadingImages] = useState<Record<string, boolean>>({});
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [mapError, setMapError] = useState('');
+
   const [counterOfferModal, setCounterOfferModal] = useState(false);
   const [counterAmount, setCounterAmount] = useState('');
   const [counterNotes, setCounterNotes] = useState('');
 
-  // Technician Price Offer Modal State
   const [techOfferModal, setTechOfferModal] = useState(false);
   const [techOfferAmount, setTechOfferAmount] = useState('');
   const [techOfferNotes, setTechOfferNotes] = useState('');
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
   const userRole = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
+  const technicianLocation =
+    account?.role === 'TECHNICIAN' &&
+    technicianProfile?.baseLatitude !== undefined &&
+    technicianProfile.baseLongitude !== undefined
+      ? { latitude: technicianProfile.baseLatitude, longitude: technicianProfile.baseLongitude }
+      : activeThread?.technicianLocation;
+
+  const openRequestMap = () => {
+    if (!selectedRequestModal) return;
+    const url = googleMapsUrl(selectedRequestModal);
+    if (!url) return;
+    setMapError('');
+    void Linking.openURL(url).catch(() => {
+      setMapError('Could not open Google Maps on this device.');
+    });
+  };
 
   useEffect(() => {
     if (typeof requestedThreadId === 'string') setActiveThreadId(requestedThreadId);
@@ -80,7 +155,6 @@ export default function ChatTabScreen() {
     setCounterOfferModal(false);
   };
 
-  // Group messages by date
   const groupedMessages: { dateLabel: string; messages: ChatMessage[] }[] = [];
   if (activeThread) {
     let lastDateLabel = '';
@@ -144,7 +218,6 @@ export default function ChatTabScreen() {
         </KeyboardAwareScrollViewCompat>
       ) : (
         <View style={{ flex: 1 }}>
-          {/* Chat Header */}
           <View style={[styles.chatHeader, { paddingTop: Platform.OS === 'web' ? 12 : 8, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
             <Pressable
               accessibilityRole="button"
@@ -162,7 +235,6 @@ export default function ChatTabScreen() {
             </View>
           </View>
 
-          {/* Message List with Date Separators */}
           <FlatList
             data={groupedMessages}
             keyExtractor={(item, index) => index.toString()}
@@ -176,34 +248,73 @@ export default function ChatTabScreen() {
                 {group.messages.map((msg) => {
                   const isMe = msg.senderId === account?.id;
                   const timeFormatted = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  const serviceRequest = msg.serviceRequest;
+                  const thumbnailUri = serviceRequest
+                    ? serviceRequest.photos?.find((uri) => uri.trim().length > 0) ?? serviceRequest.thumbnailUri
+                    : undefined;
+                  const distanceLabel = serviceRequest
+                    ? formatDistance(
+                        distanceMeters(
+                          { latitude: serviceRequest.latitude, longitude: serviceRequest.longitude },
+                          technicianLocation,
+                        ),
+                      )
+                    : null;
 
                   return (
                     <View key={msg.id} style={[styles.msgContainer, isMe ? styles.msgAlignRight : styles.msgAlignLeft]}>
-                      
+
                       {/* SERVICE REQUEST CARD */}
                       {msg.serviceRequest ? (
                         <View style={[styles.requestCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                           <View style={styles.requestCardTop}>
-                            {msg.serviceRequest.thumbnailUri ? (
-                              <Image source={{ uri: msg.serviceRequest.thumbnailUri }} style={styles.requestThumb} />
+                            {/* 1. First uploaded photo thumbnail or service category icon fallback */}
+                            {thumbnailUri ? (
+                              <View style={styles.thumbnailFrame}>
+                                <Image
+                                  source={{ uri: thumbnailUri }}
+                                  style={styles.requestThumb}
+                                  onLoadStart={() => setLoadingImages((current) => ({ ...current, [thumbnailUri]: true }))}
+                                  onLoadEnd={() => setLoadingImages((current) => ({ ...current, [thumbnailUri]: false }))}
+                                  onError={() => {
+                                    setLoadingImages((current) => ({ ...current, [thumbnailUri]: false }));
+                                    setFailedImages((current) => ({ ...current, [thumbnailUri]: true }));
+                                  }}
+                                />
+                                {loadingImages[thumbnailUri] && !failedImages[thumbnailUri] ? (
+                                  <View style={styles.thumbnailLoading}>
+                                    <ActivityIndicator size="small" color={colors.primary} />
+                                  </View>
+                                ) : null}
+                                {failedImages[thumbnailUri] ? (
+                                  <View style={[styles.requestThumbFallback, { backgroundColor: colors.secondary }]}>
+                                    <Ionicons name="image-outline" size={22} color={colors.mutedForeground} />
+                                  </View>
+                                ) : null}
+                              </View>
                             ) : (
                               <View style={[styles.requestThumbFallback, { backgroundColor: colors.secondary }]}>
-                                <Ionicons name="construct-outline" size={20} color={colors.primary} />
+                                <Ionicons name="construct-outline" size={22} color={colors.primary} />
                               </View>
                             )}
                             <View style={{ flex: 1, marginLeft: 10 }}>
                               <Text style={[styles.reqTitle, { color: colors.foreground }]}>{msg.serviceRequest.serviceName} Service Request</Text>
+
+                              {/* 2. Service title, address, landmark, and distance displayed properly */}
                               <Text numberOfLines={1} style={[styles.reqLocation, { color: colors.mutedForeground }]}>
-                                📍 {msg.serviceRequest.address} {msg.serviceRequest.landmark ? `· ${msg.serviceRequest.landmark}` : ''} {msg.serviceRequest.distance ? `· ${msg.serviceRequest.distance}` : ''}
+                                📍 {msg.serviceRequest.address}
+                                {msg.serviceRequest.landmark ? ` · ${msg.serviceRequest.landmark}` : ''}
+                                {distanceLabel ? ` · ${distanceLabel}` : ''}
                               </Text>
+
                               <Text numberOfLines={2} style={[styles.reqProblem, { color: colors.mutedForeground }]}>{msg.serviceRequest.problem}</Text>
+
                               <Pressable onPress={() => setSelectedRequestModal(msg.serviceRequest ?? null)} style={{ marginTop: 4 }}>
                                 <Text style={[styles.viewDetailsLink, { color: colors.primary }]}>View Details →</Text>
                               </Pressable>
                             </View>
                           </View>
 
-                          {/* Technician Action Buttons */}
                           {userRole === 'technician' && msg.serviceRequest.status === 'PENDING' && (
                             <View style={styles.actionButtonRow}>
                               <Button label="Accept" size="small" onPress={() => updateRequestStatus(activeThread.id, msg.serviceRequest!.id, 'ACCEPTED')} style={{ flex: 1 }} />
@@ -211,7 +322,6 @@ export default function ChatTabScreen() {
                             </View>
                           )}
 
-                          {/* Client Status & Cancellation */}
                           {userRole === 'client' && (
                             <View style={styles.statusFooterRow}>
                               <View style={styles.statusIndicatorWrap}>
@@ -235,7 +345,6 @@ export default function ChatTabScreen() {
                           <Text style={[styles.timestampText, { color: colors.mutedForeground }]}>{timeFormatted}</Text>
                         </View>
                       ) : msg.priceOffer ? (
-                        /* SERVICE COST OFFER CARD */
                         <View style={[styles.offerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                           <Text style={[styles.offerCardHeader, { color: colors.mutedForeground }]}>Service Cost</Text>
                           <Text style={[styles.offerAmount, { color: colors.foreground }]}>{msg.priceOffer.currency} {msg.priceOffer.amount.toLocaleString()}</Text>
@@ -243,7 +352,6 @@ export default function ChatTabScreen() {
                             {msg.priceOffer.senderRole === 'technician' ? 'Proposed by the technician' : 'Counteroffer by the client'}
                           </Text>
 
-                          {/* Client Actions for Offer */}
                           {userRole === 'client' && msg.priceOffer.status === 'PENDING' && (
                             <View style={styles.offerActionColumn}>
                               <Button label="Accept Offer" size="small" onPress={() => respondToOffer(activeThread.id, msg.priceOffer!.id, 'ACCEPTED')} />
@@ -262,7 +370,6 @@ export default function ChatTabScreen() {
                           <Text style={[styles.timestampText, { color: colors.mutedForeground }]}>{timeFormatted}</Text>
                         </View>
                       ) : (
-                        /* STANDARD CHAT MESSAGE */
                         <View style={[styles.standardBubble, { backgroundColor: isMe ? colors.primary : colors.card, borderColor: colors.border }]}>
                           <Text style={[styles.standardText, { color: isMe ? colors.primaryForeground : colors.foreground }]}>{msg.text}</Text>
                           <Text style={[styles.timestampTextSecondary, { color: isMe ? colors.primaryForeground + '80' : colors.mutedForeground }]}>{timeFormatted}</Text>
@@ -276,14 +383,12 @@ export default function ChatTabScreen() {
             )}
           />
 
-          {/* Technician Action Bar to Send Price Offer */}
           {userRole === 'technician' && (
             <View style={[styles.techTopBarAction, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
               <Button label="Send Service Offer" size="small" icon="pricetag-outline" onPress={() => setTechOfferModal(true)} style={{ flex: 1 }} />
             </View>
           )}
 
-          {/* Reply Bar */}
           <View style={[styles.replyBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 14 }]}>
             <TextInput
               placeholder="Type a message..."
@@ -297,34 +402,93 @@ export default function ChatTabScreen() {
         </View>
       )}
 
-      {/* VIEW DETAILS MODAL */}
+      {/* 3. VIEW DETAILS MODAL OPENING ALL INFORMATION & MEDIA */}
       {selectedRequestModal && (
         <Modal visible animationType="slide" transparent>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Request Details</Text>
+                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Complete Request Details</Text>
                 <Pressable onPress={() => setSelectedRequestModal(null)}>
                   <Feather name="x" size={20} color={colors.foreground} />
                 </Pressable>
               </View>
               <ScrollView contentContainerStyle={{ gap: 12, paddingBottom: 20 }}>
-                <Text style={[styles.modalSub, { color: colors.primary }]}>{selectedRequestModal.serviceName}</Text>
+                <Text style={[styles.modalSub, { color: colors.primary }]}>{selectedRequestModal.serviceName} Service</Text>
+
                 <Text style={[styles.modalLabel, { color: colors.mutedForeground }]}>Problem Statement:</Text>
                 <Text style={[styles.modalValue, { color: colors.foreground }]}>{selectedRequestModal.problem}</Text>
-                <Text style={[styles.modalLabel, { color: colors.mutedForeground }]}>Location & Landmark:</Text>
-                <Text style={[styles.modalValue, { color: colors.foreground }]}>{selectedRequestModal.address} {selectedRequestModal.landmark ? `(${selectedRequestModal.landmark})` : ''}</Text>
-                
+
+                <Text style={[styles.modalLabel, { color: colors.mutedForeground }]}>Full Address & Landmark:</Text>
+                <Text style={[styles.modalValue, { color: colors.foreground }]}>
+                  {selectedRequestModal.address}
+                  {selectedRequestModal.landmark ? ` (Landmark: ${selectedRequestModal.landmark})` : ''}
+                  {formatDistance(
+                    distanceMeters(
+                      { latitude: selectedRequestModal.latitude, longitude: selectedRequestModal.longitude },
+                      technicianLocation,
+                    ),
+                  )
+                    ? ` · Distance: ${formatDistance(
+                        distanceMeters(
+                          { latitude: selectedRequestModal.latitude, longitude: selectedRequestModal.longitude },
+                          technicianLocation,
+                        ),
+                      )}`
+                    : ''}
+                </Text>
+
+                {googleMapsUrl(selectedRequestModal) ? (
+                  <Button
+                    label="View on Google Maps"
+                    variant="outline"
+                    icon="map-outline"
+                    onPress={openRequestMap}
+                  />
+                ) : null}
+                {mapError ? <Text style={[styles.mediaError, { color: colors.destructive }]}>{mapError}</Text> : null}
+
+                <Text style={[styles.modalLabel, { color: colors.mutedForeground }]}>Created On:</Text>
+                <Text style={[styles.modalValue, { color: colors.foreground }]}>{new Date(selectedRequestModal.createdAt).toLocaleString()}</Text>
+
                 {selectedRequestModal.photos?.length > 0 && (
                   <>
-                    <Text style={[styles.modalLabel, { color: colors.mutedForeground }]}>Photos:</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ gap: 8 }}>
+                    <Text style={[styles.modalLabel, { color: colors.mutedForeground }]}>Uploaded Photos Gallery:</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                       {selectedRequestModal.photos.map((p: string, idx: number) => (
-                        <Image key={idx} source={{ uri: p }} style={styles.galleryThumb} />
+                        <Pressable key={`${p}-${idx}`} onPress={() => setPreviewImage(p)}>
+                          <Image source={{ uri: p }} style={styles.galleryThumb} />
+                        </Pressable>
                       ))}
                     </ScrollView>
                   </>
                 )}
+
+                {selectedRequestModal.videos?.length > 0 && (
+                  <>
+                    <Text style={[styles.modalLabel, { color: colors.mutedForeground }]}>Attached Videos:</Text>
+                    {selectedRequestModal.videos.map((v: string, idx: number) => (
+                      <RequestVideo key={`${v}-${idx}`} uri={v} />
+                    ))}
+                  </>
+                )}
+
+                <Modal
+                  visible={previewImage !== null}
+                  transparent
+                  animationType="fade"
+                  onRequestClose={() => setPreviewImage(null)}
+                >
+                  <Pressable style={styles.imagePreviewOverlay} onPress={() => setPreviewImage(null)}>
+                    <Pressable onPress={(event) => event.stopPropagation()}>
+                      {previewImage ? <Image source={{ uri: previewImage }} style={styles.imagePreview} resizeMode="contain" /> : null}
+                    </Pressable>
+                    <Pressable style={styles.imagePreviewClose} onPress={() => setPreviewImage(null)} accessibilityLabel="Close image preview">
+                      <Feather name="x" size={24} color="#fff" />
+                    </Pressable>
+                  </Pressable>
+                </Modal>
+
                 <Button label="Close Details" variant="outline" onPress={() => setSelectedRequestModal(null)} style={{ marginTop: 12 }} />
               </ScrollView>
             </View>
@@ -420,8 +584,10 @@ const styles = StyleSheet.create({
   msgAlignLeft: { alignItems: 'flex-start' },
   requestCard: { borderWidth: 1, borderRadius: 16, padding: 14, width: '88%', maxWidth: 450, gap: 12 },
   requestCardTop: { flexDirection: 'row' },
+  thumbnailFrame: { width: 64, height: 64, borderRadius: 10, overflow: 'hidden', position: 'relative' },
   requestThumb: { width: 64, height: 64, borderRadius: 10 },
   requestThumbFallback: { width: 64, height: 64, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  thumbnailLoading: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000020' },
   reqTitle: { fontFamily: 'Inter_700Bold', fontSize: 15 },
   reqLocation: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
   reqProblem: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
@@ -452,5 +618,12 @@ const styles = StyleSheet.create({
   modalLabel: { fontFamily: 'Inter_500Medium', fontSize: 12, marginTop: 4 },
   modalValue: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
   galleryThumb: { width: 80, height: 80, borderRadius: 10, marginRight: 8 },
+  videoFrame: { width: '100%', aspectRatio: 16 / 9, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000' },
+  videoPlayer: { flex: 1 },
+  videoLoading: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000030' },
+  mediaError: { fontFamily: 'Inter_400Regular', fontSize: 13, padding: 10, textAlign: 'center' },
+  imagePreviewOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  imagePreview: { width: '100%', height: '85%' },
+  imagePreviewClose: { position: 'absolute', top: 48, right: 20, padding: 10 },
   inputField: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14, marginTop: 8 },
 });

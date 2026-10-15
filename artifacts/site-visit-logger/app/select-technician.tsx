@@ -6,57 +6,56 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
-import { MOCK_MARKETPLACE_TECHNICIANS, type MarketplaceTechnician } from '@/constants/technicians';
-import { useChat } from '@/context/ChatContext';
+import { MOCK_MARKETPLACE_TECHNICIANS, toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
+import { useFundi } from '@/context/FundiContext';
+import { distanceMeters, formatDistance } from '@/lib/location';
 
 export default function SelectTechnicianScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { service, problem, location, jobId } = useLocalSearchParams<{
-    service?: string;
-    problem?: string;
-    location?: string;
-    jobId?: string;
-  }>();
-  const { createOrGetThread } = useChat();
+  const { jobId } = useLocalSearchParams<{ jobId?: string }>();
+  const { getJob, selectTechnician } = useFundi();
+  const requestJob = jobId ? getJob(jobId) : undefined;
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
+  const service = requestJob?.service;
 
   const technicians = useMemo(() => {
     const requestedService = (service ?? '').toLowerCase();
     const matchesService = (tech: MarketplaceTechnician) => {
       if (!requestedService) return true;
-      const offered = tech.service.toLowerCase();
-      if (offered.includes(requestedService)) return true;
-      if (requestedService === 'home repair') return offered.includes('carpentry') || offered.includes('roofing');
-      return false;
+      return tech.services.some((offered) => offered.toLowerCase() === requestedService) ||
+        (requestedService === 'emergency service' && tech.services.includes('General Maintenance'));
     };
 
     return MOCK_MARKETPLACE_TECHNICIANS
       .filter((tech) => (!availableOnly || tech.isAvailable) && matchesService(tech))
-      .sort((a, b) => sortBy === 'distance' ? a.distanceKm - b.distanceKm : b.rating - a.rating);
-  }, [availableOnly, service, sortBy]);
+      .map((technician) => ({
+        technician,
+        distance: requestJob
+          ? distanceMeters(
+              { latitude: requestJob.locationLatitude, longitude: requestJob.locationLongitude },
+              technician.location,
+            )
+          : null,
+      }))
+      .sort((a, b) => {
+        if (sortBy === 'rating') return b.technician.rating - a.technician.rating;
+        if (a.distance === null) return b.distance === null ? 0 : 1;
+        if (b.distance === null) return -1;
+        return a.distance - b.distance;
+      });
+  }, [availableOnly, requestJob, service, sortBy]);
 
   const handleSelectTech = (tech: MarketplaceTechnician) => {
-    // Create a chat thread with the selected technician and attach the structured request template
-    const threadId = createOrGetThread(
-      tech.name,
-      'technician',
-      jobId,
-      {
-        id: jobId || `request-${Date.now()}`,
-        serviceName: service || 'General Service',
-        problem: problem || 'Service requested',
-        address: location || 'Specified Location',
-        photos: [],
-        videos: [],
-        createdAt: new Date().toISOString(),
-        status: 'PENDING',
-      },
-      tech.phoneNumber,
-    );
-    router.replace({ pathname: '/(tabs)/chat', params: { threadId } });
+    if (!requestJob) return;
+    const requestLocation =
+      requestJob.locationLatitude !== undefined && requestJob.locationLongitude !== undefined
+        ? { latitude: requestJob.locationLatitude, longitude: requestJob.locationLongitude }
+        : undefined;
+    selectTechnician(requestJob.id, toJobTechnician(tech, requestLocation));
+    router.replace(`/job/${requestJob.id}`);
   };
 
   return (
@@ -69,14 +68,14 @@ export default function SelectTechnicianScreen() {
 
       <FlatList
         data={technicians}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.technician.id}
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View style={styles.listHeader}>
             <PageHeading
               eyebrow={service || 'Available Specialists'}
-              title="Select a verified expert"
-              subtitle="Browse specialists by availability, rating, and proximity."
+              title="Select an available technician"
+              subtitle="Browse specialists by availability, rating, and proximity. Distance is straight-line."
             />
             <View style={styles.filters}>
               <Pressable
@@ -119,7 +118,7 @@ export default function SelectTechnicianScreen() {
             No technicians match this service and availability filter yet.
           </Text>
         }
-        renderItem={({ item }) => (
+        renderItem={({ item: { technician: item, distance } }) => (
           <Pressable
             disabled={!item.isAvailable}
             onPress={() => handleSelectTech(item)}
@@ -150,7 +149,9 @@ export default function SelectTechnicianScreen() {
               </View>
               <View style={styles.metaItem}>
                 <Ionicons name="location-outline" size={14} color={colors.primary} />
-                <Text style={[styles.metaText, { color: colors.foreground }]}>{item.distanceKm} km away</Text>
+                <Text style={[styles.metaText, { color: colors.foreground }]}>
+                  {formatDistance(distance) ?? 'Distance unavailable'}
+                </Text>
               </View>
             </View>
           </Pressable>
