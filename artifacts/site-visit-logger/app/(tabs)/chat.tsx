@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Image,
+  type ImageStyle,
   Linking,
   Modal,
   Platform,
@@ -11,7 +12,9 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  type StyleProp,
   View,
+  type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -26,6 +29,30 @@ import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollV
 import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { distanceMeters, formatDistance, googleMapsUrl } from '@/lib/location';
+
+function StableRequestImage({
+  uri,
+  style,
+  fallbackStyle,
+}: {
+  uri: string;
+  style: StyleProp<ImageStyle>;
+  fallbackStyle: StyleProp<ViewStyle>;
+}) {
+  const colors = useColors();
+  const source = useMemo(() => ({ uri }), [uri]);
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <View style={[fallbackStyle, { backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="image-outline" size={22} color={colors.mutedForeground} />
+      </View>
+    );
+  }
+
+  return <Image source={source} style={style} onError={() => setFailed(true)} />;
+}
 
 function RequestVideo({ uri }: { uri: string }) {
   const colors = useColors();
@@ -93,8 +120,6 @@ export default function ChatTabScreen() {
   const [replyText, setReplyText] = useState('');
   const [selectedRequestModal, setSelectedRequestModal] = useState<ServiceRequestDetails | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [loadingImages, setLoadingImages] = useState<Record<string, boolean>>({});
-  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [mapError, setMapError] = useState('');
 
   const [counterOfferModal, setCounterOfferModal] = useState(false);
@@ -113,6 +138,13 @@ export default function ChatTabScreen() {
     technicianProfile.baseLongitude !== undefined
       ? { latitude: technicianProfile.baseLatitude, longitude: technicianProfile.baseLongitude }
       : activeThread?.technicianLocation;
+
+  // Sort threads by most recent lastMessageTime
+  const sortedThreads = useMemo(() => {
+    return [...threads].sort(
+      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+    );
+  }, [threads]);
 
   const openRequestMap = () => {
     if (!selectedRequestModal) return;
@@ -180,7 +212,7 @@ export default function ChatTabScreen() {
             subtitle="Settle service pricing and review requests directly with clients and specialists."
           />
 
-          {threads.length === 0 ? (
+          {sortedThreads.length === 0 ? (
             <View style={[styles.emptyContainer, { borderColor: colors.border, backgroundColor: colors.card }]}>
               <View style={[styles.emptyIconWrap, { backgroundColor: colors.secondary }]}>
                 <Ionicons name="chatbubbles-outline" size={32} color={colors.primary} />
@@ -192,7 +224,7 @@ export default function ChatTabScreen() {
             </View>
           ) : (
             <View style={styles.listWrap}>
-              {threads.map((item) => (
+              {sortedThreads.map((item) => (
                 <Pressable
                   key={item.id}
                   onPress={() => setActiveThreadId(item.id)}
@@ -268,29 +300,14 @@ export default function ChatTabScreen() {
                       {msg.serviceRequest ? (
                         <View style={[styles.requestCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                           <View style={styles.requestCardTop}>
-                            {/* 1. First uploaded photo thumbnail or service category icon fallback */}
                             {thumbnailUri ? (
                               <View style={styles.thumbnailFrame}>
-                                <Image
-                                  source={{ uri: thumbnailUri }}
+                                <StableRequestImage
+                                  key={thumbnailUri}
+                                  uri={thumbnailUri}
                                   style={styles.requestThumb}
-                                  onLoadStart={() => setLoadingImages((current) => ({ ...current, [thumbnailUri]: true }))}
-                                  onLoadEnd={() => setLoadingImages((current) => ({ ...current, [thumbnailUri]: false }))}
-                                  onError={() => {
-                                    setLoadingImages((current) => ({ ...current, [thumbnailUri]: false }));
-                                    setFailedImages((current) => ({ ...current, [thumbnailUri]: true }));
-                                  }}
+                                  fallbackStyle={styles.requestThumbFallback}
                                 />
-                                {loadingImages[thumbnailUri] && !failedImages[thumbnailUri] ? (
-                                  <View style={styles.thumbnailLoading}>
-                                    <ActivityIndicator size="small" color={colors.primary} />
-                                  </View>
-                                ) : null}
-                                {failedImages[thumbnailUri] ? (
-                                  <View style={[styles.requestThumbFallback, { backgroundColor: colors.secondary }]}>
-                                    <Ionicons name="image-outline" size={22} color={colors.mutedForeground} />
-                                  </View>
-                                ) : null}
                               </View>
                             ) : (
                               <View style={[styles.requestThumbFallback, { backgroundColor: colors.secondary }]}>
@@ -300,7 +317,6 @@ export default function ChatTabScreen() {
                             <View style={{ flex: 1, marginLeft: 10 }}>
                               <Text style={[styles.reqTitle, { color: colors.foreground }]}>{msg.serviceRequest.serviceName} Service Request</Text>
 
-                              {/* 2. Service title, address, landmark, and distance displayed properly */}
                               <Text numberOfLines={1} style={[styles.reqLocation, { color: colors.mutedForeground }]}>
                                 📍 {msg.serviceRequest.address}
                                 {msg.serviceRequest.landmark ? ` · ${msg.serviceRequest.landmark}` : ''}
@@ -402,7 +418,7 @@ export default function ChatTabScreen() {
         </View>
       )}
 
-      {/* 3. VIEW DETAILS MODAL OPENING ALL INFORMATION & MEDIA */}
+      {/* VIEW DETAILS MODAL */}
       {selectedRequestModal && (
         <Modal visible animationType="slide" transparent>
           <View style={styles.modalOverlay}>
@@ -457,7 +473,11 @@ export default function ChatTabScreen() {
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                       {selectedRequestModal.photos.map((p: string, idx: number) => (
                         <Pressable key={`${p}-${idx}`} onPress={() => setPreviewImage(p)}>
-                          <Image source={{ uri: p }} style={styles.galleryThumb} />
+                          <StableRequestImage
+                            uri={p}
+                            style={styles.galleryThumb}
+                            fallbackStyle={styles.galleryThumbFallback}
+                          />
                         </Pressable>
                       ))}
                     </ScrollView>
@@ -481,7 +501,13 @@ export default function ChatTabScreen() {
                 >
                   <Pressable style={styles.imagePreviewOverlay} onPress={() => setPreviewImage(null)}>
                     <Pressable onPress={(event) => event.stopPropagation()}>
-                      {previewImage ? <Image source={{ uri: previewImage }} style={styles.imagePreview} resizeMode="contain" /> : null}
+                      {previewImage ? (
+                        <StableRequestImage
+                          uri={previewImage}
+                          style={styles.imagePreview}
+                          fallbackStyle={styles.imagePreviewFallback}
+                        />
+                      ) : null}
                     </Pressable>
                     <Pressable style={styles.imagePreviewClose} onPress={() => setPreviewImage(null)} accessibilityLabel="Close image preview">
                       <Feather name="x" size={24} color="#fff" />
@@ -587,7 +613,6 @@ const styles = StyleSheet.create({
   thumbnailFrame: { width: 64, height: 64, borderRadius: 10, overflow: 'hidden', position: 'relative' },
   requestThumb: { width: 64, height: 64, borderRadius: 10 },
   requestThumbFallback: { width: 64, height: 64, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  thumbnailLoading: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000020' },
   reqTitle: { fontFamily: 'Inter_700Bold', fontSize: 15 },
   reqLocation: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
   reqProblem: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
@@ -618,12 +643,14 @@ const styles = StyleSheet.create({
   modalLabel: { fontFamily: 'Inter_500Medium', fontSize: 12, marginTop: 4 },
   modalValue: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
   galleryThumb: { width: 80, height: 80, borderRadius: 10, marginRight: 8 },
+  galleryThumbFallback: { width: 80, height: 80, borderRadius: 10, marginRight: 8 },
   videoFrame: { width: '100%', aspectRatio: 16 / 9, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000' },
   videoPlayer: { flex: 1 },
   videoLoading: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000030' },
   mediaError: { fontFamily: 'Inter_400Regular', fontSize: 13, padding: 10, textAlign: 'center' },
   imagePreviewOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', alignItems: 'center', justifyContent: 'center', padding: 16 },
   imagePreview: { width: '100%', height: '85%' },
+  imagePreviewFallback: { width: '100%', height: '85%' },
   imagePreviewClose: { position: 'absolute', top: 48, right: 20, padding: 10 },
   inputField: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14, marginTop: 8 },
 });

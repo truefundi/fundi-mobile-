@@ -103,6 +103,7 @@ export default function RequestScreen() {
       return;
     }
     if (step > 1) {
+      setStep(1);
       return;
     }
     if (hasProgress) setConfirmLeave(true);
@@ -409,20 +410,16 @@ export default function RequestScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8 }]}>
-        {step === 1 ? (
-          <BackButton
-            onPress={goBack}
-            testID="request-back-button"
-            accessibilityLabel={editing ? 'Close editor' : 'Close request'}
-          />
-        ) : (
-          <View style={styles.topSpacer} />
-        )}
-        <Text style={[styles.stepText, { color: colors.mutedForeground }]}>
-          Step {step} of {LAST_STEP} · {STEP_NAMES[step - 1]}
-        </Text>
-        <View style={styles.topSpacer} />
-      </View>
+      <BackButton
+        onPress={goBack}
+        testID="request-back-button"
+        accessibilityLabel={editing ? 'Close editor' : step > 1 ? 'Go back' : 'Close request'}
+      />
+      <Text style={[styles.stepText, { color: colors.mutedForeground }]}>
+        Step {step} of {LAST_STEP} · {STEP_NAMES[step - 1]}
+      </Text>
+      <View style={styles.topSpacer} />
+    </View>
       <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
         <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${(step / LAST_STEP) * 100}%` }]} />
       </View>

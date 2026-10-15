@@ -54,10 +54,10 @@ export function StageScreen({ eyebrow, title, subtitle, children, footer, onBack
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 4 },
+  topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 0 },
   // Keeps the title at the same height on stages that hide the back arrow.
   backSpacer: { height: 44 },
-  content: { paddingHorizontal: 20, paddingTop: 4 },
-  body: { marginTop: 20, gap: 14 },
+  content: { paddingHorizontal: 20, paddingTop: 0 },
+  body: { marginTop: 16, gap: 14 },
   footer: { paddingHorizontal: 20, paddingTop: 14, borderTopWidth: 1, gap: 10 },
 });

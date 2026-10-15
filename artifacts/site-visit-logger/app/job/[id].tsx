@@ -1,8 +1,11 @@
 import React, { useState, type ReactNode } from 'react';
+import { StyleSheet, View, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { vibrate } from '@/lib/haptics';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
+import { BackButton } from '@/components/ui/BackButton';
 import { AdditionalWork } from '@/components/job/AdditionalWork';
 import { Arrived } from '@/components/job/Arrived';
 import { Diagnosis } from '@/components/job/Diagnosis';
@@ -21,6 +24,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Notice } from '@/components/ui/Notice';
 import { StageScreen } from '@/components/ui/StageScreen';
+import { useColors } from '@/hooks/useColors';
 
 /** The irreversible choices on this screen, each confirmed before it happens. */
 type Pending = 'cancel' | 'declineQuote' | 'declineExtra';
@@ -46,15 +50,10 @@ const CONFIRM: Record<Pending, { title: string; message: string; confirmLabel: s
   },
 };
 
-/**
- * Single entry point for a job.
- *
- * The screen shown is derived from the job's status, and reopening a job from
- * My services always lands on the stage it is actually at. Matching and
- * technician updates are explicit user actions rather than background timers.
- */
 export default function JobScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const colors = useColors();
   const { id } = useLocalSearchParams<{ id: string }>();
   const {
     getJob,
@@ -265,8 +264,11 @@ export default function JobScreen() {
   const dialog = pending ? CONFIRM[pending] : null;
 
   return (
-    <>
-      {stage}
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <View style={[styles.headerBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8, borderBottomColor: colors.border }]}>
+        <BackButton onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))} />
+      </View>
+      <View style={{ flex: 1 }}>{stage}</View>
       <ConfirmDialog
         visible={!!dialog}
         title={dialog?.title ?? ''}
@@ -277,6 +279,11 @@ export default function JobScreen() {
         onConfirm={confirm}
         onCancel={() => setPending(null)}
       />
-    </>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  headerBar: { paddingHorizontal: 20, paddingBottom: 8, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center' },
+});
