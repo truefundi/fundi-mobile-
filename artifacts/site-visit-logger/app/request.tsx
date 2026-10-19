@@ -19,7 +19,7 @@ import { PLACE_ICON, type SavedPlace } from '@/constants/places';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
-import { normalizeLocationSelection } from '@/lib/location';
+import { normalizeLocationSelection, canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { persistRequestMedia } from '@/lib/requestMedia';
 
 const MAX_VIDEO_SECONDS = 120;
@@ -502,6 +502,26 @@ export default function RequestScreen() {
               isUsingCurrentLocation={isUsingCurrentLocation}
               onLocationAction={() => handleLocationAction(setCurrentAddressCoords, setError)}
             />
+            {canOpenMapNavigation(currentAddressCoords, undefined, address) ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Show address on map"
+                testID="address-show-map-button"
+                onPress={() => void openMapNavigation(currentAddressCoords, undefined, address)}
+                style={({ pressed }) => [
+                  styles.step1MapBtn,
+                  {
+                    borderColor: colors.border,
+                    backgroundColor: colors.card,
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}
+              >
+                <Feather name="map-pin" size={14} color={colors.primary} />
+                <Text style={[styles.step1MapText, { color: colors.foreground }]}>Show on Map / Preview Route</Text>
+                <Feather name="navigation" size={13} color={colors.mutedForeground} style={{ marginLeft: 'auto' }} />
+              </Pressable>
+            ) : null}
             {errorView(addressError, 'address-error')}
             {errorView(error)}
           </>
@@ -612,8 +632,30 @@ export default function RequestScreen() {
                 label="Current Address"
                 value={currentAddressCoords || 'Not enabled'}
                 muted={!currentAddressCoords}
-                last
+                last={!canOpenMapNavigation(currentAddressCoords, undefined, address)}
               />
+              {canOpenMapNavigation(currentAddressCoords, undefined, address) ? (
+                <View style={[styles.mapActionRow, { borderTopColor: colors.border }]}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Navigate to request location"
+                    testID="request-navigate-button"
+                    onPress={() => void openMapNavigation(currentAddressCoords, undefined, address)}
+                    style={({ pressed }) => [
+                      styles.mapActionButton,
+                      {
+                        backgroundColor: colors.secondary,
+                        borderColor: colors.border,
+                        opacity: pressed ? 0.75 : 1,
+                      },
+                    ]}
+                  >
+                    <Feather name="navigation" size={15} color={colors.primary} />
+                    <Text style={[styles.mapActionText, { color: colors.primary }]}>Navigate to Location</Text>
+                    <Feather name="arrow-up-right" size={14} color={colors.mutedForeground} style={{ marginLeft: 'auto' }} />
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
             <Notice tone="brand" icon="shield-checkmark-outline" text="Find technician to dispatch a nearby verified specialist." />
             {editing ? null : errorView(error)}
@@ -804,4 +846,32 @@ const styles = StyleSheet.create({
   backAction: { minWidth: 96 },
   backActionNarrow: { minWidth: 76 },
   nextAction: { flex: 1 },
+  mapActionRow: { paddingVertical: 12, borderTopWidth: 1 },
+  mapActionButton: {
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  mapActionText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
+  },
+  step1MapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  step1MapText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 13,
+  },
 });

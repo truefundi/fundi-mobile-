@@ -1,10 +1,11 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { COMMISSION_RATE, formatMoney, isTerminated, STATUS_LABEL, type Job } from '@/constants/jobs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
+import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 
 /**
  * The technician's own Activity: jobs they took, not jobs they asked for.
@@ -61,9 +62,24 @@ export function WorkJobs() {
             </Text>
             <View style={styles.metaRow}>
               <Feather name="map-pin" size={13} color={colors.mutedForeground} />
-              <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>
+              <Text style={[styles.meta, { color: colors.mutedForeground, flex: 1 }]} numberOfLines={1}>
                 {job.locationLabel}
               </Text>
+              {canOpenMapNavigation(job) ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Navigate to job location"
+                  testID={`work-job-navigate-${job.reference}`}
+                  onPress={() => void openMapNavigation(job)}
+                  style={({ pressed }) => [
+                    styles.navBtn,
+                    { backgroundColor: colors.secondary, borderColor: colors.border, opacity: pressed ? 0.75 : 1 },
+                  ]}
+                >
+                  <Feather name="navigation" size={12} color={colors.primary} />
+                  <Text style={[styles.navBtnText, { color: colors.primary }]}>Navigate</Text>
+                </Pressable>
+              ) : null}
             </View>
             <View
               style={[
@@ -106,4 +122,6 @@ const styles = StyleSheet.create({
   meta: { fontFamily: 'Inter_400Regular', fontSize: 12, flex: 1 },
   state: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', borderRadius: 11, paddingHorizontal: 9, paddingVertical: 5 },
   stateText: { fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  navBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  navBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 11 },
 });

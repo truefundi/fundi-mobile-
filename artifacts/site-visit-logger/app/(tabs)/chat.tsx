@@ -29,7 +29,7 @@ import { PageHeading } from '@/components/ui/PageHeading';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
-import { distanceMeters, formatDistance, googleMapsUrl } from '@/lib/location';
+import { distanceMeters, formatDistance, googleMapsUrl, canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
 import { formatCancellationNotice, inferCancelledRole, isCancellationEvent } from '@/lib/cancellation';
 
@@ -216,14 +216,14 @@ export default function ChatTabScreen() {
     );
   }, [threads]);
 
-  const openRequestMap = () => {
-    if (!selectedRequestModal) return;
-    const url = googleMapsUrl(selectedRequestModal);
-    if (!url) return;
+  const openRequestMap = async (target?: ServiceRequestDetails | null) => {
+    const item = target ?? selectedRequestModal;
+    if (!item) return;
     setMapError('');
-    void Linking.openURL(url).catch(() => {
-      setMapError('Could not open Google Maps on this device.');
-    });
+    const success = await openMapNavigation(item);
+    if (!success) {
+      setMapError('Could not launch map navigation on this device.');
+    }
   };
 
   useEffect(() => {
@@ -418,6 +418,21 @@ export default function ChatTabScreen() {
                 {activeThread.agreedPrice ? `Agreed Price: RWF ${activeThread.agreedPrice.toLocaleString()}` : 'Price Settlement Chat'}
               </Text>
             </View>
+            {activeRequest && canOpenMapNavigation(activeRequest) ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Navigate to request location"
+                testID="chat-header-navigate-button"
+                onPress={() => void openRequestMap(activeRequest)}
+                style={({ pressed }) => [
+                  styles.headerNavBtn,
+                  { backgroundColor: colors.secondary, borderColor: colors.border, opacity: pressed ? 0.75 : 1 },
+                ]}
+              >
+                <Feather name="navigation" size={13} color={colors.primary} />
+                <Text style={[styles.headerNavText, { color: colors.primary }]}>Navigate</Text>
+              </Pressable>
+            ) : null}
           </View>
 
           {isThreadTerminated ? (
@@ -532,9 +547,30 @@ export default function ChatTabScreen() {
                                 </Text>
                               ) : null}
 
-                              <Pressable onPress={() => setSelectedRequestModal(msg.serviceRequest ?? null)} style={{ marginTop: 4 }}>
-                                <Text style={[styles.viewDetailsLink, { color: colors.primary }]}>View Details →</Text>
-                              </Pressable>
+                              <View style={styles.reqCardActionRow}>
+                                <Pressable onPress={() => setSelectedRequestModal(msg.serviceRequest ?? null)} style={{ paddingVertical: 4 }}>
+                                  <Text style={[styles.viewDetailsLink, { color: colors.primary }]}>View Details →</Text>
+                                </Pressable>
+                                {canOpenMapNavigation(msg.serviceRequest) ? (
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Navigate to request location"
+                                    testID="chat-request-navigate-button"
+                                    onPress={() => void openRequestMap(msg.serviceRequest)}
+                                    style={({ pressed }) => [
+                                      styles.quickNavigateButton,
+                                      {
+                                        backgroundColor: colors.secondary,
+                                        borderColor: colors.border,
+                                        opacity: pressed ? 0.75 : 1,
+                                      },
+                                    ]}
+                                  >
+                                    <Feather name="navigation" size={13} color={colors.primary} />
+                                    <Text style={[styles.quickNavigateText, { color: colors.primary }]}>Navigate</Text>
+                                  </Pressable>
+                                ) : null}
+                              </View>
                             </View>
                           </View>
 
@@ -757,12 +793,12 @@ export default function ChatTabScreen() {
                     : ''}
                 </Text>
 
-                {googleMapsUrl(selectedRequestModal) ? (
+                {canOpenMapNavigation(selectedRequestModal) ? (
                   <Button
-                    label="View on Google Maps"
+                    label="Navigate / Show on Map"
                     variant="outline"
-                    icon="map-outline"
-                    onPress={openRequestMap}
+                    featherIcon="navigation"
+                    onPress={() => void openRequestMap(selectedRequestModal)}
                   />
                 ) : null}
                 {mapError ? <Text style={[styles.mediaError, { color: colors.destructive }]}>{mapError}</Text> : null}
@@ -1014,4 +1050,9 @@ const styles = StyleSheet.create({
   imagePreviewFallback: { width: '100%', height: '85%' },
   imagePreviewClose: { position: 'absolute', top: 48, right: 20, padding: 10 },
   inputField: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14, marginTop: 8 },
+  headerNavBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
+  headerNavText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  reqCardActionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6, gap: 10 },
+  quickNavigateButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
+  quickNavigateText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
 });
