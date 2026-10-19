@@ -72,7 +72,7 @@ export function LoginStep({ onBack, onRegister }: Props) {
           setSelectedCountry(country);
           setError('');
         }}
-        placeholder={selectedCountry.sampleNumber}
+        placeholder="7XX XXX XXX"
         testID="login-phone-input"
         autoFocus
       />

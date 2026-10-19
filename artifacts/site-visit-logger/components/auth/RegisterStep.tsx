@@ -111,7 +111,7 @@ export function RegisterStep({ onBack, onLogin }: Props) {
           setSelectedCountry(country);
           setError('');
         }}
-        placeholder={selectedCountry.sampleNumber}
+        placeholder="7XX XXX XXX"
         testID="register-phone-input"
       />
 

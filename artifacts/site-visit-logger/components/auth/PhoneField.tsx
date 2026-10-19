@@ -71,7 +71,7 @@ export function PhoneField({
           value={groupDigits(value)}
           onChangeText={(entered) => onChange(nationalDigits(entered, activeCountry.nationalDigits))}
           onSubmitEditing={onSubmit}
-          placeholder={placeholder ?? activeCountry.sampleNumber ?? SAMPLE_NUMBER}
+          placeholder={placeholder ?? '7XX XXX XXX'}
           placeholderTextColor={colors.mutedForeground}
           keyboardType="phone-pad"
           textContentType="telephoneNumber"
