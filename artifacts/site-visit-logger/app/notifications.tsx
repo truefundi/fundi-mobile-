@@ -203,7 +203,7 @@ export default function NotificationsScreen() {
                 onPress={() => toggleRead(item.id)}
                 hitSlop={6}
               >
-                <Feather name={item.read ? 'mail' : 'mail-open'} size={17} color={colors.mutedForeground} />
+                <Feather name={item.read ? 'mail' : 'inbox'} size={17} color={colors.mutedForeground} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"

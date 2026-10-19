@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { groupDigits, nationalDigits, SAMPLE_NUMBER } from '@/constants/auth';
 import { DEFAULT_COUNTRY, SUPPORTED_COUNTRIES, type Country } from '@/constants/countries';
 import { CountryPickerModal } from '@/components/auth/CountryPickerModal';
+import { CountryFlag } from '@/components/ui/CountryFlag';
 import { useColors } from '@/hooks/useColors';
 
 type Props = {
@@ -59,7 +60,7 @@ export function PhoneField({
           accessibilityRole="button"
           accessibilityLabel="Select country calling code"
         >
-          <Text style={styles.flag}>{activeCountry.flag}</Text>
+          <CountryFlag code={activeCountry.code} fallbackEmoji={activeCountry.flag} size={16} />
           <Text style={[styles.dialText, { color: colors.foreground }]}>{activeCountry.dialCode}</Text>
           <Feather name="chevron-down" size={13} color={colors.mutedForeground} style={{ marginLeft: 2 }} />
         </Pressable>
@@ -68,9 +69,9 @@ export function PhoneField({
           accessibilityLabel="Phone number"
           testID={testID ?? 'phone-input'}
           value={groupDigits(value)}
-          onChangeText={(entered) => onChange(nationalDigits(entered))}
+          onChangeText={(entered) => onChange(nationalDigits(entered, activeCountry.nationalDigits))}
           onSubmitEditing={onSubmit}
-          placeholder={placeholder ?? SAMPLE_NUMBER}
+          placeholder={placeholder ?? activeCountry.sampleNumber ?? SAMPLE_NUMBER}
           placeholderTextColor={colors.mutedForeground}
           keyboardType="phone-pad"
           textContentType="telephoneNumber"

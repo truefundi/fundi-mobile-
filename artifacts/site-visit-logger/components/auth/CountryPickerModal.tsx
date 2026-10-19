@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SUPPORTED_COUNTRIES, type Country } from '@/constants/countries';
+import { CountryFlag } from '@/components/ui/CountryFlag';
 import { useColors } from '@/hooks/useColors';
 
 type CountryPickerModalProps = {
@@ -57,7 +58,9 @@ export function CountryPickerModal({ visible, onClose, onSelect, selectedCountry
                     { backgroundColor: isSelected ? colors.primary + '15' : 'transparent', borderColor: colors.border },
                   ]}
                 >
-                  <Text style={styles.flag}>{item.flag}</Text>
+                  <View style={{ marginRight: 12 }}>
+                    <CountryFlag code={item.code} fallbackEmoji={item.flag} size={20} />
+                  </View>
                   <Text style={[styles.countryName, { color: colors.foreground }]}>{item.name}</Text>
                   <Text style={[styles.dialCode, { color: colors.mutedForeground }]}>{item.dialCode}</Text>
                 </Pressable>

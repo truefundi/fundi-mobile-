@@ -49,7 +49,7 @@ export default function SavedLocationsScreen() {
         }
       }
 
-      setEditingPlace({ id: 'new-' + Date.now(), label: 'Current Spot', address: streetAddress, kind: 'home' });
+      setEditingPlace({ id: 'new-' + Date.now(), label: 'Current Spot', address: streetAddress, kind: 'Home' });
       setLabelInput('Current Spot');
       setAddressInput(streetAddress);
       await vibrate();
@@ -69,7 +69,7 @@ export default function SavedLocationsScreen() {
       await addSavedPlace({
         label: labelInput.trim(),
         address: addressInput.trim(),
-        kind: 'other',
+        kind: 'Other',
       });
     } else if (editingPlace) {
       await updateSavedPlace(editingPlace.id, {

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { NATIONAL_DIGITS, NATIONAL_PREFIX } from '@/constants/auth';
+import { PIN_LENGTH } from '@/constants/auth';
+import { DEFAULT_COUNTRY, type Country } from '@/constants/countries';
 import { PhoneField } from '@/components/auth/PhoneField';
+import { PinField } from '@/components/auth/PinField';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { PageHeading } from '@/components/ui/PageHeading';
@@ -13,27 +15,36 @@ type Props = {
   onRegister: () => void;
 };
 
-/** Signing back in needs the registered number and nothing else — no code. */
+/**
+ * Login step: Enter registered phone number and 5-digit PIN.
+ */
 export function LoginStep({ onBack, onRegister }: Props) {
   const colors = useColors();
   const { login } = useAuth();
-  const [digits, setDigits] = useState('');
-  const [error, setError] = useState('');
-  const [isSending, setIsSending] = useState(false);
 
-  const ready = digits.length === NATIONAL_DIGITS && digits.startsWith(NATIONAL_PREFIX);
-  const phoneStarted = digits.length > 0;
+  const [digits, setDigits] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState<Country>(DEFAULT_COUNTRY);
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const minPhoneDigits = selectedCountry.nationalDigits ? selectedCountry.nationalDigits - 1 : 7;
+  const phoneValid = digits.length >= minPhoneDigits;
+  const pinValid = pin.length === PIN_LENGTH;
+  const ready = phoneValid && pinValid;
 
   const submit = async () => {
-    if (!ready || isSending) return;
-    setIsSending(true);
+    if (!ready || isLoggingIn) return;
+    setIsLoggingIn(true);
     setError('');
+
     try {
-      await login(digits);
+      const fullPhoneNumber = `${selectedCountry.dialCode}${digits.replace(/^0+/, '')}`;
+      await login(fullPhoneNumber, pin);
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : 'We could not send your code. Try again.');
+      setError(problem instanceof Error ? problem.message : 'Login failed. Please check your credentials.');
     } finally {
-      setIsSending(false);
+      setIsLoggingIn(false);
     }
   };
 
@@ -41,8 +52,14 @@ export function LoginStep({ onBack, onRegister }: Props) {
     <View style={styles.step}>
       <BackButton onPress={onBack} testID="login-back-button" />
 
-      <PageHeading eyebrow="Welcome back" title="Login" subtitle="Enter the number you registered with." style={styles.heading} />
+      <PageHeading
+        eyebrow="Welcome back"
+        title="Login"
+        subtitle="Enter your phone number and 5-digit PIN to sign in."
+        style={styles.heading}
+      />
 
+      {/* Phone Number Field */}
       <Text style={[styles.label, { color: colors.foreground }]}>Phone number</Text>
       <PhoneField
         value={digits}
@@ -50,18 +67,54 @@ export function LoginStep({ onBack, onRegister }: Props) {
           setDigits(value);
           setError('');
         }}
-        onSubmit={submit}
-        placeholder="7XX XXX XXX"
-        invalid={!!error || (phoneStarted && !digits.startsWith(NATIONAL_PREFIX))}
-        autoFocus
+        selectedCountry={selectedCountry}
+        onCountryChange={(country) => {
+          setSelectedCountry(country);
+          setError('');
+        }}
+        placeholder={selectedCountry.sampleNumber}
         testID="login-phone-input"
+        autoFocus
       />
 
-      {error ? <Text testID="login-error" style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
+      {/* 5-Digit PIN Input */}
+      <View style={styles.pinSection}>
+        <PinField
+          value={pin}
+          onChange={(val) => {
+            setPin(val);
+            setError('');
+          }}
+          label="Enter your 5-digit PIN"
+          testID="login-pin-input"
+        />
+      </View>
 
-      <Button label="Login" onPress={submit} disabled={!ready} loading={isSending} testID="login-button" style={styles.primaryButton} />
+      {/* Error Output */}
+      {error ? (
+        <Text testID="login-error" style={[styles.error, { color: colors.destructive }]}>
+          {error}
+        </Text>
+      ) : null}
 
-      <Pressable accessibilityRole="button" testID="go-to-register-button" onPress={onRegister} hitSlop={8} style={styles.switchRow}>
+      {/* Submit Button */}
+      <Button
+        label="Login"
+        onPress={submit}
+        disabled={!ready}
+        loading={isLoggingIn}
+        testID="login-button"
+        style={styles.primaryButton}
+      />
+
+      {/* Switch to Register */}
+      <Pressable
+        accessibilityRole="button"
+        testID="go-to-register-button"
+        onPress={onRegister}
+        hitSlop={8}
+        style={styles.switchRow}
+      >
         <Text style={[styles.switchText, { color: colors.mutedForeground }]}>New to Fundi? </Text>
         <Text style={[styles.switchAction, { color: colors.primary }]}>Register</Text>
       </Pressable>
@@ -71,11 +124,12 @@ export function LoginStep({ onBack, onRegister }: Props) {
 
 const styles = StyleSheet.create({
   step: { flex: 1 },
-  heading: { marginTop: 14 },
-  label: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 24, marginBottom: 8 },
+  heading: { marginTop: 14, marginBottom: 8 },
+  label: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 20, marginBottom: 8 },
+  pinSection: { marginTop: 16 },
   error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 12 },
   primaryButton: { marginTop: 20 },
-  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20, paddingVertical: 6 },
+  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20, paddingVertical: 10 },
   switchText: { fontFamily: 'Inter_400Regular', fontSize: 14 },
   switchAction: { fontFamily: 'Inter_700Bold', fontSize: 14 },
 });
