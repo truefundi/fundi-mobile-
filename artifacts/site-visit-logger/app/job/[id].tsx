@@ -173,7 +173,6 @@ export default function JobScreen() {
           eyebrow="VISIT FEE PAID"
           title="Continue in your technician chat"
           subtitle="Your request and attachments are ready for the selected technician to review."
-          hideBack
           footer={
             <Button
               label="Open technician chat"
@@ -265,9 +264,9 @@ export default function JobScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.headerBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8, borderBottomColor: colors.border }]}>
+      {/* <View style={[styles.headerBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8, borderBottomColor: colors.border }]}>
         <BackButton onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))} />
-      </View>
+      </View> */}
       <View style={{ flex: 1 }}>{stage}</View>
       <ConfirmDialog
         visible={!!dialog}
