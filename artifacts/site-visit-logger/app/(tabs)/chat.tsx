@@ -31,6 +31,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { distanceMeters, formatDistance, googleMapsUrl } from '@/lib/location';
 import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
+import { formatCancellationNotice, inferCancelledRole, isCancellationEvent } from '@/lib/cancellation';
 
 function StableRequestImage({
   uri,
@@ -134,7 +135,7 @@ export default function ChatTabScreen() {
     respondToOffer,
     endRequestThread,
   } = useChat();
-  const { findAnotherTechnician } = useFundi();
+  const { findAnotherTechnician, getJob } = useFundi();
 
   const [replyText, setReplyText] = useState('');
   const [selectedRequestModal, setSelectedRequestModal] = useState<ServiceRequestDetails | null>(null);
@@ -153,14 +154,54 @@ export default function ChatTabScreen() {
   const [techOfferNotes, setTechOfferNotes] = useState('');
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+  const activeRequest = activeThread?.messages.find((message) => message.serviceRequest)?.serviceRequest;
   const pendingRequest = activeThread?.messages.find(
     (message) =>
       message.serviceRequest &&
       ['REQUEST_RECEIVED', 'PENDING_RESPONSE'].includes(message.serviceRequest.status),
   )?.serviceRequest;
   const hasAcceptedOffer = activeThread?.messages.some((message) => message.priceOffer?.status === 'ACCEPTED') === true;
-  const canMakeOffer = !!activeThread && !activeThread.isEnded && !hasAcceptedOffer;
   const userRole = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
+
+  const isThreadTerminated =
+    Boolean(activeThread?.isEnded) ||
+    activeRequest?.status === 'CANCELLED' ||
+    activeRequest?.status === 'DECLINED' ||
+    Boolean(activeThread?.messages.some((m) => isCancellationEvent(m.text)));
+
+  const terminationMsg = activeThread
+    ? [...activeThread.messages].reverse().find((m) => isCancellationEvent(m.text))
+    : undefined;
+
+  const bannerCancelledRole =
+    activeThread?.cancelledByRole ??
+    terminationMsg?.cancelledByRole ??
+    activeRequest?.cancelledByRole ??
+    (activeRequest?.status === 'DECLINED' ? 'technician' : inferCancelledRole(terminationMsg ?? {}, 'client'));
+
+  const bannerCancelledName =
+    activeThread?.cancelledByName ??
+    terminationMsg?.cancelledByName ??
+    activeRequest?.cancelledByName;
+
+  const bannerCancelledId =
+    activeThread?.cancelledById ??
+    terminationMsg?.cancelledById ??
+    activeRequest?.cancelledById;
+
+  const bannerCancellationText = activeThread
+    ? formatCancellationNotice({
+        cancelledByRole: bannerCancelledRole,
+        cancelledByName: bannerCancelledName,
+        cancelledById: bannerCancelledId,
+        currentUserId: account?.id,
+        currentUserRole: userRole,
+        currentUserName: account?.name,
+        otherParticipantName: activeThread.otherParticipantName,
+      })
+    : '';
+
+  const canMakeOffer = !!activeThread && !activeThread.isEnded && !hasAcceptedOffer && !isThreadTerminated;
   const technicianLocation =
     account?.role === 'TECHNICIAN' &&
     technicianProfile?.baseLatitude !== undefined &&
@@ -252,10 +293,21 @@ export default function ChatTabScreen() {
       const jobId = activeThread.jobId;
       if (jobId) {
         findAnotherTechnician(jobId);
-        router.push({ pathname: '/select-technician', params: { jobId } });
-      } else {
-        router.push({ pathname: '/request', params: { service: request.serviceName } });
       }
+      router.push({
+        pathname: '/select-technician',
+        params: {
+          ...(jobId ? { jobId } : {}),
+          category: request.serviceName,
+          service: request.serviceName,
+          description: request.problem,
+          problem: request.problem,
+          location: request.address,
+          address: request.address,
+          ...(request.latitude !== undefined ? { latitude: String(request.latitude) } : {}),
+          ...(request.longitude !== undefined ? { longitude: String(request.longitude) } : {}),
+        },
+      });
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Could not find another technician.');
     }
@@ -329,7 +381,19 @@ export default function ChatTabScreen() {
                     ) ? (
                       <Text style={[styles.requestReceivedBadge, { color: colors.primary }]}>REQUEST_RECEIVED</Text>
                     ) : null}
-                    <Text numberOfLines={1} style={[styles.lastMessage, { color: colors.mutedForeground }]}>{item.lastMessage}</Text>
+                    <Text numberOfLines={1} style={[styles.lastMessage, { color: isCancellationEvent(item.lastMessage) || item.isEnded ? colors.destructive : colors.mutedForeground }]}>
+                      {isCancellationEvent(item.lastMessage) || item.isEnded
+                        ? formatCancellationNotice({
+                            cancelledByRole: item.cancelledByRole ?? inferCancelledRole({ text: item.lastMessage }, 'client'),
+                            cancelledByName: item.cancelledByName,
+                            cancelledById: item.cancelledById,
+                            currentUserId: account?.id,
+                            currentUserRole: userRole,
+                            currentUserName: account?.name,
+                            otherParticipantName: item.otherParticipantName,
+                          })
+                        : item.lastMessage}
+                    </Text>
                   </View>
                   <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
                 </Pressable>
@@ -355,6 +419,55 @@ export default function ChatTabScreen() {
               </Text>
             </View>
           </View>
+
+          {isThreadTerminated ? (
+            <View style={[styles.cancellationBanner, { backgroundColor: colors.destructive + '14', borderColor: colors.destructive + '40' }]}>
+              <View style={styles.cancellationBannerTop}>
+                <Ionicons name="close-circle" size={22} color={colors.destructive} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.cancellationBannerTitle, { color: colors.destructive }]}>
+                    {bannerCancellationText}
+                  </Text>
+                  <Text style={[styles.cancellationBannerSub, { color: colors.mutedForeground }]}>
+                    {userRole === 'client'
+                      ? 'This service request was terminated. You can rebook with another available technician.'
+                      : 'This service request was terminated.'}
+                  </Text>
+                </View>
+              </View>
+              {userRole === 'client' && (
+                <View style={styles.cancellationBannerActions}>
+                  <Button
+                    label="Book another technician"
+                    icon="person-add-outline"
+                    size="small"
+                    onPress={() => {
+                      const req = activeRequest;
+                      const job = activeThread.jobId ? getJob(activeThread.jobId) : undefined;
+                      router.push({
+                        pathname: '/select-technician',
+                        params: {
+                          ...(activeThread.jobId ? { jobId: activeThread.jobId } : {}),
+                          category: req?.serviceName ?? job?.service,
+                          service: req?.serviceName ?? job?.service,
+                          description: req?.problem ?? job?.problem,
+                          problem: req?.problem ?? job?.problem,
+                          location: req?.address ?? job?.locationLabel,
+                          address: req?.address ?? job?.locationLabel,
+                          ...(req?.latitude !== undefined || job?.locationLatitude !== undefined
+                            ? { latitude: String(req?.latitude ?? job?.locationLatitude) }
+                            : {}),
+                          ...(req?.longitude !== undefined || job?.locationLongitude !== undefined
+                            ? { longitude: String(req?.longitude ?? job?.locationLongitude) }
+                            : {}),
+                        },
+                      });
+                    }}
+                  />
+                </View>
+              )}
+            </View>
+          ) : null}
 
           <FlatList
             data={groupedMessages}
@@ -445,9 +558,26 @@ export default function ChatTabScreen() {
                           {userRole === 'client' && (
                             <View style={styles.statusFooterRow}>
                               <View style={styles.statusIndicatorWrap}>
-                                <Ionicons name="time-outline" size={14} color={colors.warning} />
+                                <Ionicons
+                                  name={msg.serviceRequest.status === 'CANCELLED' || msg.serviceRequest.status === 'DECLINED' ? 'close-circle-outline' : 'time-outline'}
+                                  size={14}
+                                  color={msg.serviceRequest.status === 'CANCELLED' || msg.serviceRequest.status === 'DECLINED' ? colors.destructive : colors.warning}
+                                />
                                 <Text style={[styles.statusText, { color: colors.foreground }]}>
-                                  Status: <Text style={{ fontWeight: '700' }}>{msg.serviceRequest.status}</Text>
+                                  Status:{' '}
+                                  <Text style={{ fontWeight: '700', color: msg.serviceRequest.status === 'CANCELLED' || msg.serviceRequest.status === 'DECLINED' ? colors.destructive : colors.foreground }}>
+                                    {msg.serviceRequest.status === 'CANCELLED' || msg.serviceRequest.status === 'DECLINED'
+                                      ? formatCancellationNotice({
+                                          cancelledByRole: msg.serviceRequest.cancelledByRole ?? inferCancelledRole(msg, 'client'),
+                                          cancelledByName: msg.serviceRequest.cancelledByName,
+                                          cancelledById: msg.serviceRequest.cancelledById,
+                                          currentUserId: account?.id,
+                                          currentUserRole: userRole,
+                                          currentUserName: account?.name,
+                                          otherParticipantName: activeThread.otherParticipantName,
+                                        })
+                                      : msg.serviceRequest.status}
+                                  </Text>
                                 </Text>
                               </View>
                               {msg.serviceRequest.status === 'ACCEPTED' && !activeThread.isEnded && (
@@ -500,6 +630,24 @@ export default function ChatTabScreen() {
                           ) : null}
                           <Text style={[styles.timestampText, { color: colors.mutedForeground }]}>{timeFormatted}</Text>
                         </View>
+                      ) : isCancellationEvent(msg.text) ? (
+                        <View style={styles.systemBubbleRow}>
+                          <View style={[styles.systemBubble, { backgroundColor: colors.destructive + '15', borderColor: colors.destructive + '35' }]}>
+                            <Ionicons name="close-circle-outline" size={15} color={colors.destructive} />
+                            <Text style={[styles.systemBubbleText, { color: colors.destructive }]}>
+                              {formatCancellationNotice({
+                                cancelledByRole: msg.cancelledByRole ?? inferCancelledRole(msg, 'client'),
+                                cancelledByName: msg.cancelledByName,
+                                cancelledById: msg.cancelledById,
+                                currentUserId: account?.id,
+                                currentUserRole: userRole,
+                                currentUserName: account?.name,
+                                otherParticipantName: activeThread.otherParticipantName,
+                              })}
+                            </Text>
+                            <Text style={[styles.systemBubbleTime, { color: colors.mutedForeground }]}>{timeFormatted}</Text>
+                          </View>
+                        </View>
                       ) : (
                         <View style={[styles.standardBubble, { backgroundColor: isMe ? colors.primary : colors.card, borderColor: colors.border }]}>
                           <Text style={[styles.standardText, { color: isMe ? colors.primaryForeground : colors.foreground }]}>{msg.text}</Text>
@@ -551,16 +699,25 @@ export default function ChatTabScreen() {
               {actionError}
             </Text>
           ) : null}
-          <View style={[styles.replyBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 14 }]}>
-            <TextInput
-              placeholder="Type a message..."
-              placeholderTextColor={colors.mutedForeground}
-              value={replyText}
-              onChangeText={setReplyText}
-              style={[styles.replyInput, { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border }]}
-            />
-            <Button label="Send" size="small" onPress={handleSendText} />
-          </View>
+          {isThreadTerminated ? (
+            <View style={[styles.terminatedBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 14 }]}>
+              <Ionicons name="lock-closed-outline" size={16} color={colors.mutedForeground} />
+              <Text style={[styles.terminatedBarText, { color: colors.mutedForeground }]}>
+                {bannerCancellationText} · Chat is closed.
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.replyBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 14 }]}>
+              <TextInput
+                placeholder="Type a message..."
+                placeholderTextColor={colors.mutedForeground}
+                value={replyText}
+                onChangeText={setReplyText}
+                style={[styles.replyInput, { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border }]}
+              />
+              <Button label="Send" size="small" onPress={handleSendText} />
+            </View>
+          )}
         </View>
       )}
 
@@ -823,6 +980,17 @@ const styles = StyleSheet.create({
   standardBubble: { borderWidth: 1, borderRadius: 14, padding: 12, maxWidth: '80%', gap: 4 },
   standardText: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
   timestampTextSecondary: { fontFamily: 'Inter_400Regular', fontSize: 10, textAlign: 'right' },
+  cancellationBanner: { marginHorizontal: 16, marginTop: 10, marginBottom: 4, padding: 14, borderRadius: 14, borderWidth: 1, gap: 10 },
+  cancellationBannerTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cancellationBannerTitle: { fontFamily: 'Inter_700Bold', fontSize: 14 },
+  cancellationBannerSub: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
+  cancellationBannerActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 4 },
+  systemBubbleRow: { width: '100%', alignItems: 'center', marginVertical: 8 },
+  systemBubble: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, maxWidth: '90%' },
+  systemBubbleText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  systemBubbleTime: { fontFamily: 'Inter_400Regular', fontSize: 10, marginLeft: 4 },
+  terminatedBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 14 },
+  terminatedBarText: { fontFamily: 'Inter_500Medium', fontSize: 13 },
   techTopBarAction: { paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, flexDirection: 'row' },
   pendingRequestActions: { paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, gap: 8 },
   replyBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1, gap: 10 },

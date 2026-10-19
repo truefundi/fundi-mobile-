@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { COMMISSION_RATE, formatMoney, STATUS_LABEL, type Job } from '@/constants/jobs';
+import { COMMISSION_RATE, formatMoney, isTerminated, STATUS_LABEL, type Job } from '@/constants/jobs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
@@ -37,25 +37,57 @@ export function WorkJobs() {
         <Text style={[styles.totalValue, { color: colors.secondaryForeground }]}>{formatMoney(earnings)}</Text>
       </View>
 
-      {taken.map((job) => (
-        <View key={job.id} style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <View style={styles.cardTop}>
-            <Text style={[styles.service, { color: colors.foreground }]}>{job.service}</Text>
-            <Text style={[styles.fee, { color: colors.foreground }]}>{formatMoney(job.visitFee * (1 - COMMISSION_RATE))}</Text>
-          </View>
-          <Text style={[styles.problem, { color: colors.mutedForeground }]} numberOfLines={2}>{job.problem}</Text>
-          <View style={styles.metaRow}>
-            <Feather name="map-pin" size={13} color={colors.mutedForeground} />
-            <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>
-              {job.locationLabel}
+      {taken.map((job) => {
+        const terminated = isTerminated(job.status);
+        return (
+          <View
+            key={job.id}
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.card,
+                borderColor: terminated ? colors.destructive + '40' : colors.border,
+              },
+            ]}
+          >
+            <View style={styles.cardTop}>
+              <Text style={[styles.service, { color: colors.foreground }]}>{job.service}</Text>
+              <Text style={[styles.fee, { color: colors.foreground }]}>
+                {formatMoney(job.visitFee * (1 - COMMISSION_RATE))}
+              </Text>
+            </View>
+            <Text style={[styles.problem, { color: colors.mutedForeground }]} numberOfLines={2}>
+              {job.problem}
             </Text>
+            <View style={styles.metaRow}>
+              <Feather name="map-pin" size={13} color={colors.mutedForeground} />
+              <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>
+                {job.locationLabel}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.state,
+                { backgroundColor: terminated ? colors.destructiveMuted : colors.successMuted },
+              ]}
+            >
+              <Feather
+                name={terminated ? 'x' : 'check'}
+                size={12}
+                color={terminated ? colors.destructive : colors.success}
+              />
+              <Text
+                style={[
+                  styles.stateText,
+                  { color: terminated ? colors.destructive : colors.foreground },
+                ]}
+              >
+                {STATUS_LABEL[job.status]}
+              </Text>
+            </View>
           </View>
-          <View style={[styles.state, { backgroundColor: colors.successMuted }]}>
-            <Feather name="check" size={12} color={colors.success} />
-            <Text style={[styles.stateText, { color: colors.foreground }]}>{STATUS_LABEL[job.status]}</Text>
-          </View>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }

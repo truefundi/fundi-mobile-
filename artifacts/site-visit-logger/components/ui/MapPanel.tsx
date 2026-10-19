@@ -67,7 +67,7 @@ export function MapPanel({ progress = 0, searching, caption, height = 210 }: Pro
 
 const styles = StyleSheet.create({
   map: { borderRadius: 16, borderWidth: 1, overflow: 'hidden', justifyContent: 'center' },
-  grid: { ...StyleSheet.absoluteFillObject },
+  grid: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   gridLine: { position: 'absolute' },
   route: { position: 'absolute', left: '10%', right: '14%', height: 3, borderRadius: 2, top: '50%' },
   routeDone: { right: undefined },
