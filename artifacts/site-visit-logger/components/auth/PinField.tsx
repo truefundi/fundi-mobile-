@@ -170,6 +170,7 @@ const styles = StyleSheet.create({
   },
   error: {
     fontFamily: 'Inter_500Medium',
+    
     fontSize: 12,
     lineHeight: 16,
     marginTop: 6,

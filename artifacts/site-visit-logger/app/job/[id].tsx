@@ -257,7 +257,27 @@ export default function JobScreen() {
       break;
 
     default:
-      stage = <JobClosed job={job} />;
+      stage = (
+        <JobClosed
+          job={job}
+          onRebook={() => {
+            router.push({
+              pathname: '/select-technician',
+              params: {
+                jobId: job.id,
+                category: job.service,
+                service: job.service,
+                description: job.problem,
+                problem: job.problem,
+                location: job.locationLabel,
+                address: job.locationLabel,
+                ...(job.locationLatitude !== undefined ? { latitude: String(job.locationLatitude) } : {}),
+                ...(job.locationLongitude !== undefined ? { longitude: String(job.locationLongitude) } : {}),
+              },
+            });
+          }}
+        />
+      );
   }
 
   const dialog = pending ? CONFIRM[pending] : null;

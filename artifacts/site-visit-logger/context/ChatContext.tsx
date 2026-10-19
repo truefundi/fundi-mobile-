@@ -21,6 +21,9 @@ export type ServiceRequestDetails = {
   createdAt: string;
   status: RequestLifecycleStatus;
   declineReason?: string;
+  cancelledByRole?: 'client' | 'technician';
+  cancelledByName?: string;
+  cancelledById?: string;
 };
 
 export type ServiceOffer = {
@@ -42,6 +45,9 @@ export type ChatMessage = {
   timestamp: string;
   serviceRequest?: ServiceRequestDetails;
   priceOffer?: ServiceOffer;
+  cancelledByRole?: 'client' | 'technician';
+  cancelledByName?: string;
+  cancelledById?: string;
 };
 
 export type ChatThread = {
@@ -61,6 +67,9 @@ export type ChatThread = {
   lastMessageTime: string;
   agreedPrice?: number;
   messages: ChatMessage[];
+  cancelledByRole?: 'client' | 'technician';
+  cancelledByName?: string;
+  cancelledById?: string;
 };
 
 type ChatContextValue = {
@@ -239,6 +248,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (status === 'DECLINED' && !reason?.trim()) throw new Error('Provide a reason for declining this request.');
 
       const reasonText = reason?.trim();
+      const initiatorRole: 'technician' | 'client' = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
+      const initiatorName = account?.name ?? (initiatorRole === 'technician' ? 'Technician' : 'Client');
+      const initiatorId = account?.id;
+      const cancelledRole: 'technician' | 'client' | undefined = status === 'DECLINED' ? 'technician' : status === 'CANCELLED' ? initiatorRole : undefined;
+      const cancelledName = status === 'DECLINED' ? (initiatorRole === 'technician' ? initiatorName : sourceThread.technicianName ?? 'Technician') : status === 'CANCELLED' ? initiatorName : undefined;
+      const cancelledId = status === 'DECLINED' ? (initiatorRole === 'technician' ? initiatorId : undefined) : status === 'CANCELLED' ? initiatorId : undefined;
+
       const allowedTransitions: Record<RequestLifecycleStatus, RequestLifecycleStatus[]> = {
         REQUEST_RECEIVED: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
         PENDING_RESPONSE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
@@ -251,12 +267,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const statusText =
         status === 'ACCEPTED' ? 'The technician accepted this service request.' :
         status === 'DECLINED' ? `The technician declined this request${reasonText ? `: ${reasonText}` : '.'}` :
-        status === 'CANCELLED' ? 'The client cancelled this service request.' :
+        status === 'CANCELLED' ? (initiatorRole === 'client' ? 'The client cancelled this service request.' : 'The technician cancelled this service request.') :
         status === 'OFFER_MADE' ? 'A service offer was made.' :
         'The request is waiting for a technician response.';
-      const updated = threads.map((thread) => {
+      const updated: ChatThread[] = threads.map((thread) => {
         if (thread.id !== threadId) return thread;
-        const updatedMessages = thread.messages.map((message) =>
+        const updatedMessages: ChatMessage[] = thread.messages.map((message) =>
           message.serviceRequest?.id === requestId
             ? {
                 ...message,
@@ -264,26 +280,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   ...message.serviceRequest,
                   status,
                   ...(status === 'DECLINED' && reasonText ? { declineReason: reasonText } : {}),
+                  ...(cancelledRole ? { cancelledByRole: cancelledRole, cancelledByName: cancelledName, cancelledById: cancelledId } : {}),
                 },
               }
             : message,
         );
+        const newMsg: ChatMessage = {
+          id: `msg-status-${Date.now()}`,
+          senderId: 'system',
+          senderName: 'System',
+          senderRole: initiatorRole,
+          cancelledByRole: cancelledRole,
+          cancelledByName: cancelledName,
+          cancelledById: cancelledId,
+          text: statusText,
+          timestamp: now,
+        };
         return {
           ...thread,
           isAccepted: status === 'ACCEPTED' ? true : status === 'CANCELLED' || status === 'DECLINED' ? false : thread.isAccepted,
           isEnded: status === 'CANCELLED' || status === 'DECLINED' ? true : status === 'ACCEPTED' ? false : thread.isEnded,
+          ...(cancelledRole ? { cancelledByRole: cancelledRole, cancelledByName: cancelledName, cancelledById: cancelledId } : {}),
           lastMessage: statusText,
           lastMessageTime: now,
           messages: [
             ...updatedMessages,
-            {
-              id: `msg-status-${Date.now()}`,
-              senderId: 'system',
-              senderName: 'System',
-              senderRole: account?.role === 'TECHNICIAN' ? 'technician' as const : 'client' as const,
-              text: statusText,
-              timestamp: now,
-            },
+            newMsg,
           ],
         };
       });
@@ -505,12 +527,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const endRequestThread = useCallback(
     async (threadId: string) => {
       const now = new Date().toISOString();
-      const updated = threads.map((item) =>
+      const initiatorRole: 'technician' | 'client' = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
+      const initiatorName = account?.name ?? (initiatorRole === 'technician' ? 'Technician' : 'Client');
+      const initiatorId = account?.id;
+      const updated: ChatThread[] = threads.map((item) =>
         item.id === threadId
           ? {
               ...item,
               isEnded: true,
-              lastMessage: 'Request ended by the client.',
+              cancelledByRole: initiatorRole,
+              cancelledByName: initiatorName,
+              cancelledById: initiatorId,
+              lastMessage: 'The client ended this service request.',
               lastMessageTime: now,
               messages: [
                 ...item.messages,
@@ -518,7 +546,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   id: `msg-ended-${Date.now()}`,
                   senderId: 'system',
                   senderName: 'System',
-                  senderRole: 'client' as const,
+                  senderRole: initiatorRole,
+                  cancelledByRole: initiatorRole,
+                  cancelledByName: initiatorName,
+                  cancelledById: initiatorId,
                   text: 'The client ended this service request.',
                   timestamp: now,
                 },
@@ -528,7 +559,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       );
       await persistThreads(updated);
     },
-    [threads],
+    [account, threads],
   );
 
   const createOrGetThread = useCallback(

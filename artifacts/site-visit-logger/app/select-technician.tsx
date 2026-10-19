@@ -15,13 +15,40 @@ export default function SelectTechnicianScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { jobId } = useLocalSearchParams<{ jobId?: string }>();
-  const { getJob, selectTechnician, linkChatThread } = useFundi();
+  const {
+    jobId,
+    category,
+    service: serviceParam,
+    description,
+    problem: problemParam,
+    location: locationParam,
+    address: addressParam,
+    latitude: latParam,
+    longitude: lngParam,
+  } = useLocalSearchParams<{
+    jobId?: string;
+    category?: string;
+    service?: string;
+    description?: string;
+    problem?: string;
+    location?: string;
+    address?: string;
+    latitude?: string;
+    longitude?: string;
+  }>();
+  const { getJob, selectTechnician, linkChatThread, addRequest } = useFundi();
   const { createOrGetThread } = useChat();
   const requestJob = jobId ? getJob(jobId) : undefined;
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
-  const service = requestJob?.service;
+
+  const service = requestJob?.service ?? category ?? serviceParam;
+  const problem = requestJob?.problem ?? description ?? problemParam;
+  const locationLabel = requestJob?.locationLabel ?? locationParam ?? addressParam;
+  const locationLatitude =
+    requestJob?.locationLatitude ?? (latParam ? parseFloat(latParam) : undefined);
+  const locationLongitude =
+    requestJob?.locationLongitude ?? (lngParam ? parseFloat(lngParam) : undefined);
 
   const technicians = useMemo(() => {
     const requestedService = (service ?? '').toLowerCase();
@@ -35,12 +62,13 @@ export default function SelectTechnicianScreen() {
       .filter((tech) => (!availableOnly || tech.isAvailable) && matchesService(tech))
       .map((technician) => ({
         technician,
-        distance: requestJob
-          ? distanceMeters(
-              { latitude: requestJob.locationLatitude, longitude: requestJob.locationLongitude },
-              technician.location,
-            )
-          : null,
+        distance:
+          locationLatitude !== undefined && locationLongitude !== undefined
+            ? distanceMeters(
+                { latitude: locationLatitude, longitude: locationLongitude },
+                technician.location,
+              )
+            : null,
       }))
       .sort((a, b) => {
         if (sortBy === 'rating') return b.technician.rating - a.technician.rating;
@@ -48,37 +76,52 @@ export default function SelectTechnicianScreen() {
         if (b.distance === null) return -1;
         return a.distance - b.distance;
       });
-  }, [availableOnly, requestJob, service, sortBy]);
+  }, [availableOnly, locationLatitude, locationLongitude, service, sortBy]);
 
-  const handleSelectTech = (tech: MarketplaceTechnician) => {
-    if (!requestJob) return;
+  const handleSelectTech = async (tech: MarketplaceTechnician) => {
+    let targetJob = requestJob;
     const requestLocation =
-      requestJob.locationLatitude !== undefined && requestJob.locationLongitude !== undefined
-        ? { latitude: requestJob.locationLatitude, longitude: requestJob.locationLongitude }
+      locationLatitude !== undefined && locationLongitude !== undefined
+        ? { latitude: locationLatitude, longitude: locationLongitude }
         : undefined;
-    selectTechnician(requestJob.id, toJobTechnician(tech, requestLocation));
+
+    if (!targetJob) {
+      const newJobId = await addRequest({
+        service: service || 'General Maintenance',
+        problem: problem || 'General Service Request',
+        urgency: 'Today',
+        locationLabel: locationLabel || 'Location not specified',
+        locationLatitude,
+        locationLongitude,
+      });
+      targetJob = getJob(newJobId);
+    }
+
+    if (!targetJob) return;
+
+    selectTechnician(targetJob.id, toJobTechnician(tech, requestLocation));
     const threadId = createOrGetThread(
       tech.name,
       'technician',
-      requestJob.id,
+      targetJob.id,
       {
-        id: requestJob.id,
-        serviceName: requestJob.service,
-        problem: requestJob.problem,
-        address: requestJob.locationLabel,
-        ...(requestJob.locationLatitude !== undefined ? { latitude: requestJob.locationLatitude } : {}),
-        ...(requestJob.locationLongitude !== undefined ? { longitude: requestJob.locationLongitude } : {}),
-        thumbnailUri: requestJob.photoUris?.[0] ?? requestJob.photoUri,
-        photos: requestJob.photoUris ?? (requestJob.photoUri ? [requestJob.photoUri] : []),
-        videos: requestJob.videoUris ?? (requestJob.videoUri ? [requestJob.videoUri] : []),
-        createdAt: requestJob.createdAt,
+        id: targetJob.id,
+        serviceName: targetJob.service,
+        problem: targetJob.problem,
+        address: targetJob.locationLabel,
+        ...(targetJob.locationLatitude !== undefined ? { latitude: targetJob.locationLatitude } : {}),
+        ...(targetJob.locationLongitude !== undefined ? { longitude: targetJob.locationLongitude } : {}),
+        thumbnailUri: targetJob.photoUris?.[0] ?? targetJob.photoUri,
+        photos: targetJob.photoUris ?? (targetJob.photoUri ? [targetJob.photoUri] : []),
+        videos: targetJob.videoUris ?? (targetJob.videoUri ? [targetJob.videoUri] : []),
+        createdAt: targetJob.createdAt,
         status: 'REQUEST_RECEIVED',
       },
       tech.phoneNumber,
       tech.location,
     );
-    linkChatThread(requestJob.id, threadId);
-    router.replace(`/job/${requestJob.id}`);
+    linkChatThread(targetJob.id, threadId);
+    router.replace(`/job/${targetJob.id}`);
   };
 
   return (
@@ -100,6 +143,49 @@ export default function SelectTechnicianScreen() {
               title="Select an available technician"
               subtitle="Browse specialists by availability, rating, and proximity. Distance is straight-line."
             />
+            {(service || problem || locationLabel) && (
+              <View style={[styles.prefillBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.prefillBannerTop}>
+                  <View style={[styles.prefillIconWrap, { backgroundColor: colors.primary + '18' }]}>
+                    <Ionicons name="repeat" size={16} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.prefillTitle, { color: colors.foreground }]}>
+                      {requestJob?.status === 'CANCELLED' || requestJob?.status === 'DECLINED'
+                        ? 'Rebooking Service Request'
+                        : 'Pre-filled Request Details'}
+                    </Text>
+                    <Text style={[styles.prefillSub, { color: colors.mutedForeground }]}>
+                      Select the next available technician to continue your request.
+                    </Text>
+                  </View>
+                </View>
+                <View style={[styles.prefillContent, { borderTopColor: colors.border }]}>
+                  {service ? (
+                    <View style={styles.prefillItem}>
+                      <Text style={[styles.prefillLabel, { color: colors.mutedForeground }]}>Category:</Text>
+                      <Text style={[styles.prefillValue, { color: colors.foreground }]}>{service}</Text>
+                    </View>
+                  ) : null}
+                  {problem ? (
+                    <View style={styles.prefillItem}>
+                      <Text style={[styles.prefillLabel, { color: colors.mutedForeground }]}>Description:</Text>
+                      <Text numberOfLines={2} style={[styles.prefillValue, { color: colors.foreground, flex: 1 }]}>
+                        {problem}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {locationLabel ? (
+                    <View style={styles.prefillItem}>
+                      <Text style={[styles.prefillLabel, { color: colors.mutedForeground }]}>Location:</Text>
+                      <Text numberOfLines={1} style={[styles.prefillValue, { color: colors.foreground, flex: 1 }]}>
+                        {locationLabel}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            )}
             <View style={styles.filters}>
               <Pressable
                 accessibilityRole="button"
@@ -194,6 +280,15 @@ const styles = StyleSheet.create({
   filterChip: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8 },
   filterText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   emptyText: { fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center', paddingVertical: 24 },
+  prefillBanner: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
+  prefillBannerTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  prefillIconWrap: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  prefillTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  prefillSub: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 1 },
+  prefillContent: { paddingTop: 8, borderTopWidth: 1, gap: 4 },
+  prefillItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  prefillLabel: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+  prefillValue: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   card: { borderWidth: 1, borderRadius: 16, padding: 16, gap: 12 },
   cardHeader: { flexDirection: 'row', alignItems: 'center' },
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },

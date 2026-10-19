@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useColors } from '@/hooks/useColors';
@@ -13,6 +13,9 @@ type Props = {
   loading?: boolean;
   /** Trailing icon, e.g. an arrow on a "next step" action. */
   icon?: keyof typeof Ionicons.glyphMap;
+  /** Feather icon (leading by default). */
+  featherIcon?: keyof typeof Feather.glyphMap;
+  iconPosition?: 'leading' | 'trailing';
   /** The compact build for actions inside cards and empty states. */
   size?: 'large' | 'small';
   testID?: string;
@@ -25,7 +28,20 @@ type Props = {
  * The single call-to-action used across the journey. Solid fills only —
  * the Fundi brand rules exclude gradients everywhere.
  */
-export function Button({ label, onPress, variant = 'primary', disabled, loading, icon, size = 'large', testID, style, textColor }: Props) {
+export function Button({
+  label,
+  onPress,
+  variant = 'primary',
+  disabled,
+  loading,
+  icon,
+  featherIcon,
+  iconPosition = 'leading',
+  size = 'large',
+  testID,
+  style,
+  textColor,
+}: Props) {
   const colors = useColors();
   const isInactive = disabled || loading;
   const small = size === 'small';
@@ -61,10 +77,18 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading,
     >
       <View style={styles.row}>
         {loading ? <ActivityIndicator size="small" color={textColorValue} /> : null}
+        {!loading && featherIcon && iconPosition === 'leading' ? (
+          <Feather name={featherIcon} size={small ? 16 : 18} color={textColorValue} />
+        ) : null}
         <Text numberOfLines={1} style={[styles.label, small && styles.smallLabel, { color: textColorValue }]}>
           {label}
         </Text>
-        {icon && !loading ? <Ionicons name={icon} size={small ? 16 : 18} color={textColorValue} /> : null}
+        {!loading && featherIcon && iconPosition === 'trailing' ? (
+          <Feather name={featherIcon} size={small ? 16 : 18} color={textColorValue} />
+        ) : null}
+        {!loading && !featherIcon && icon ? (
+          <Ionicons name={icon} size={small ? 16 : 18} color={textColorValue} />
+        ) : null}
       </View>
     </Pressable>
   );

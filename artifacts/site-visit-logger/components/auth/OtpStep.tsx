@@ -146,6 +146,7 @@ const styles = StyleSheet.create({
   // Cells share the row width, so a 320pt phone still fits all of them.
   cell: { flex: 1, height: 62, maxWidth: 72, borderWidth: 1.5, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   cellText: { fontFamily: 'Inter_700Bold', fontSize: 26 },
+  // Covers the cells so a tap anywhere on the row opens the keypad.
   hiddenInput: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0, color: 'transparent' },
   error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 12 },
   primaryButton: { marginTop: 20 },

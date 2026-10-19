@@ -25,6 +25,7 @@ export type JobStatus =
   | 'PAYMENT_REPORTED'
   | 'COMPLETED'
   | 'CANCELLED'
+  | 'DECLINED'
   | 'DISPUTED';
 
 export type RequestLifecycleStatus =
@@ -55,6 +56,7 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   PAYMENT_REPORTED: 'Payment recorded',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
+  DECLINED: 'Declined',
   DISPUTED: 'Disputed',
 };
 
@@ -80,14 +82,20 @@ export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   PAYMENT_REPORTED: 'progress',
   COMPLETED: 'success',
   CANCELLED: 'danger',
+  DECLINED: 'danger',
   DISPUTED: 'danger',
 };
 
 /** A job is finished when it reaches one of these. */
-export const CLOSED_STATUSES: JobStatus[] = ['COMPLETED', 'CANCELLED'];
+export const CLOSED_STATUSES: JobStatus[] = ['COMPLETED', 'CANCELLED', 'DECLINED'];
 
 export function isClosed(status: JobStatus): boolean {
   return CLOSED_STATUSES.includes(status);
+}
+
+/** Whether a job ended prematurely due to cancellation or declining. */
+export function isTerminated(status: JobStatus): boolean {
+  return status === 'CANCELLED' || status === 'DECLINED';
 }
 
 export type Technician = {
