@@ -8,6 +8,7 @@ import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { MOCK_MARKETPLACE_TECHNICIANS, toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
 import { useFundi } from '@/context/FundiContext';
+import { useChat } from '@/context/ChatContext';
 import { distanceMeters, formatDistance } from '@/lib/location';
 
 export default function SelectTechnicianScreen() {
@@ -15,7 +16,8 @@ export default function SelectTechnicianScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
-  const { getJob, selectTechnician } = useFundi();
+  const { getJob, selectTechnician, linkChatThread } = useFundi();
+  const { createOrGetThread } = useChat();
   const requestJob = jobId ? getJob(jobId) : undefined;
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
@@ -55,6 +57,27 @@ export default function SelectTechnicianScreen() {
         ? { latitude: requestJob.locationLatitude, longitude: requestJob.locationLongitude }
         : undefined;
     selectTechnician(requestJob.id, toJobTechnician(tech, requestLocation));
+    const threadId = createOrGetThread(
+      tech.name,
+      'technician',
+      requestJob.id,
+      {
+        id: requestJob.id,
+        serviceName: requestJob.service,
+        problem: requestJob.problem,
+        address: requestJob.locationLabel,
+        ...(requestJob.locationLatitude !== undefined ? { latitude: requestJob.locationLatitude } : {}),
+        ...(requestJob.locationLongitude !== undefined ? { longitude: requestJob.locationLongitude } : {}),
+        thumbnailUri: requestJob.photoUris?.[0] ?? requestJob.photoUri,
+        photos: requestJob.photoUris ?? (requestJob.photoUri ? [requestJob.photoUri] : []),
+        videos: requestJob.videoUris ?? (requestJob.videoUri ? [requestJob.videoUri] : []),
+        createdAt: requestJob.createdAt,
+        status: 'REQUEST_RECEIVED',
+      },
+      tech.phoneNumber,
+      tech.location,
+    );
+    linkChatThread(requestJob.id, threadId);
     router.replace(`/job/${requestJob.id}`);
   };
 

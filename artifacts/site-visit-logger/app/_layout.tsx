@@ -20,6 +20,7 @@ import { ProfileProvider } from '@/context/ProfileContext';
 import { WorkProvider } from '@/context/WorkContext';
 import { configureApi, checkApiHealth } from '@/lib/api';
 import { ChatProvider } from '@/context/ChatContext';
+import { NotificationProvider } from '@/context/NotificationContext';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -164,19 +165,21 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <ProfileProvider>
-              <FundiProvider>
-                <WorkProvider>
-                  <ChatProvider>
-                    <GestureHandlerRootView>
-                      <KeyboardProvider>
-                        <RootLayoutNav />
-                      </KeyboardProvider>
-                    </GestureHandlerRootView>
-                  </ChatProvider>
-                </WorkProvider>
-              </FundiProvider>
-            </ProfileProvider>
+            <NotificationProvider>
+              <ProfileProvider>
+                <FundiProvider>
+                  <WorkProvider>
+                    <ChatProvider>
+                      <GestureHandlerRootView>
+                        <KeyboardProvider>
+                          <RootLayoutNav />
+                        </KeyboardProvider>
+                      </GestureHandlerRootView>
+                    </ChatProvider>
+                  </WorkProvider>
+                </FundiProvider>
+              </ProfileProvider>
+            </NotificationProvider>
           </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>

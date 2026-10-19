@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import React from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { JobStatus } from '@/constants/jobs';
+import type { JobStatus, RequestLifecycleStatus } from '@/constants/jobs';
 import { BackButton } from '@/components/ui/BackButton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -13,9 +13,10 @@ import { WorkLocked } from '@/components/work/WorkLocked';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 import { useFundi } from '@/context/FundiContext';
+import { useNotifications } from '@/context/NotificationContext';
 
 /** Icon per journey event, so each update is recognisable at a glance. */
-const STATUS_ICON: Partial<Record<JobStatus, keyof typeof Ionicons.glyphMap>> = {
+const STATUS_ICON: Partial<Record<JobStatus | RequestLifecycleStatus, keyof typeof Ionicons.glyphMap>> = {
   REQUESTED: 'paper-plane-outline',
   MATCHING: 'search-outline',
   OFFERED: 'person-add-outline',
@@ -34,6 +35,9 @@ const STATUS_ICON: Partial<Record<JobStatus, keyof typeof Ionicons.glyphMap>> = 
   PAYMENT_REPORTED: 'receipt-outline',
   COMPLETED: 'star-outline',
   CANCELLED: 'close-circle-outline',
+  PENDING_RESPONSE: 'time-outline',
+  OFFER_MADE: 'pricetag-outline',
+  DECLINED: 'close-circle-outline',
 };
 
 /** Stages still waiting on the customer, highlighted at the top of the feed. */
@@ -43,7 +47,17 @@ export default function NotificationsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { events, jobs, isHydrated } = useFundi();
+  const { jobs, isHydrated: jobsHydrated } = useFundi();
+  const {
+    notifications,
+    isHydrated: notificationsHydrated,
+    unreadCount,
+    toggleRead,
+    markAllRead,
+    deleteNotification,
+  } = useNotifications();
+  const [filter, setFilter] = React.useState<'all' | 'unread'>('all');
+  const isHydrated = jobsHydrated && notificationsHydrated;
 
   const { mode, status } = useWork();
   const working = mode === 'working' && status === 'verified';
@@ -52,6 +66,16 @@ export default function NotificationsScreen() {
   const inWork = mode === 'working';
 
   const actionable = jobs.filter((job) => NEEDS_ACTION.includes(job.status));
+  const visibleNotifications = notifications.filter((item) => filter === 'all' || !item.read);
+
+  const openNotification = (item: (typeof notifications)[number]) => {
+    if (!item.read) toggleRead(item.id);
+    if (item.threadId) {
+      router.push({ pathname: '/(tabs)/chat', params: { threadId: item.threadId } });
+    } else if (item.jobId) {
+      router.push(`/job/${item.jobId}`);
+    }
+  };
 
   return (
     <ScrollView
@@ -66,12 +90,8 @@ export default function NotificationsScreen() {
         <Feather name="bell" size={20} color={colors.mutedForeground} />
       </View>
 
-      {working ? (
-        <WorkAlerts />
-      ) : locked ? (
-        <WorkLocked />
-      ) : (
-        <>
+      {working ? <WorkAlerts /> : locked ? <WorkLocked /> : null}
+
       {actionable.length > 0 ? (
         <Pressable
           accessibilityRole="button"
@@ -92,51 +112,111 @@ export default function NotificationsScreen() {
           </View>
           <Feather name="chevron-right" size={18} color={colors.primaryForeground} />
         </Pressable>
-      ) : events.length === 0 ? null : (
-        // With no updates at all, the empty state below already says so.
+      ) : unreadCount === 0 && notifications.length > 0 ? (
         <View style={[styles.unreadBanner, { backgroundColor: colors.secondary }]}>
           <View style={[styles.unreadIcon, { backgroundColor: colors.primary }]}>
             <Ionicons name="notifications-outline" size={17} color={colors.primaryForeground} />
           </View>
           <Text style={[styles.unreadText, { color: colors.foreground }]}>You are all caught up on important updates.</Text>
         </View>
-      )}
+      ) : null}
+
+      <View style={styles.filterRow}>
+        {(['all', 'unread'] as const).map((value) => {
+          const selected = filter === value;
+          const count = value === 'all' ? notifications.length : unreadCount;
+          return (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              testID={`notifications-filter-${value}`}
+              onPress={() => setFilter(value)}
+              style={[
+                styles.filterButton,
+                { backgroundColor: selected ? colors.primary : colors.card, borderColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.filterLabel, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                {value === 'all' ? 'All' : 'Unread'}
+              </Text>
+              <View style={[styles.filterBadge, { backgroundColor: selected ? colors.primaryForeground : colors.secondary }]}>
+                <Text style={[styles.filterCount, { color: selected ? colors.primary : colors.foreground }]}>{count}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+        {unreadCount > 0 ? (
+          <Pressable
+            accessibilityRole="button"
+            testID="notifications-mark-all-read"
+            onPress={markAllRead}
+            style={styles.markAllButton}
+          >
+            <Text style={[styles.markAllText, { color: colors.primary }]}>Mark all as read</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
       {!isHydrated ? (
         <LoadingState label="Loading updates…" />
-      ) : events.length === 0 ? (
+      ) : visibleNotifications.length === 0 ? (
         <EmptyState
           icon="bell-off"
-          title="Nothing yet"
-          text="Updates about matching, arrival, quotes and payments will appear here as your job moves along."
+          title={filter === 'unread' ? 'No unread notifications' : 'Nothing yet'}
+          text={filter === 'unread' ? 'You have read all your notifications.' : 'Updates about requests, offers, arrival, quotes and payments will appear here.'}
         />
       ) : (
-        events.map((event) => (
-          <Pressable
-            key={event.id}
-            accessibilityRole="button"
-            accessibilityLabel={event.title}
-            testID={`notification-${event.id}`}
-            onPress={() => router.push(`/job/${event.jobId}`)}
-            style={({ pressed }) => [styles.alertCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.75 : 1 }]}
+        visibleNotifications.map((item) => (
+          <View
+            key={item.id}
+            testID={`notification-row-${item.id}`}
+            style={[styles.alertCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: item.read ? 0.75 : 1 }]}
           >
-            <View style={[styles.alertIcon, { backgroundColor: colors.secondary }]}>
-              <Ionicons name={STATUS_ICON[event.status] ?? 'information-circle-outline'} size={20} color={colors.primary} />
-            </View>
-            <View style={styles.alertCopy}>
-              <View style={styles.alertTitleRow}>
-                <Text style={[styles.alertTitle, { color: colors.foreground }]} numberOfLines={1}>
-                  {event.title}
-                </Text>
-                <Text style={[styles.alertTime, { color: colors.mutedForeground }]}>{relativeTime(event.at)}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={item.title}
+              testID={`notification-${item.id}`}
+              onPress={() => openNotification(item)}
+              style={styles.alertMain}
+            >
+              <View style={[styles.alertIcon, { backgroundColor: colors.secondary }]}>
+                <Ionicons name={STATUS_ICON[item.status] ?? 'information-circle-outline'} size={20} color={colors.primary} />
               </View>
-              <Text style={[styles.alertText, { color: colors.mutedForeground }]}>{event.text}</Text>
-              <Text style={[styles.alertService, { color: colors.primary }]}>{event.service}</Text>
+              <View style={styles.alertCopy}>
+                <View style={styles.alertTitleRow}>
+                  <Text style={[styles.alertTitle, { color: colors.foreground }]} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  {!item.read ? <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} /> : null}
+                  <Text style={[styles.alertTime, { color: colors.mutedForeground }]}>{relativeTime(item.at)}</Text>
+                </View>
+                <Text style={[styles.alertText, { color: colors.mutedForeground }]}>{item.text}</Text>
+                <Text style={[styles.alertService, { color: colors.primary }]}>{item.service}</Text>
+              </View>
+            </Pressable>
+            <View style={styles.notificationActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={item.read ? 'Mark as unread' : 'Mark as read'}
+                testID={`notification-toggle-read-${item.id}`}
+                onPress={() => toggleRead(item.id)}
+                hitSlop={6}
+              >
+                <Feather name={item.read ? 'mail' : 'mail-open'} size={17} color={colors.mutedForeground} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Delete notification"
+                testID={`notification-delete-${item.id}`}
+                onPress={() => deleteNotification(item.id)}
+                hitSlop={6}
+              >
+                <Feather name="trash-2" size={17} color={colors.destructive} />
+              </Pressable>
             </View>
-          </Pressable>
+          </View>
         ))
-      )}
-        </>
       )}
     </ScrollView>
   );
@@ -163,14 +243,24 @@ const styles = StyleSheet.create({
   actionCopy: { flex: 1 },
   actionTitle: { fontFamily: 'Inter_700Bold', fontSize: 14 },
   actionText: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
+  filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
+  filterButton: { flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderRadius: 20, paddingVertical: 7, paddingHorizontal: 11 },
+  filterLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  filterBadge: { minWidth: 19, height: 19, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  filterCount: { fontFamily: 'Inter_700Bold', fontSize: 10 },
+  markAllButton: { marginLeft: 'auto', paddingVertical: 7 },
+  markAllText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   unreadBanner: { flexDirection: 'row', alignItems: 'center', gap: 11, borderRadius: 14, padding: 14, marginBottom: 14 },
   unreadIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   unreadText: { fontFamily: 'Inter_500Medium', fontSize: 13, flex: 1 },
-  alertCard: { flexDirection: 'row', gap: 12, borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 10 },
+  alertCard: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 10 },
+  alertMain: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  notificationActions: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingLeft: 3 },
   alertIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   alertCopy: { flex: 1 },
   alertTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   alertTitle: { fontFamily: 'Inter_700Bold', fontSize: 14, flex: 1 },
+  unreadDot: { width: 7, height: 7, borderRadius: 4 },
   alertTime: { fontFamily: 'Inter_400Regular', fontSize: 12 },
   alertText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, marginTop: 3 },
   alertService: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 6 },

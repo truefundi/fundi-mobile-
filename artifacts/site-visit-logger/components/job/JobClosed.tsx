@@ -11,20 +11,24 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useColors } from '@/hooks/useColors';
 
 /** Terminal view for a finished or cancelled job, reachable from My services. */
-export function JobClosed({ job }: { job: Job }) {
+export function JobClosed({ job, hideBack = false }: { job: Job; hideBack?: boolean }) {
   const colors = useColors();
   const router = useRouter();
   const cancelled = job.status === 'CANCELLED';
+  const goBack = () => (router.canGoBack() ? router.back() : router.replace('/activity'));
 
   return (
     <StageScreen
       eyebrow={cancelled ? 'CANCELLED' : 'COMPLETED'}
       title={cancelled ? 'Request cancelled' : 'Job completed'}
       subtitle={cancelled ? 'This request was cancelled and no repair was carried out.' : undefined}
-      onBack={() => router.replace('/activity')}
+      hideBack={hideBack}
+      onBack={goBack}
       footer={
         cancelled ? (
-          <Button label="Back to my services" variant="outline" onPress={() => router.replace('/activity')} testID="closed-back-button" />
+          hideBack ? (
+            <Button label="Go back" variant="outline" onPress={goBack} testID="closed-back-button" />
+          ) : undefined
         ) : (
           <>
             <Button label="View invoice" onPress={() => router.push(`/invoice/${job.id}`)} testID="closed-invoice-button" />

@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { jobsKey, LEGACY_JOBS_KEY } from '@/constants/storage';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import {
   isClosed,
   visitFeeFor,
@@ -53,10 +54,11 @@ type FundiContextValue = {
   startSettlement: (id: string) => void;
   recordSettlement: (id: string, method: SettlementMethod) => void;
   submitRating: (id: string, rating: Rating) => void;
-  cancelJob: (id: string) => void;
+  cancelJob: (id: string, recipientPhones?: string[]) => void;
   /** Assigns a manually selected mock technician to the request. */
   selectTechnician: (id: string, technician: Technician) => void;
   linkChatThread: (id: string, threadId: string) => void;
+  findAnotherTechnician: (id: string) => void;
   markArrived: (id: string) => void;
   submitDiagnosis: (id: string, quote: Quote) => void;
   completeRepair: (id: string) => void;
@@ -140,7 +142,9 @@ async function loadJobs(key: string): Promise<Job[]> {
 
 export function FundiProvider({ children }: { children: ReactNode }) {
   const { account, isHydrated: sessionReady } = useAuth();
+  const { addNotification, linkJobThread } = useNotifications();
   const [jobs, setJobs] = useState<Job[]>([]);
+  const jobsRef = useRef<Job[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
 
   // Job history belongs to the phone number that created it.
@@ -149,15 +153,19 @@ export function FundiProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!storageKey) {
+      jobsRef.current = [];
       setJobs([]);
       setLoadedKey(null);
       return;
     }
     let mounted = true;
+    jobsRef.current = [];
+    setJobs([]);
     setLoadedKey(null);
     loadJobs(storageKey)
       .then((stored) => {
         if (!mounted) return;
+        jobsRef.current = stored;
         setJobs(stored);
         setLoadedKey(storageKey);
       })
@@ -179,9 +187,31 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     });
   }, [jobs, loadedKey, storageKey]);
 
-  const update = useCallback((id: string, change: (job: Job) => Job) => {
-    setJobs((current) => current.map((job) => (job.id === id ? change(job) : job)));
-  }, []);
+  const update = useCallback((id: string, change: (job: Job) => Job, recipientPhones?: string[]) => {
+    const currentJob = jobsRef.current.find((job) => job.id === id);
+    if (!currentJob) return;
+    const updatedJob = change(currentJob);
+    const updatedJobs = jobsRef.current.map((job) => (job.id === id ? updatedJob : job));
+    jobsRef.current = updatedJobs;
+    setJobs(updatedJobs);
+
+    if (updatedJob.status !== currentJob.status) {
+      const event = updatedJob.events[updatedJob.events.length - 1];
+      if (event) {
+        addNotification({
+          id: event.id,
+          jobId: updatedJob.id,
+          threadId: updatedJob.chatThreadId,
+          status: event.status,
+          service: updatedJob.service,
+          title: event.title,
+          text: event.text,
+          at: event.at,
+          ...(recipientPhones ? { recipientPhones } : {}),
+        });
+      }
+    }
+  }, [addNotification]);
 
   const advance = useCallback(
     (id: string, next: JobStatus) => {
@@ -193,7 +223,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   const selectTechnician = useCallback(
     (id: string, technician: Technician) => {
       update(id, (job) =>
-        job.status === 'REQUESTED' || job.status === 'MATCHING' || job.status === 'OFFERED'
+        job.status === 'REQUESTED' || job.status === 'MATCHING' || job.status === 'OFFERED' || job.status === 'CANCELLED'
           ? transition({ ...job, technician }, 'OFFERED')
           : job,
       );
@@ -204,6 +234,18 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   const linkChatThread = useCallback(
     (id: string, threadId: string) => {
       update(id, (job) => ({ ...job, chatThreadId: threadId }));
+      linkJobThread(id, threadId);
+    },
+    [linkJobThread, update],
+  );
+
+  const findAnotherTechnician = useCallback(
+    (id: string) => {
+      update(id, (job) => {
+        if (isClosed(job.status)) return job;
+        const { technician: _technician, chatThreadId: _chatThreadId, ...availableJob } = job;
+        return job.status === 'MATCHING' ? availableJob : transition(availableJob, 'MATCHING');
+      });
     },
     [update],
   );
@@ -290,9 +332,20 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     };
     const copy = EVENT_COPY.REQUESTED!;
     base.events = [{ id: makeId('evt'), status: 'REQUESTED', title: copy.title, text: copy.text, at: now }];
-    setJobs((current) => [base, ...current]);
+    const updatedJobs = [base, ...jobsRef.current];
+    jobsRef.current = updatedJobs;
+    setJobs(updatedJobs);
+    addNotification({
+      id: base.events[0]!.id,
+      jobId: base.id,
+      status: 'REQUESTED',
+      service: base.service,
+      title: copy.title,
+      text: copy.text,
+      at: now,
+    });
     return id;
-  }, []);
+  }, [addNotification]);
 
   const value = useMemo<FundiContextValue>(() => {
     const events = jobs
@@ -318,14 +371,16 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       recordSettlement: (id, method) =>
         update(id, (job) => transition({ ...job, settlementMethod: method }, 'PAYMENT_REPORTED')),
       submitRating: (id, rating) => update(id, (job) => ({ ...job, rating })),
-      cancelJob: (id) => advance(id, 'CANCELLED'),
+      cancelJob: (id, recipientPhones) =>
+        update(id, (job) => transition(job, 'CANCELLED'), recipientPhones),
       selectTechnician,
       linkChatThread,
+      findAnotherTechnician,
       markArrived,
       submitDiagnosis,
       completeRepair,
     };
-  }, [addRequest, advance, completeRepair, isHydrated, jobs, linkChatThread, markArrived, selectTechnician, submitDiagnosis, update]);
+  }, [addRequest, advance, completeRepair, findAnotherTechnician, isHydrated, jobs, linkChatThread, markArrived, selectTechnician, submitDiagnosis, update]);
 
   return <FundiContext.Provider value={value}>{children}</FundiContext.Provider>;
 }

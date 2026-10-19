@@ -117,7 +117,7 @@ export default function JobScreen() {
         videos: job.videoUris ?? (job.videoUri ? [job.videoUri] : []),
         thumbnailUri: job.photoUris?.[0] ?? job.photoUri,
         createdAt: job.createdAt ?? now,
-        status: 'PENDING',
+        status: 'ACCEPTED',
       },
       job.technician.phone,
       job.technician.location,

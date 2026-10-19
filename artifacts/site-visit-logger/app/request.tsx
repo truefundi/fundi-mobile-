@@ -20,6 +20,7 @@ import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { normalizeLocationSelection } from '@/lib/location';
+import { persistRequestMedia } from '@/lib/requestMedia';
 
 const MAX_VIDEO_SECONDS = 120;
 const MAX_PHOTOS = 5;
@@ -276,6 +277,14 @@ export default function RequestScreen() {
         coordinates: currentAddressCoords,
         address: address.trim(),
       });
+      const persistedPhotos = await persistRequestMedia(photos.map((photo) => ({
+        uri: photo.uri,
+        name: photo.name,
+        mimeType: photo.mimeType,
+      })));
+      const persistedVideo = video
+        ? (await persistRequestMedia([{ uri: video.uri, name: video.name, mimeType: video.mimeType }]))[0]
+        : undefined;
       const jobId = await addRequest({
         service,
         problem: problem.trim(),
@@ -283,18 +292,18 @@ export default function RequestScreen() {
         locationLabel: address.trim(),
         locationLatitude: selectedLocation.latitude,
         locationLongitude: selectedLocation.longitude,
-        photos: photos.map((photo) => ({
-          uri: photo.uri,
+        photos: photos.map((photo, index) => ({
+          uri: persistedPhotos[index]!,
           sizeBytes: photo.size,
           mimeType: photo.mimeType,
         })),
         videos: video
-          ? [{ uri: video.uri, sizeBytes: video.size, mimeType: video.mimeType }]
+          ? [{ uri: persistedVideo!, sizeBytes: video.size, mimeType: video.mimeType }]
           : [],
-        photoUri: photos[0]?.uri,
+        photoUri: persistedPhotos[0],
         photoSizeBytes: photos[0]?.size,
         photoMimeType: photos[0]?.mimeType,
-        videoUri: video?.uri,
+        videoUri: persistedVideo,
         videoSizeBytes: video?.size,
         videoMimeType: video?.mimeType,
       });
@@ -303,8 +312,8 @@ export default function RequestScreen() {
         pathname: '/select-technician',
         params: { jobId },
       });
-    } catch {
-      setError('Your request could not be sent. Please try again.');
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Your request could not be sent. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

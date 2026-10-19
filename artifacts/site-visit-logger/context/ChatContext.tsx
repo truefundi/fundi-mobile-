@@ -1,6 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { useFundi } from '@/context/FundiContext';
+import { useNotifications } from '@/context/NotificationContext';
+import type { RequestLifecycleStatus } from '@/constants/jobs';
 import type { Coordinates } from '@/lib/location';
 
 export type ServiceRequestDetails = {
@@ -16,7 +19,8 @@ export type ServiceRequestDetails = {
   photos: string[];
   videos: string[];
   createdAt: string;
-  status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'COMPLETED';
+  status: RequestLifecycleStatus;
+  declineReason?: string;
 };
 
 export type ServiceOffer = {
@@ -64,7 +68,7 @@ type ChatContextValue = {
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
   sendMessage: (threadId: string, text: string) => Promise<void>;
-  updateRequestStatus: (threadId: string, requestId: string, status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'COMPLETED') => Promise<void>;
+  updateRequestStatus: (threadId: string, requestId: string, status: RequestLifecycleStatus, reason?: string) => Promise<void>;
   sendPriceOffer: (threadId: string, amount: number, notes?: string, senderRole?: 'client' | 'technician') => Promise<void>;
   respondToOffer: (threadId: string, offerId: string, status: 'ACCEPTED' | 'DECLINED') => Promise<void>;
   acceptRequestThread: (threadId: string) => Promise<void>;
@@ -83,8 +87,14 @@ const ChatContext = createContext<ChatContextValue | undefined>(undefined);
 
 const CHAT_STORAGE_KEY = '@fundi/chats';
 
+function recipientPhones(thread: ChatThread): string[] {
+  return [thread.clientPhone, thread.technicianPhone].filter((phone): phone is string => !!phone);
+}
+
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
+  const { getJob, acceptOffer, cancelJob, findAnotherTechnician } = useFundi();
+  const { addNotification } = useNotifications();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
@@ -113,9 +123,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               thread.ownerPhone === account?.phone,
           )
           .map((thread) => {
+            const messages = thread.messages.map((message) => {
+              if (!message.serviceRequest) return message;
+              const oldStatus = message.serviceRequest.status as string;
+              const status: RequestLifecycleStatus =
+                oldStatus === 'PENDING' ? 'PENDING_RESPONSE' :
+                oldStatus === 'COMPLETED' ? 'ACCEPTED' :
+                oldStatus as RequestLifecycleStatus;
+              return {
+                ...message,
+                serviceRequest: { ...message.serviceRequest, status },
+              };
+            });
+            const hadCompletedRequest = thread.messages.some(
+              (message) => (message.serviceRequest?.status as string | undefined) === 'COMPLETED',
+            );
             if (thread.clientPhone === account?.phone) {
               return {
                 ...thread,
+                messages,
+                isEnded: thread.isEnded || hadCompletedRequest,
                 otherParticipantName: thread.technicianName ?? thread.otherParticipantName,
                 otherParticipantRole: 'technician' as const,
               };
@@ -123,14 +150,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             if (thread.technicianPhone === account?.phone) {
               return {
                 ...thread,
+                messages,
+                isEnded: thread.isEnded || hadCompletedRequest,
                 otherParticipantName: thread.clientName ?? thread.otherParticipantName,
                 otherParticipantRole: 'client' as const,
               };
             }
-            return { ...thread, ownerPhone: account?.phone };
+            return { ...thread, messages, isEnded: thread.isEnded || hadCompletedRequest, ownerPhone: account?.phone };
           });
         if (mounted) setThreads(owned);
-      } catch {
+      } catch (error) {
+        console.error('Unable to load chat threads.', error);
         if (mounted) setThreads([]);
       }
     };
@@ -153,8 +183,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           if (!knownIds.has(thread.id)) merged.push(thread);
         }
         await AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(merged));
-      } catch {
-        await AsyncStorage.setItem(storageKey, JSON.stringify(updated));
+      } catch (sharedStorageError) {
+        console.warn('Shared chat storage is unavailable; using account-scoped storage.', sharedStorageError);
+        try {
+          await AsyncStorage.setItem(storageKey, JSON.stringify(updated));
+        } catch (accountStorageError) {
+          console.error('Unable to persist chat threads.', accountStorageError);
+          throw accountStorageError;
+        }
       }
     }
   };
@@ -190,44 +226,120 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   const updateRequestStatus = useCallback(
-    async (threadId: string, requestId: string, status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'COMPLETED') => {
+    async (threadId: string, requestId: string, status: RequestLifecycleStatus, reason?: string) => {
       const now = new Date().toISOString();
+      const sourceThread = threads.find((thread) => thread.id === threadId);
+      const sourceRequest = sourceThread?.messages.find((message) => message.serviceRequest?.id === requestId)?.serviceRequest;
+      if (!sourceThread || !sourceRequest) throw new Error('This service request is no longer available.');
+      if (sourceThread.isAccepted || sourceRequest.status === 'ACCEPTED') {
+        if (status !== 'CANCELLED') return;
+      }
+      if (sourceThread.isEnded) return;
+      if (sourceRequest.status === status) return;
+      if (status === 'DECLINED' && !reason?.trim()) throw new Error('Provide a reason for declining this request.');
+
+      const reasonText = reason?.trim();
+      const allowedTransitions: Record<RequestLifecycleStatus, RequestLifecycleStatus[]> = {
+        REQUEST_RECEIVED: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
+        PENDING_RESPONSE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
+        OFFER_MADE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
+        ACCEPTED: ['CANCELLED'],
+        DECLINED: [],
+        CANCELLED: [],
+      };
+      if (!allowedTransitions[sourceRequest.status].includes(status)) return;
+      const statusText =
+        status === 'ACCEPTED' ? 'The technician accepted this service request.' :
+        status === 'DECLINED' ? `The technician declined this request${reasonText ? `: ${reasonText}` : '.'}` :
+        status === 'CANCELLED' ? 'The client cancelled this service request.' :
+        status === 'OFFER_MADE' ? 'A service offer was made.' :
+        'The request is waiting for a technician response.';
       const updated = threads.map((thread) => {
-        if (thread.id === threadId) {
-          const updatedMessages = thread.messages.map((msg) => {
-            if (msg.serviceRequest && msg.serviceRequest.id === requestId) {
-              return {
-                ...msg,
+        if (thread.id !== threadId) return thread;
+        const updatedMessages = thread.messages.map((message) =>
+          message.serviceRequest?.id === requestId
+            ? {
+                ...message,
                 serviceRequest: {
-                  ...msg.serviceRequest,
+                  ...message.serviceRequest,
                   status,
+                  ...(status === 'DECLINED' && reasonText ? { declineReason: reasonText } : {}),
                 },
-              };
-            }
-            return msg;
-          });
-          return {
-            ...thread,
-            isAccepted: status === 'ACCEPTED' ? true : thread.isAccepted,
-            isEnded:
-              status === 'COMPLETED' || status === 'CANCELLED' || status === 'DECLINED'
-                ? true
-                : thread.isEnded,
-            lastMessage: `Request status updated to ${status}`,
-            lastMessageTime: now,
-            messages: updatedMessages,
-          };
-        }
-        return thread;
+              }
+            : message,
+        );
+        return {
+          ...thread,
+          isAccepted: status === 'ACCEPTED' ? true : status === 'CANCELLED' || status === 'DECLINED' ? false : thread.isAccepted,
+          isEnded: status === 'CANCELLED' || status === 'DECLINED' ? true : status === 'ACCEPTED' ? false : thread.isEnded,
+          lastMessage: statusText,
+          lastMessageTime: now,
+          messages: [
+            ...updatedMessages,
+            {
+              id: `msg-status-${Date.now()}`,
+              senderId: 'system',
+              senderName: 'System',
+              senderRole: account?.role === 'TECHNICIAN' ? 'technician' as const : 'client' as const,
+              text: statusText,
+              timestamp: now,
+            },
+          ],
+        };
       });
       await persistThreads(updated);
+
+      const jobId = sourceThread.jobId;
+      const relatedJob = jobId ? getJob(jobId) : undefined;
+      const updatesJob = !!relatedJob && relatedJob.status === 'OFFERED' &&
+        (status === 'ACCEPTED' || status === 'DECLINED');
+      const cancelsJob = !!relatedJob && ['REQUESTED', 'MATCHING', 'OFFERED'].includes(relatedJob.status) &&
+        status === 'CANCELLED';
+      if ((updatesJob || cancelsJob) && jobId) {
+        if (status === 'ACCEPTED') acceptOffer(jobId);
+        else if (status === 'DECLINED') findAnotherTechnician(jobId);
+        else if (cancelsJob) {
+          const job = getJob(jobId);
+          if (job && job.status !== 'CANCELLED') cancelJob(jobId, recipientPhones(sourceThread));
+        }
+      }
+
+      const title =
+        status === 'ACCEPTED' ? 'Technician accepted your request' :
+        status === 'DECLINED' ? 'Technician declined your request' :
+        status === 'CANCELLED' ? 'Request cancelled' :
+        status === 'OFFER_MADE' ? 'Technician sent an offer' :
+        'Request is awaiting a response';
+      if (!(updatesJob && status === 'ACCEPTED') && !cancelsJob) {
+        addNotification({
+          id: `request-${threadId}-${Date.now()}`,
+          jobId: sourceThread.jobId,
+          threadId,
+          status,
+          service: sourceRequest.serviceName,
+          title,
+          text: statusText,
+          at: now,
+          recipientPhones: recipientPhones(sourceThread),
+        });
+      }
     },
-    [threads],
+    [acceptOffer, account?.role, addNotification, cancelJob, findAnotherTechnician, getJob, threads],
   );
 
   const sendPriceOffer = useCallback(
     async (threadId: string, amount: number, notes?: string, senderRoleOverride?: 'client' | 'technician') => {
       if (!account) return;
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter an offer amount greater than zero.');
+      const sourceThread = threads.find((thread) => thread.id === threadId);
+      if (!sourceThread) throw new Error('This conversation is no longer available.');
+      if (
+        sourceThread.messages.some((message) => message.priceOffer?.status === 'ACCEPTED')
+      ) {
+        throw new Error('An offer has already been accepted. No further offers can be made.');
+      }
+      if (sourceThread.isEnded) throw new Error('This request has ended and cannot receive new offers.');
+
       const now = new Date().toISOString();
       const senderRole = senderRoleOverride ?? (account.role === 'TECHNICIAN' ? 'technician' : 'client');
       
@@ -268,41 +380,64 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             ...thread,
             lastMessage: `Service offer: RWF ${amount.toLocaleString()}`,
             lastMessageTime: now,
-            messages: [...updatedMessages, newMessage],
+            messages: updatedMessages.map((message) =>
+              message.serviceRequest
+                ? { ...message, serviceRequest: { ...message.serviceRequest, status: 'OFFER_MADE' as const } }
+                : message,
+            ).concat(newMessage),
           };
         }
         return thread;
       });
 
       await persistThreads(updated);
+      const request = sourceThread.messages.find((message) => message.serviceRequest)?.serviceRequest;
+      addNotification({
+        id: `request-${threadId}-${Date.now()}`,
+        jobId: sourceThread.jobId,
+        threadId,
+        status: 'OFFER_MADE',
+        service: request?.serviceName ?? (sourceThread.jobId ? getJob(sourceThread.jobId)?.service : undefined) ?? 'Service offer',
+        title: 'A service offer was made',
+        text: `A service offer of RWF ${amount.toLocaleString()} is ready to review.`,
+        at: now,
+        recipientPhones: recipientPhones(sourceThread),
+      });
     },
-    [account, threads],
+    [account, addNotification, getJob, threads],
   );
 
   const respondToOffer = useCallback(
     async (threadId: string, offerId: string, status: 'ACCEPTED' | 'DECLINED') => {
       const now = new Date().toISOString();
-      let agreedPriceVal: number | undefined = undefined;
+      const sourceThread = threads.find((thread) => thread.id === threadId);
+      const sourceOffer = sourceThread?.messages.find((message) => message.priceOffer?.id === offerId)?.priceOffer;
+      if (!sourceThread || !sourceOffer || sourceOffer.status !== 'PENDING') return;
+      if (
+        status === 'ACCEPTED' &&
+        sourceThread.messages.some((message) => message.priceOffer?.status === 'ACCEPTED')
+      ) return;
 
       const updated = threads.map((thread) => {
         if (thread.id === threadId) {
-          let targetAmount = 0;
+          const targetAmount = sourceOffer.amount;
           const updatedMessages = thread.messages.map((msg) => {
             if (msg.priceOffer && msg.priceOffer.id === offerId) {
-              targetAmount = msg.priceOffer.amount;
-              if (status === 'ACCEPTED') {
-                agreedPriceVal = targetAmount;
-              }
               return {
                 ...msg,
                 priceOffer: { ...msg.priceOffer, status },
               };
+            }
+            if (status === 'ACCEPTED' && msg.serviceRequest) {
+              return { ...msg, serviceRequest: { ...msg.serviceRequest, status: 'ACCEPTED' as const } };
             }
             return msg;
           });
 
           return {
             ...thread,
+            isAccepted: status === 'ACCEPTED' ? true : thread.isAccepted,
+            isEnded: status === 'ACCEPTED' ? false : thread.isEnded,
             agreedPrice: status === 'ACCEPTED' ? targetAmount : thread.agreedPrice,
             lastMessage: status === 'ACCEPTED' ? `Offer accepted: RWF ${targetAmount.toLocaleString()}` : 'Offer declined',
             lastMessageTime: now,
@@ -313,12 +448,33 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       await persistThreads(updated);
+      if (status === 'ACCEPTED') {
+        const request = sourceThread.messages.find((message) => message.serviceRequest)?.serviceRequest;
+        addNotification({
+          id: `request-${threadId}-${Date.now()}`,
+          jobId: sourceThread.jobId,
+          threadId,
+          status: 'ACCEPTED',
+          service: request?.serviceName ?? (sourceThread.jobId ? getJob(sourceThread.jobId)?.service : undefined) ?? 'Service offer',
+          title: 'Service offer accepted',
+          text: `The service offer of RWF ${sourceOffer.amount.toLocaleString()} was accepted.`,
+          at: now,
+          recipientPhones: recipientPhones(sourceThread),
+        });
+      }
     },
-    [threads],
+    [addNotification, getJob, threads],
   );
 
   const acceptRequestThread = useCallback(
     async (threadId: string) => {
+      const request = threads
+        .find((thread) => thread.id === threadId)
+        ?.messages.find((message) => message.serviceRequest)?.serviceRequest;
+      if (request) {
+        await updateRequestStatus(threadId, request.id, 'ACCEPTED');
+        return;
+      }
       const now = new Date().toISOString();
       const updated = threads.map((item) =>
         item.id === threadId
@@ -343,7 +499,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       );
       await persistThreads(updated);
     },
-    [threads],
+    [threads, updateRequestStatus],
   );
 
   const endRequestThread = useCallback(
@@ -385,7 +541,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       technicianLocation?: Coordinates,
     ) => {
       const existing = jobId
-        ? threads.find((thread) => thread.jobId === jobId)
+        ? threads.find((thread) => thread.jobId === jobId && !thread.isEnded)
         : threads.find((thread) => thread.otherParticipantName === otherName);
       if (existing) return existing.id;
 
@@ -418,7 +574,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         clientName: account?.role === 'TECHNICIAN' ? otherName : account?.name,
         technicianName: account?.role === 'TECHNICIAN' ? account.name : otherName,
         technicianLocation,
-        isAccepted: false,
+        isAccepted: requestDetails?.status === 'ACCEPTED',
         isEnded: false,
         otherParticipantName: otherName,
         otherParticipantRole: role,
@@ -427,10 +583,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         messages: [initialMessage],
       };
 
-      void persistThreads([...threads, newThread]);
+      void persistThreads([...threads, newThread]).catch((error: unknown) => {
+        console.error('Unable to persist the new chat thread.', error);
+      });
+      if (requestDetails?.status === 'REQUEST_RECEIVED' || requestDetails?.status === 'PENDING_RESPONSE') {
+        addNotification({
+          id: `request-${newThreadId}-pending`,
+          jobId,
+          threadId: newThreadId,
+          status: requestDetails.status,
+          service: requestDetails.serviceName,
+          title: 'Request received by technician',
+          text: 'Your request is waiting in the selected technician’s chat.',
+          at: now,
+          recipientPhones: recipientPhones(newThread),
+        });
+      }
       return newThreadId;
     },
-    [threads, account],
+    [threads, account, addNotification],
   );
 
   const value = useMemo(

@@ -17,13 +17,15 @@ type Props = {
   size?: 'large' | 'small';
   testID?: string;
   style?: ViewStyle;
+  /** Override the label color, e.g. white text on a solid background. */
+  textColor?: string;
 };
 
 /**
  * The single call-to-action used across the journey. Solid fills only —
  * the Fundi brand rules exclude gradients everywhere.
  */
-export function Button({ label, onPress, variant = 'primary', disabled, loading, icon, size = 'large', testID, style }: Props) {
+export function Button({ label, onPress, variant = 'primary', disabled, loading, icon, size = 'large', testID, style, textColor }: Props) {
   const colors = useColors();
   const isInactive = disabled || loading;
   const small = size === 'small';
@@ -35,7 +37,8 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading,
     danger: { background: colors.card, text: colors.destructive, border: colors.destructive },
   };
   const tone = palette[variant];
-  const textColor = isInactive ? colors.mutedForeground : tone.text;
+  const defaultTextColor = isInactive ? colors.mutedForeground : tone.text;
+  const textColorValue = textColor ?? defaultTextColor;
 
   return (
     <Pressable
@@ -57,11 +60,11 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading,
       ]}
     >
       <View style={styles.row}>
-        {loading ? <ActivityIndicator size="small" color={textColor} /> : null}
-        <Text numberOfLines={1} style={[styles.label, small && styles.smallLabel, { color: textColor }]}>
+        {loading ? <ActivityIndicator size="small" color={textColorValue} /> : null}
+        <Text numberOfLines={1} style={[styles.label, small && styles.smallLabel, { color: textColorValue }]}>
           {label}
         </Text>
-        {icon && !loading ? <Ionicons name={icon} size={small ? 16 : 18} color={textColor} /> : null}
+        {icon && !loading ? <Ionicons name={icon} size={small ? 16 : 18} color={textColorValue} /> : null}
       </View>
     </Pressable>
   );

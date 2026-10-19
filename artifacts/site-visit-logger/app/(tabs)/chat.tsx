@@ -22,6 +22,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useColors } from '@/hooks/useColors';
 import { useChat, type ChatMessage, type ServiceRequestDetails } from '@/context/ChatContext';
+import { useFundi } from '@/context/FundiContext';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { Button } from '@/components/ui/Button';
 import { PageHeading } from '@/components/ui/PageHeading';
@@ -29,6 +30,7 @@ import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollV
 import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { distanceMeters, formatDistance, googleMapsUrl } from '@/lib/location';
+import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
 
 function StableRequestImage({
   uri,
@@ -40,10 +42,11 @@ function StableRequestImage({
   fallbackStyle: StyleProp<ViewStyle>;
 }) {
   const colors = useColors();
-  const source = useMemo(() => ({ uri }), [uri]);
+  const resolvedUri = useRequestMediaUri(uri);
+  const source = useMemo(() => (resolvedUri ? { uri: resolvedUri } : null), [resolvedUri]);
   const [failed, setFailed] = useState(false);
 
-  if (failed) {
+  if (!source || failed) {
     return (
       <View style={[fallbackStyle, { backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }]}>
         <Ionicons name="image-outline" size={22} color={colors.mutedForeground} />
@@ -55,6 +58,12 @@ function StableRequestImage({
 }
 
 function RequestVideo({ uri }: { uri: string }) {
+  const resolvedUri = useRequestMediaUri(uri);
+  if (!resolvedUri) return <View style={styles.videoFrame}><ActivityIndicator /></View>;
+  return <ResolvedRequestVideo uri={resolvedUri} />;
+}
+
+function ResolvedRequestVideo({ uri }: { uri: string }) {
   const colors = useColors();
   const player = useVideoPlayer(uri, (videoPlayer) => {
     videoPlayer.loop = false;
@@ -115,12 +124,25 @@ export default function ChatTabScreen() {
   const { threadId: requestedThreadId } = useLocalSearchParams<{ threadId?: string }>();
   const { account } = useAuth();
   const { profile: technicianProfile } = useWork();
-  const { threads, activeThreadId, setActiveThreadId, sendMessage, updateRequestStatus, sendPriceOffer, respondToOffer } = useChat();
+  const {
+    threads,
+    activeThreadId,
+    setActiveThreadId,
+    sendMessage,
+    updateRequestStatus,
+    sendPriceOffer,
+    respondToOffer,
+    endRequestThread,
+  } = useChat();
+  const { findAnotherTechnician } = useFundi();
 
   const [replyText, setReplyText] = useState('');
   const [selectedRequestModal, setSelectedRequestModal] = useState<ServiceRequestDetails | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [mapError, setMapError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [declineRequestTarget, setDeclineRequestTarget] = useState<{ threadId: string; requestId: string } | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
 
   const [counterOfferModal, setCounterOfferModal] = useState(false);
   const [counterAmount, setCounterAmount] = useState('');
@@ -131,6 +153,13 @@ export default function ChatTabScreen() {
   const [techOfferNotes, setTechOfferNotes] = useState('');
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+  const pendingRequest = activeThread?.messages.find(
+    (message) =>
+      message.serviceRequest &&
+      ['REQUEST_RECEIVED', 'PENDING_RESPONSE'].includes(message.serviceRequest.status),
+  )?.serviceRequest;
+  const hasAcceptedOffer = activeThread?.messages.some((message) => message.priceOffer?.status === 'ACCEPTED') === true;
+  const canMakeOffer = !!activeThread && !activeThread.isEnded && !hasAcceptedOffer;
   const userRole = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
   const technicianLocation =
     account?.role === 'TECHNICIAN' &&
@@ -173,18 +202,73 @@ export default function ChatTabScreen() {
 
   const handleSendTechOffer = async () => {
     if (!activeThreadId || !techOfferAmount) return;
-    await sendPriceOffer(activeThreadId, parseFloat(techOfferAmount), techOfferNotes);
-    setTechOfferAmount('');
-    setTechOfferNotes('');
-    setTechOfferModal(false);
+    setActionError('');
+    try {
+      await sendPriceOffer(activeThreadId, parseFloat(techOfferAmount), techOfferNotes);
+      setTechOfferAmount('');
+      setTechOfferNotes('');
+      setTechOfferModal(false);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not send the offer.');
+    }
   };
 
   const handleSendCounterOffer = async () => {
     if (!activeThreadId || !counterAmount) return;
-    await sendPriceOffer(activeThreadId, parseFloat(counterAmount), counterNotes, 'client');
-    setCounterAmount('');
-    setCounterNotes('');
-    setCounterOfferModal(false);
+    setActionError('');
+    try {
+      await sendPriceOffer(activeThreadId, parseFloat(counterAmount), counterNotes, 'client');
+      setCounterAmount('');
+      setCounterNotes('');
+      setCounterOfferModal(false);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not send the counter offer.');
+    }
+  };
+
+  const handleDeclineRequest = async () => {
+    if (!declineRequestTarget || !declineReason.trim()) return;
+    setActionError('');
+    try {
+      await updateRequestStatus(declineRequestTarget.threadId, declineRequestTarget.requestId, 'DECLINED', declineReason);
+      setDeclineRequestTarget(null);
+      setDeclineReason('');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not decline the request.');
+    }
+  };
+
+  const handleFindAnotherTechnician = async (request: ServiceRequestDetails) => {
+    if (!activeThread) return;
+    setActionError('');
+    try {
+      if (hasAcceptedOffer) {
+        setActionError('Fees have already been agreed with this technician. Please contact support to change technicians.');
+        return;
+      }
+      if (request.status !== 'DECLINED' && request.status !== 'CANCELLED') {
+        await updateRequestStatus(activeThread.id, request.id, 'CANCELLED');
+      }
+      const jobId = activeThread.jobId;
+      if (jobId) {
+        findAnotherTechnician(jobId);
+        router.push({ pathname: '/select-technician', params: { jobId } });
+      } else {
+        router.push({ pathname: '/request', params: { service: request.serviceName } });
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not find another technician.');
+    }
+  };
+
+  const handleCancelRequest = async (request: ServiceRequestDetails) => {
+    if (!activeThread) return;
+    setActionError('');
+    try {
+      await updateRequestStatus(activeThread.id, request.id, 'CANCELLED');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not cancel the request.');
+    }
   };
 
   const groupedMessages: { dateLabel: string; messages: ChatMessage[] }[] = [];
@@ -240,6 +324,11 @@ export default function ChatTabScreen() {
                         <Text style={[styles.agreedTag, { color: colors.success }]}>RWF {item.agreedPrice.toLocaleString()} Agreed</Text>
                       ) : null}
                     </View>
+                    {item.messages.some(
+                      (message) => message.serviceRequest?.status === 'REQUEST_RECEIVED' && !item.isEnded,
+                    ) ? (
+                      <Text style={[styles.requestReceivedBadge, { color: colors.primary }]}>REQUEST_RECEIVED</Text>
+                    ) : null}
                     <Text numberOfLines={1} style={[styles.lastMessage, { color: colors.mutedForeground }]}>{item.lastMessage}</Text>
                   </View>
                   <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
@@ -324,6 +413,11 @@ export default function ChatTabScreen() {
                               </Text>
 
                               <Text numberOfLines={2} style={[styles.reqProblem, { color: colors.mutedForeground }]}>{msg.serviceRequest.problem}</Text>
+                              {msg.serviceRequest.declineReason ? (
+                                <Text style={[styles.reqProblem, { color: colors.destructive }]}>
+                                  Reason declined: {msg.serviceRequest.declineReason}
+                                </Text>
+                              ) : null}
 
                               <Pressable onPress={() => setSelectedRequestModal(msg.serviceRequest ?? null)} style={{ marginTop: 4 }}>
                                 <Text style={[styles.viewDetailsLink, { color: colors.primary }]}>View Details →</Text>
@@ -331,10 +425,20 @@ export default function ChatTabScreen() {
                             </View>
                           </View>
 
-                          {userRole === 'technician' && msg.serviceRequest.status === 'PENDING' && (
+                          {userRole === 'technician' && ['REQUEST_RECEIVED', 'PENDING_RESPONSE'].includes(msg.serviceRequest.status) && !activeThread.isEnded && (
                             <View style={styles.actionButtonRow}>
                               <Button label="Accept" size="small" onPress={() => updateRequestStatus(activeThread.id, msg.serviceRequest!.id, 'ACCEPTED')} style={{ flex: 1 }} />
-                              <Button label="Decline" variant="outline" size="small" onPress={() => updateRequestStatus(activeThread.id, msg.serviceRequest!.id, 'DECLINED')} style={{ flex: 1 }} />
+                              <Button
+                                label="Decline"
+                                variant="outline"
+                                size="small"
+                                onPress={() => {
+                                  setActionError('');
+                                  setDeclineReason('');
+                                  setDeclineRequestTarget({ threadId: activeThread.id, requestId: msg.serviceRequest!.id });
+                                }}
+                                style={{ flex: 1 }}
+                              />
                             </View>
                           )}
 
@@ -346,13 +450,8 @@ export default function ChatTabScreen() {
                                   Status: <Text style={{ fontWeight: '700' }}>{msg.serviceRequest.status}</Text>
                                 </Text>
                               </View>
-                              {msg.serviceRequest.status === 'PENDING' && (
-                                <Pressable onPress={() => updateRequestStatus(activeThread.id, msg.serviceRequest!.id, 'CANCELLED')}>
-                                  <Text style={[styles.cancelTextBtn, { color: colors.destructive }]}>Cancel Request</Text>
-                                </Pressable>
-                              )}
-                              {msg.serviceRequest.status === 'ACCEPTED' && (
-                                <Pressable onPress={() => updateRequestStatus(activeThread.id, msg.serviceRequest!.id, 'COMPLETED')}>
+                              {msg.serviceRequest.status === 'ACCEPTED' && !activeThread.isEnded && (
+                                <Pressable onPress={() => endRequestThread(activeThread.id)}>
                                   <Text style={[styles.cancelTextBtn, { color: colors.primary }]}>End Request</Text>
                                 </Pressable>
                               )}
@@ -370,8 +469,19 @@ export default function ChatTabScreen() {
 
                           {userRole === 'client' && msg.priceOffer.status === 'PENDING' && (
                             <View style={styles.offerActionColumn}>
-                              <Button label="Accept Offer" size="small" onPress={() => respondToOffer(activeThread.id, msg.priceOffer!.id, 'ACCEPTED')} />
-                              <Button label="Counter Offer" variant="outline" size="small" onPress={() => setCounterOfferModal(true)} />
+                              <Button
+                                label="Accept Offer"
+                                size="small"
+                                disabled={hasAcceptedOffer}
+                                onPress={() => respondToOffer(activeThread.id, msg.priceOffer!.id, 'ACCEPTED')}
+                              />
+                              <Button
+                                label="Counter Offer"
+                                variant="outline"
+                                size="small"
+                                disabled={!canMakeOffer}
+                                onPress={() => setCounterOfferModal(true)}
+                              />
                               <Pressable onPress={() => respondToOffer(activeThread.id, msg.priceOffer!.id, 'DECLINED')} style={{ alignSelf: 'center', marginTop: 6 }}>
                                 <Text style={{ color: colors.destructive, fontWeight: '600', fontSize: 13 }}>Decline Offer</Text>
                               </Pressable>
@@ -383,6 +493,11 @@ export default function ChatTabScreen() {
                               <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 12 }}>Offer {msg.priceOffer.status}</Text>
                             </View>
                           )}
+                          {hasAcceptedOffer && msg.priceOffer.status === 'PENDING' ? (
+                            <View style={[styles.badgeStatus, { backgroundColor: colors.secondary }]}>
+                              <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 12 }}>Further offers are locked</Text>
+                            </View>
+                          ) : null}
                           <Text style={[styles.timestampText, { color: colors.mutedForeground }]}>{timeFormatted}</Text>
                         </View>
                       ) : (
@@ -401,10 +516,41 @@ export default function ChatTabScreen() {
 
           {userRole === 'technician' && (
             <View style={[styles.techTopBarAction, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-              <Button label="Send Service Offer" size="small" icon="pricetag-outline" onPress={() => setTechOfferModal(true)} style={{ flex: 1 }} />
+              <Button
+                label={hasAcceptedOffer ? 'Offers Locked' : 'Send Service Offer'}
+                size="small"
+                icon="pricetag-outline"
+                disabled={!canMakeOffer}
+                onPress={() => setTechOfferModal(true)}
+                style={{ flex: 1 }}
+              />
             </View>
           )}
 
+{userRole === 'client' && pendingRequest && !activeThread?.isEnded ? (
+            <View style={[styles.pendingRequestActions, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+              <Button
+                label="Cancel Request"
+                variant="danger"
+                onPress={() => void handleCancelRequest(pendingRequest)}
+                textColor="#ffffff"
+                style={{ flex: 1, backgroundColor: colors.destructive, borderColor: colors.destructive }}
+              />
+              <Button
+                label="Cancel & Find Another Technician"
+                variant="outline"
+                onPress={() => void handleFindAnotherTechnician(pendingRequest)}
+                textColor={colors.accentForeground}
+                style={{ flex: 1, backgroundColor: colors.accent, borderColor: colors.accent }}
+              />
+            </View>
+          ) : null}
+
+          {actionError ? (
+            <Text accessibilityLiveRegion="polite" style={[styles.actionError, { color: colors.destructive, backgroundColor: colors.card }]}>
+              {actionError}
+            </Text>
+          ) : null}
           <View style={[styles.replyBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 14 }]}>
             <TextInput
               placeholder="Type a message..."
@@ -580,6 +726,50 @@ export default function ChatTabScreen() {
         </View>
       </Modal>
 
+      <Modal
+        visible={declineRequestTarget !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setDeclineRequestTarget(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Decline this request?</Text>
+            <Text style={[styles.modalSub, { color: colors.mutedForeground }]}>
+              Tell the client why you cannot take this job. They can use the reason to find another technician.
+            </Text>
+            <TextInput
+              testID="request-decline-reason"
+              accessibilityLabel="Reason for declining"
+              placeholder="Enter your reason"
+              placeholderTextColor={colors.mutedForeground}
+              value={declineReason}
+              onChangeText={setDeclineReason}
+              multiline
+              style={[
+                styles.inputField,
+                { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border, minHeight: 90 },
+              ]}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              <Button
+                label="Keep request"
+                variant="outline"
+                onPress={() => setDeclineRequestTarget(null)}
+                style={{ flex: 1 }}
+              />
+              <Button
+                label="Decline request"
+                variant="danger"
+                disabled={!declineReason.trim()}
+                onPress={handleDeclineRequest}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -596,6 +786,7 @@ const styles = StyleSheet.create({
   avatarBadge: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   threadRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   threadName: { fontFamily: 'Inter_600SemiBold', fontSize: 15 },
+  requestReceivedBadge: { fontFamily: 'Inter_600SemiBold', fontSize: 9, marginTop: 2 },
   agreedTag: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   lastMessage: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 3 },
   chatHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: 1 },
@@ -618,7 +809,7 @@ const styles = StyleSheet.create({
   reqProblem: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 2 },
   viewDetailsLink: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 4 },
   actionButtonRow: { flexDirection: 'row', gap: 10, borderTopWidth: 1, borderTopColor: '#00000010', paddingTop: 10 },
-  statusFooterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#00000010', paddingTop: 10 },
+  statusFooterRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: '#00000010', paddingTop: 10 },
   statusIndicatorWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusText: { fontFamily: 'Inter_500Medium', fontSize: 13 },
   cancelTextBtn: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
@@ -633,8 +824,10 @@ const styles = StyleSheet.create({
   standardText: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
   timestampTextSecondary: { fontFamily: 'Inter_400Regular', fontSize: 10, textAlign: 'right' },
   techTopBarAction: { paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, flexDirection: 'row' },
+  pendingRequestActions: { paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, gap: 8 },
   replyBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1, gap: 10 },
   replyInput: { flex: 1, borderWidth: 1, borderRadius: 20, paddingHorizontal: 16, height: 42, fontSize: 14 },
+  actionError: { fontFamily: 'Inter_500Medium', fontSize: 12, width: '100%', marginBottom: 6 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
   modalCard: { borderWidth: 1, borderRadius: 20, padding: 20, maxHeight: '80%' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },

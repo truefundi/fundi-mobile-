@@ -27,6 +27,14 @@ export type JobStatus =
   | 'CANCELLED'
   | 'DISPUTED';
 
+export type RequestLifecycleStatus =
+  | 'REQUEST_RECEIVED'
+  | 'PENDING_RESPONSE'
+  | 'OFFER_MADE'
+  | 'ACCEPTED'
+  | 'DECLINED'
+  | 'CANCELLED';
+
 /** Customer-facing wording for each status. */
 export const STATUS_LABEL: Record<JobStatus, string> = {
   REQUESTED: 'Request sent',
