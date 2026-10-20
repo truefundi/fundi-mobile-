@@ -21,7 +21,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useColors } from '@/hooks/useColors';
-import { useChat, type ChatMessage, type ServiceRequestDetails } from '@/context/ChatContext';
+import { useChat, type ChatMessage, type ChatThread, type ServiceRequestDetails } from '@/context/ChatContext';
 import { useFundi } from '@/context/FundiContext';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { Button } from '@/components/ui/Button';
@@ -31,7 +31,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { distanceMeters, formatDistance, googleMapsUrl, canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
-import { formatCancellationNotice, inferCancelledRole, isCancellationEvent } from '@/lib/cancellation';
+import { extractFirstName, formatCancellationNotice, inferCancelledRole, isCancellationEvent } from '@/lib/cancellation';
 
 function StableRequestImage({
   uri,
@@ -118,6 +118,157 @@ function getDateSeparatorLabel(dateString: string): string {
   return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+/**
+ * Smart relative timestamp for the conversation preview row.
+ * - Today: clock time (e.g. "14:35")
+ * - Yesterday: "Yesterday"
+ * - 2-7 days ago: weekday name (e.g. "Monday", "Wed")
+ * - Older: short date (e.g. "12/10/26")
+ */
+function formatChatTime(isoString: string): string {
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return '';
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0 || diffDays === 0) {
+    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays <= 7) {
+    return date.toLocaleDateString(undefined, { weekday: 'short' });
+  }
+  return date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+
+type ConversationPreview = {
+  thread: ChatThread;
+  name: string;
+  avatarInitial: string;
+  avatarUri?: string;
+  snippet: string;
+  timeLabel: string;
+  unread: boolean;
+  navigatesToSelectTechnician: boolean;
+  selectTechnicianParams?: {
+    jobId?: string;
+    category?: string;
+    service?: string;
+    description?: string;
+    problem?: string;
+    location?: string;
+    address?: string;
+    latitude?: string;
+    longitude?: string;
+  };
+};
+
+function getConversationPreview(
+  thread: ChatThread,
+  currentUserId?: string,
+  currentUserRole: 'client' | 'technician' = 'client',
+  currentUserName?: string,
+): ConversationPreview {
+  const isMe = (senderId?: string) => Boolean(senderId && currentUserId && senderId === currentUserId);
+
+  const latestRequest = thread.messages
+    .filter((m) => m.serviceRequest)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.serviceRequest;
+
+  const latestOffer = thread.messages
+    .filter((m) => m.priceOffer)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.priceOffer;
+
+  const otherFirstName = extractFirstName(thread.otherParticipantName);
+
+  let snippet = '';
+  let navigatesToSelectTechnician = false;
+  let selectTechnicianParams: ConversationPreview['selectTechnicianParams'];
+
+  const requestStatus = latestRequest?.status;
+  const isCancelled = requestStatus === 'CANCELLED';
+  const isDeclined = requestStatus === 'DECLINED';
+
+  if (requestStatus === 'ACCEPTED') {
+    snippet = latestOffer
+      ? `Offer accepted: ${latestOffer.currency} ${latestOffer.amount.toLocaleString()}`
+      : `Offer accepted • ${latestRequest?.serviceName ?? ''}`;
+  } else if (isDeclined) {
+    const declinedByMe =
+      isMe(latestRequest?.cancelledById) ||
+      thread.cancelledByRole === currentUserRole ||
+      (thread.cancelledByName && currentUserName && thread.cancelledByName.trim().toLowerCase() === currentUserName.trim().toLowerCase());
+    snippet = declinedByMe ? 'Declined by you' : `Declined by ${otherFirstName}`;
+    navigatesToSelectTechnician = true;
+    if (latestRequest) {
+      selectTechnicianParams = {
+        category: latestRequest.serviceName,
+        service: latestRequest.serviceName,
+        description: latestRequest.problem,
+        problem: latestRequest.problem,
+        location: latestRequest.address,
+        address: latestRequest.address,
+        ...(latestRequest.latitude !== undefined ? { latitude: String(latestRequest.latitude) } : {}),
+        ...(latestRequest.longitude !== undefined ? { longitude: String(latestRequest.longitude) } : {}),
+      };
+    }
+  } else if (isCancelled) {
+    const cancelledByMe =
+      isMe(latestRequest?.cancelledById) ||
+      thread.cancelledByRole === currentUserRole ||
+      (thread.cancelledByName && currentUserName && thread.cancelledByName.trim().toLowerCase() === currentUserName.trim().toLowerCase());
+    snippet = cancelledByMe ? 'Cancelled by you' : `Cancelled by ${otherFirstName}`;
+    navigatesToSelectTechnician = true;
+    if (latestRequest) {
+      selectTechnicianParams = {
+        category: latestRequest.serviceName,
+        service: latestRequest.serviceName,
+        description: latestRequest.problem,
+        problem: latestRequest.problem,
+        location: latestRequest.address,
+        address: latestRequest.address,
+        ...(latestRequest.latitude !== undefined ? { latitude: String(latestRequest.latitude) } : {}),
+        ...(latestRequest.longitude !== undefined ? { longitude: String(latestRequest.longitude) } : {}),
+      };
+    }
+  } else if (requestStatus === 'OFFER_MADE' && latestOffer) {
+    snippet =
+      currentUserRole === 'technician'
+        ? `Offer sent: ${latestOffer.currency} ${latestOffer.amount.toLocaleString()}`
+        : `Offer received: ${latestOffer.currency} ${latestOffer.amount.toLocaleString()}`;
+  } else if (requestStatus === 'PENDING_RESPONSE') {
+    snippet =
+      currentUserRole === 'technician'
+        ? `New request: ${latestRequest?.serviceName ?? ''}`
+        : 'Waiting for technician response...';
+  } else {
+    // Active message flow — latest standard user message, prefixed with "You: " if sent by current user.
+    const standardMessages = thread.messages.filter((m) => !m.serviceRequest && !m.priceOffer);
+    const latest = standardMessages[standardMessages.length - 1];
+    if (latest) {
+      snippet = isMe(latest.senderId) ? `You: ${latest.text}` : latest.text;
+    } else if (latestRequest) {
+      snippet = `New request: ${latestRequest.serviceName}`;
+    } else {
+      snippet = thread.lastMessage;
+    }
+  }
+
+  const unread = false;
+
+  return {
+    thread,
+    name: thread.otherParticipantName,
+    avatarInitial: (thread.otherParticipantName?.trim()?.[0] || '?').toUpperCase(),
+    snippet,
+    timeLabel: formatChatTime(thread.lastMessageTime),
+    unread,
+    navigatesToSelectTechnician,
+    selectTechnicianParams,
+  };
+}
+
 export default function ChatTabScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -162,6 +313,30 @@ export default function ChatTabScreen() {
   )?.serviceRequest;
   const hasAcceptedOffer = activeThread?.messages.some((message) => message.priceOffer?.status === 'ACCEPTED') === true;
   const userRole = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
+
+  // Sort threads by most recent lastMessageTime
+  const sortedThreads = useMemo(() => {
+    return [...threads].sort(
+      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+    );
+  }, [threads]);
+
+  const threadPreviews = useMemo(() => {
+    return sortedThreads.map((thread) =>
+      getConversationPreview(thread, account?.id, userRole, account?.name),
+    );
+  }, [sortedThreads, account?.id, userRole, account?.name]);
+
+  const handlePreviewPress = (preview: ConversationPreview) => {
+    if (preview.navigatesToSelectTechnician && preview.selectTechnicianParams) {
+      router.push({
+        pathname: '/select-technician',
+        params: preview.selectTechnicianParams,
+      });
+      return;
+    }
+    setActiveThreadId(preview.thread.id);
+  };
 
   const isThreadTerminated =
     Boolean(activeThread?.isEnded) ||
@@ -208,13 +383,6 @@ export default function ChatTabScreen() {
     technicianProfile.baseLongitude !== undefined
       ? { latitude: technicianProfile.baseLatitude, longitude: technicianProfile.baseLongitude }
       : activeThread?.technicianLocation;
-
-  // Sort threads by most recent lastMessageTime
-  const sortedThreads = useMemo(() => {
-    return [...threads].sort(
-      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
-    );
-  }, [threads]);
 
   const openRequestMap = async (target?: ServiceRequestDetails | null) => {
     const item = target ?? selectedRequestModal;
@@ -348,7 +516,7 @@ export default function ChatTabScreen() {
             subtitle="Settle service pricing and review requests directly with clients and specialists."
           />
 
-          {sortedThreads.length === 0 ? (
+{sortedThreads.length === 0 ? (
             <View style={[styles.emptyContainer, { borderColor: colors.border, backgroundColor: colors.card }]}>
               <View style={[styles.emptyIconWrap, { backgroundColor: colors.secondary }]}>
                 <Ionicons name="chatbubbles-outline" size={32} color={colors.primary} />
@@ -360,42 +528,37 @@ export default function ChatTabScreen() {
             </View>
           ) : (
             <View style={styles.listWrap}>
-              {sortedThreads.map((item) => (
+              {threadPreviews.map((preview) => (
                 <Pressable
-                  key={item.id}
-                  onPress={() => setActiveThreadId(item.id)}
+                  key={preview.thread.id}
+                  onPress={() => handlePreviewPress(preview)}
                   style={[styles.threadCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                 >
                   <View style={[styles.avatarBadge, { backgroundColor: colors.primary }]}>
-                    <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{item.otherParticipantName[0]}</Text>
+                    {preview.avatarUri ? (
+                      <Image source={{ uri: preview.avatarUri }} style={styles.avatarImage} />
+                    ) : (
+                      <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{preview.avatarInitial}</Text>
+                    )}
                   </View>
                   <View style={{ flex: 1, marginLeft: 12 }}>
-                    <View style={styles.threadRow}>
-                      <Text style={[styles.threadName, { color: colors.foreground }]}>{item.otherParticipantName}</Text>
-                      {item.agreedPrice ? (
-                        <Text style={[styles.agreedTag, { color: colors.success }]}>RWF {item.agreedPrice.toLocaleString()} Agreed</Text>
-                      ) : null}
+                    <View style={styles.previewRow}>
+                      <Text style={[styles.previewName, { color: colors.foreground }]} numberOfLines={1}>
+                        {preview.name}
+                      </Text>
+                      <Text style={[styles.previewTime, { color: colors.mutedForeground }]}>{preview.timeLabel}</Text>
                     </View>
-                    {item.messages.some(
-                      (message) => message.serviceRequest?.status === 'REQUEST_RECEIVED' && !item.isEnded,
-                    ) ? (
-                      <Text style={[styles.requestReceivedBadge, { color: colors.primary }]}>REQUEST_RECEIVED</Text>
-                    ) : null}
-                    <Text numberOfLines={1} style={[styles.lastMessage, { color: isCancellationEvent(item.lastMessage) || item.isEnded ? colors.destructive : colors.mutedForeground }]}>
-                      {isCancellationEvent(item.lastMessage) || item.isEnded
-                        ? formatCancellationNotice({
-                            cancelledByRole: item.cancelledByRole ?? inferCancelledRole({ text: item.lastMessage }, 'client'),
-                            cancelledByName: item.cancelledByName,
-                            cancelledById: item.cancelledById,
-                            currentUserId: account?.id,
-                            currentUserRole: userRole,
-                            currentUserName: account?.name,
-                            otherParticipantName: item.otherParticipantName,
-                          })
-                        : item.lastMessage}
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={[styles.previewSnippet, { color: colors.mutedForeground }]}
+                    >
+                      {preview.snippet}
                     </Text>
                   </View>
-                  <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+                  {preview.unread ? (
+                    <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+                  ) : null}
                 </Pressable>
               ))}
             </View>
@@ -976,12 +1139,13 @@ const styles = StyleSheet.create({
   emptySubtitle: { fontFamily: 'Inter_400Regular', fontSize: 13, textAlign: 'center', lineHeight: 18 },
   listWrap: { marginTop: 16, gap: 10 },
   threadCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderWidth: 1, borderRadius: 14 },
-  avatarBadge: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  threadRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  threadName: { fontFamily: 'Inter_600SemiBold', fontSize: 15 },
-  requestReceivedBadge: { fontFamily: 'Inter_600SemiBold', fontSize: 9, marginTop: 2 },
-  agreedTag: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  lastMessage: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 3 },
+  avatarBadge: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  avatarImage: { width: 44, height: 44, borderRadius: 22 },
+  previewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  previewName: { fontFamily: 'Inter_600SemiBold', fontSize: 16, flex: 1 },
+  previewTime: { fontFamily: 'Inter_400Regular', fontSize: 12, marginLeft: 8 },
+  previewSnippet: { fontFamily: 'Inter_400Regular', fontSize: 14, marginTop: 3 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, marginLeft: 8 },
   chatHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: 1 },
   backBtn: { padding: 4 },
   chatHeaderTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 16 },
