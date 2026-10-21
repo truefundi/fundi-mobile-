@@ -1,4 +1,5 @@
 import { setAuthTokenGetter, setBaseUrl } from '@workspace/api-client-react';
+import { Platform } from 'react-native';
 import { getAccessToken } from '@/lib/auth-session';
 
 let configured = false;
@@ -25,6 +26,49 @@ export function configureApi(): void {
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  // --- OFFLINE/FRONTEND MOCK INTERCEPTOR ---
+  if (path.includes('/api/v1/technicians')) {
+    if (path.includes('/availability')) {
+      const body = options.body as any;
+      return {
+        id: 'mock-tech-id-1',
+        verificationStatus: 'APPROVED',
+        availabilityStatus: body?.availabilityStatus ?? 'ONLINE',
+      } as unknown as T;
+    }
+    if (path.includes('/profile/documents')) {
+      if (options.method === 'DELETE') {
+        return { message: 'Document deleted successfully' } as unknown as T;
+      }
+      return [
+        { id: 'doc-1', type: 'NATIONAL_ID', title: 'National ID', status: 'APPROVED' },
+        { id: 'doc-2', type: 'CERTIFICATE', title: 'Certificate 1', status: 'APPROVED' },
+      ] as unknown as T;
+    }
+    if (path.includes('/profile')) {
+      return {
+        id: 'mock-tech-id-1',
+        user: { fullName: 'Deo Mutama', phoneNumber: '+250788123456', email: 'deo@example.com' },
+        gender: 'MALE',
+        yearsOfExperience: 3,
+        serviceExperiences: [{ customName: 'General Maintenance', yearsOfExperience: 3 }],
+        verificationStatus: 'APPROVED',
+        availabilityStatus: 'ONLINE',
+        location: { address: 'Kigali, Rwanda', latitude: -1.9441, longitude: 30.0619 },
+        profilePictureUrl: null,
+        nationalIdNumber: '1199880011223344',
+        paymentMethod: 'MOBILE_MONEY',
+        paymentNumber: '+250788123456',
+        createdAt: new Date().toISOString(),
+      } as unknown as T;
+    }
+  }
+
+  if (path.includes('/api/v1/health')) {
+    return { services: { api: 'up' } } as unknown as T;
+  }
+  // ----------------------------------------
+
   configureApi();
   const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
   if (!baseUrl) throw new Error('Set EXPO_PUBLIC_API_URL before making an API request.');
@@ -42,6 +86,89 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  const text = await response.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+
+  if (!response.ok) {
+    const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+    const message = payload?.message;
+    throw new ApiRequestError(
+      Array.isArray(message) ? message.join(' ') : typeof message === 'string' ? message : `Request failed (${response.status}).`,
+      response.status,
+    );
+  }
+
+  return data as T;
+}
+
+/** Uploads multipart form data without setting Content-Type manually. */
+export async function apiUpload<T>(path: string, body: FormData, method = 'POST'): Promise<T> {
+  // --- MOCK UPLOAD INTERCEPTOR ---
+  if (path.includes('/api/v1/technicians')) {
+    if (path.includes('/picture')) {
+      return {
+        profilePictureUrl: 'https://placehold.co/400x400/png',
+      } as unknown as T;
+    }
+    if (path.includes('/documents')) {
+      return {
+        id: 'doc-mock-' + Date.now(),
+        type: 'CERTIFICATE',
+        status: 'APPROVED',
+      } as unknown as T;
+    }
+  }
+  // -------------------------------
+
+  configureApi();
+  const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
+  if (!baseUrl) throw new Error('Set EXPO_PUBLIC_API_URL before making an API request.');
+
+  const headers = new Headers();
+  const token = await getAccessToken();
+  if (token) headers.set('authorization', `Bearer ${token}`);
+
+  if (Platform.OS !== 'web') {
+    return new Promise<T>((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open(method, `${baseUrl}${path}`);
+      headers.forEach((value, key) => request.setRequestHeader(key, value));
+      request.onload = () => {
+        const text = request.responseText;
+        let data: unknown = null;
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch {
+            data = text;
+          }
+        }
+        if (request.status < 200 || request.status >= 300) {
+          const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+          const message = payload?.message;
+          reject(new ApiRequestError(
+            Array.isArray(message) ? message.join(' ') : typeof message === 'string' ? message : `Request failed (${request.status}).`,
+            request.status,
+          ));
+          return;
+        }
+        resolve(data as T);
+      };
+      request.onerror = () => reject(new Error('Network error while uploading form data.'));
+      request.onabort = () => reject(new Error('Form data upload was cancelled.'));
+      request.ontimeout = () => reject(new Error('Form data upload timed out.'));
+      request.send(body);
+    });
+  }
+
+  const response = await fetch(`${baseUrl}${path}`, { method, headers, body });
   const text = await response.text();
   let data: unknown = null;
   if (text) {

@@ -1,15 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AUTO_ADVANCE_MS,
-  AUTO_NEXT,
-  buildAdditionalWork,
-  buildQuote,
-  matchTechnician,
-  TECHNICIAN_DRIVEN,
-} from '@/constants/simulation';
 import { jobsKey, LEGACY_JOBS_KEY } from '@/constants/storage';
+import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import {
   isClosed,
   visitFeeFor,
@@ -25,7 +19,23 @@ import {
 
 export type { Job, JobStatus } from '@/constants/jobs';
 
-type NewRequest = Pick<Job, 'service' | 'problem' | 'urgency' | 'locationLabel' | 'photoUri' | 'videoUri' | 'scheduledFor'>;
+type RequestMedia = {
+  uri: string;
+  sizeBytes?: number;
+  mimeType?: string;
+};
+
+type NewRequest = Pick<
+  Job,
+  'service' | 'problem' | 'urgency' | 'locationLabel' | 'locationLatitude' | 'locationLongitude' | 'photoUri' | 'videoUri'
+> & {
+  photos?: RequestMedia[];
+  videos?: RequestMedia[];
+  photoSizeBytes?: number;
+  photoMimeType?: string;
+  videoSizeBytes?: number;
+  videoMimeType?: string;
+};
 
 type FundiContextValue = {
   jobs: Job[];
@@ -44,9 +54,11 @@ type FundiContextValue = {
   startSettlement: (id: string) => void;
   recordSettlement: (id: string, method: SettlementMethod) => void;
   submitRating: (id: string, rating: Rating) => void;
-  cancelJob: (id: string) => void;
-  /** A technician on this device takes the job and becomes the one on it. */
-  takeJob: (id: string, technician: Technician) => void;
+  cancelJob: (id: string, recipientPhones?: string[]) => void;
+  /** Assigns a manually selected mock technician to the request. */
+  selectTechnician: (id: string, technician: Technician) => void;
+  linkChatThread: (id: string, threadId: string) => void;
+  findAnotherTechnician: (id: string) => void;
   markArrived: (id: string) => void;
   submitDiagnosis: (id: string, quote: Quote) => void;
   completeRepair: (id: string) => void;
@@ -56,9 +68,9 @@ const FundiContext = createContext<FundiContextValue | undefined>(undefined);
 
 /** Customer-facing copy for the notification feed, one entry per status change. */
 const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = {
-  REQUESTED: { title: 'Request sent', text: 'We are looking for qualified technicians near you.' },
-  MATCHING: { title: 'Finding your technician', text: 'Checking who is available and close to you right now.' },
-  OFFERED: { title: 'Technician found', text: 'A qualified technician is available for your job.' },
+  REQUESTED: { title: 'Request sent', text: 'Choose an available technician for your request.' },
+  MATCHING: { title: 'Choose a technician', text: 'Browse the available local mock technicians.' },
+  OFFERED: { title: 'Technician selected', text: 'Review the technician you selected before continuing.' },
   ACCEPTED: { title: 'Technician accepted your request', text: 'Pay the visit fee to confirm the callout.' },
   VISIT_PAID: { title: 'Payment successful', text: 'Your visit fee has been received.' },
   EN_ROUTE: { title: 'Your technician is on the way', text: 'Follow the arrival time on the tracking screen.' },
@@ -93,15 +105,6 @@ function transition(job: Job, next: JobStatus): Job {
   const now = new Date().toISOString();
   const moved: Job = { ...job, status: next, statusSince: now };
 
-  if (next === 'OFFERED' && !moved.technician) {
-    moved.technician = matchTechnician(job.service);
-  }
-  if (next === 'DIAGNOSIS_COMPLETE' && !moved.quote) {
-    moved.quote = buildQuote(job.service);
-  }
-  if (next === 'ADDITIONAL_APPROVAL_REQUIRED' && !moved.additionalWork) {
-    moved.additionalWork = buildAdditionalWork(job.service);
-  }
   if (next === 'COMPLETED') {
     moved.completedAt = now;
   }
@@ -139,9 +142,10 @@ async function loadJobs(key: string): Promise<Job[]> {
 
 export function FundiProvider({ children }: { children: ReactNode }) {
   const { account, isHydrated: sessionReady } = useAuth();
+  const { addNotification, linkJobThread } = useNotifications();
   const [jobs, setJobs] = useState<Job[]>([]);
+  const jobsRef = useRef<Job[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
-  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   // Job history belongs to the phone number that created it.
   const storageKey = account ? jobsKey(account.phone) : null;
@@ -149,15 +153,19 @@ export function FundiProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!storageKey) {
+      jobsRef.current = [];
       setJobs([]);
       setLoadedKey(null);
       return;
     }
     let mounted = true;
+    jobsRef.current = [];
+    setJobs([]);
     setLoadedKey(null);
     loadJobs(storageKey)
       .then((stored) => {
         if (!mounted) return;
+        jobsRef.current = stored;
         setJobs(stored);
         setLoadedKey(storageKey);
       })
@@ -179,9 +187,31 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     });
   }, [jobs, loadedKey, storageKey]);
 
-  const update = useCallback((id: string, change: (job: Job) => Job) => {
-    setJobs((current) => current.map((job) => (job.id === id ? change(job) : job)));
-  }, []);
+  const update = useCallback((id: string, change: (job: Job) => Job, recipientPhones?: string[]) => {
+    const currentJob = jobsRef.current.find((job) => job.id === id);
+    if (!currentJob) return;
+    const updatedJob = change(currentJob);
+    const updatedJobs = jobsRef.current.map((job) => (job.id === id ? updatedJob : job));
+    jobsRef.current = updatedJobs;
+    setJobs(updatedJobs);
+
+    if (updatedJob.status !== currentJob.status) {
+      const event = updatedJob.events[updatedJob.events.length - 1];
+      if (event) {
+        addNotification({
+          id: event.id,
+          jobId: updatedJob.id,
+          threadId: updatedJob.chatThreadId,
+          status: event.status,
+          service: updatedJob.service,
+          title: event.title,
+          text: event.text,
+          at: event.at,
+          ...(recipientPhones ? { recipientPhones } : {}),
+        });
+      }
+    }
+  }, [addNotification]);
 
   const advance = useCallback(
     (id: string, next: JobStatus) => {
@@ -190,77 +220,32 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     [update],
   );
 
-  /**
-   * Drives the stages that do not wait for the customer. Each pending job gets
-   * one timer keyed by `id:status`; re-running this effect reuses live timers
-   * rather than restarting them, and a deadline already in the past fires at
-   * once so a job resumed from storage catches up.
-   */
-  useEffect(() => {
-    if (!isHydrated) return;
-    const live = timers.current;
-    const wanted = new Set<string>();
-
-    for (const job of jobs) {
-      const next = AUTO_NEXT[job.status];
-      const duration = AUTO_ADVANCE_MS[job.status];
-      if (!next || duration === undefined) continue;
-      // A technician owns these stages once they have taken the job.
-      if (job.takenByTechnician && TECHNICIAN_DRIVEN.includes(job.status)) continue;
-
-      const key = `${job.id}:${job.status}`;
-      wanted.add(key);
-      if (live.has(key)) continue;
-
-      const elapsed = Date.now() - new Date(job.statusSince).getTime();
-      const remaining = Math.max(duration - elapsed, 0);
-      const timer = setTimeout(() => {
-        live.delete(key);
-        // The repair stage forks: offer the extra work once, then finish.
-        if (job.status === 'REPAIR_IN_PROGRESS') {
-          setJobs((current) =>
-            current.map((candidate) => {
-              if (candidate.id !== job.id || candidate.status !== 'REPAIR_IN_PROGRESS') return candidate;
-              const decided = candidate.additionalWork !== undefined;
-              return transition(candidate, decided ? 'REPAIR_COMPLETED' : 'ADDITIONAL_APPROVAL_REQUIRED');
-            }),
-          );
-          return;
-        }
-        setJobs((current) =>
-          current.map((candidate) =>
-            candidate.id === job.id && candidate.status === job.status ? transition(candidate, next) : candidate,
-          ),
-        );
-      }, remaining);
-      live.set(key, timer);
-    }
-
-    // Drop timers for jobs that moved on or disappeared.
-    for (const [key, timer] of live) {
-      if (!wanted.has(key)) {
-        clearTimeout(timer);
-        live.delete(key);
-      }
-    }
-  }, [isHydrated, jobs]);
-
-  useEffect(() => {
-    const live = timers.current;
-    return () => {
-      for (const timer of live.values()) clearTimeout(timer);
-      live.clear();
-    };
-  }, []);
-
-  const takeJob = useCallback(
+  const selectTechnician = useCallback(
     (id: string, technician: Technician) => {
       update(id, (job) =>
-        // Only a job still looking for someone can be taken.
-        job.status === 'MATCHING' || job.status === 'OFFERED'
-          ? transition({ ...job, technician, takenByTechnician: true }, 'OFFERED')
+        job.status === 'REQUESTED' || job.status === 'MATCHING' || job.status === 'OFFERED' || job.status === 'CANCELLED'
+          ? transition({ ...job, technician }, 'OFFERED')
           : job,
       );
+    },
+    [update],
+  );
+
+  const linkChatThread = useCallback(
+    (id: string, threadId: string) => {
+      update(id, (job) => ({ ...job, chatThreadId: threadId }));
+      linkJobThread(id, threadId);
+    },
+    [linkJobThread, update],
+  );
+
+  const findAnotherTechnician = useCallback(
+    (id: string) => {
+      update(id, (job) => {
+        if (isClosed(job.status)) return job;
+        const { technician: _technician, chatThreadId: _chatThreadId, ...availableJob } = job;
+        return job.status === 'MATCHING' ? availableJob : transition(availableJob, 'MATCHING');
+      });
     },
     [update],
   );
@@ -291,10 +276,52 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   );
 
   const addRequest = useCallback(async (request: NewRequest) => {
+    const photos = request.photos ?? (request.photoUri
+      ? [{ uri: request.photoUri, sizeBytes: request.photoSizeBytes, mimeType: request.photoMimeType }]
+      : []);
+    const videos = request.videos ?? (request.videoUri
+      ? [{ uri: request.videoUri, sizeBytes: request.videoSizeBytes, mimeType: request.videoMimeType }]
+      : []);
+
+    for (const photo of photos) {
+      if (photo.sizeBytes === undefined || !Number.isFinite(photo.sizeBytes) || photo.sizeBytes < 0) {
+        throw new Error(`Choose each photo again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
+      }
+      if (photo.sizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+        throw new Error(`Each photo must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+      }
+      if (!inferUploadMimeType(photo.uri, photo.mimeType)?.startsWith('image/')) {
+        throw new Error('Choose photos, not videos or documents.');
+      }
+    }
+    for (const video of videos) {
+      if (video.sizeBytes === undefined || !Number.isFinite(video.sizeBytes) || video.sizeBytes < 0) {
+        throw new Error(`Choose the video again so its size can be checked (maximum ${MAX_UPLOAD_SIZE_LABEL}).`);
+      }
+      if (video.sizeBytes > MAX_UPLOAD_SIZE_BYTES) {
+        throw new Error(`Video must be no larger than ${MAX_UPLOAD_SIZE_LABEL}.`);
+      }
+      if (!inferUploadMimeType(video.uri, video.mimeType)?.startsWith('video/')) {
+        throw new Error('Choose a video, not a photo or document.');
+      }
+    }
+    const {
+      photos: _photos,
+      videos: _videos,
+      photoSizeBytes: _photoSizeBytes,
+      photoMimeType: _photoMimeType,
+      videoSizeBytes: _videoSizeBytes,
+      videoMimeType: _videoMimeType,
+      ...jobRequest
+    } = request;
     const now = new Date().toISOString();
     const id = makeId('job');
     const base: Job = {
-      ...request,
+      ...jobRequest,
+      photoUri: photos[0]?.uri,
+      photoUris: photos.map((photo) => photo.uri),
+      videoUri: videos[0]?.uri,
+      videoUris: videos.map((video) => video.uri),
       id,
       reference: makeReference(),
       status: 'REQUESTED',
@@ -305,9 +332,20 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     };
     const copy = EVENT_COPY.REQUESTED!;
     base.events = [{ id: makeId('evt'), status: 'REQUESTED', title: copy.title, text: copy.text, at: now }];
-    setJobs((current) => [base, ...current]);
+    const updatedJobs = [base, ...jobsRef.current];
+    jobsRef.current = updatedJobs;
+    setJobs(updatedJobs);
+    addNotification({
+      id: base.events[0]!.id,
+      jobId: base.id,
+      status: 'REQUESTED',
+      service: base.service,
+      title: copy.title,
+      text: copy.text,
+      at: now,
+    });
     return id;
-  }, []);
+  }, [addNotification]);
 
   const value = useMemo<FundiContextValue>(() => {
     const events = jobs
@@ -333,13 +371,16 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       recordSettlement: (id, method) =>
         update(id, (job) => transition({ ...job, settlementMethod: method }, 'PAYMENT_REPORTED')),
       submitRating: (id, rating) => update(id, (job) => ({ ...job, rating })),
-      cancelJob: (id) => advance(id, 'CANCELLED'),
-      takeJob,
+      cancelJob: (id, recipientPhones) =>
+        update(id, (job) => transition(job, 'CANCELLED'), recipientPhones),
+      selectTechnician,
+      linkChatThread,
+      findAnotherTechnician,
       markArrived,
       submitDiagnosis,
       completeRepair,
     };
-  }, [addRequest, advance, completeRepair, isHydrated, jobs, markArrived, submitDiagnosis, takeJob, update]);
+  }, [addRequest, advance, completeRepair, findAnotherTechnician, isHydrated, jobs, linkChatThread, markArrived, selectTechnician, submitDiagnosis, update]);
 
   return <FundiContext.Provider value={value}>{children}</FundiContext.Provider>;
 }

@@ -40,7 +40,7 @@ export function AppHeader() {
   const hasActiveJob = useMemo(() => jobs.some((job) => !isClosed(job.status)), [jobs]);
 
   return (
-    <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 67 : insets.top }]}>
+    <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 4 : insets.top }]}>
       <View style={styles.row}>
         <ModeSlider compact onPressAvatar={() => router.navigate('/profile')} />
 

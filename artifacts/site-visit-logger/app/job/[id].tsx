@@ -1,7 +1,11 @@
 import React, { useState, type ReactNode } from 'react';
+import { StyleSheet, View, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { vibrate } from '@/lib/haptics';
 import { useFundi } from '@/context/FundiContext';
+import { useChat } from '@/context/ChatContext';
+import { BackButton } from '@/components/ui/BackButton';
 import { AdditionalWork } from '@/components/job/AdditionalWork';
 import { Arrived } from '@/components/job/Arrived';
 import { Diagnosis } from '@/components/job/Diagnosis';
@@ -12,13 +16,15 @@ import { RepairInProgress } from '@/components/job/RepairInProgress';
 import { RepairQuote } from '@/components/job/RepairQuote';
 import { Settlement } from '@/components/job/Settlement';
 import { TechnicianFound } from '@/components/job/TechnicianFound';
-import { Tracking } from '@/components/job/Tracking';
 import { VisitFee } from '@/components/job/VisitFee';
+import { TechnicianCard } from '@/components/ui/TechnicianCard';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { Notice } from '@/components/ui/Notice';
 import { StageScreen } from '@/components/ui/StageScreen';
+import { useColors } from '@/hooks/useColors';
 
 /** The irreversible choices on this screen, each confirmed before it happens. */
 type Pending = 'cancel' | 'declineQuote' | 'declineExtra';
@@ -44,22 +50,17 @@ const CONFIRM: Record<Pending, { title: string; message: string; confirmLabel: s
   },
 };
 
-/**
- * Single entry point for a job.
- *
- * The screen shown is derived from the job's status rather than from the
- * navigation stack, so a timer firing in the background moves the customer to
- * the next stage on its own, and reopening a job from My services always lands
- * on the stage it is actually at.
- */
 export default function JobScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const colors = useColors();
   const { id } = useLocalSearchParams<{ id: string }>();
   const {
     getJob,
     isHydrated,
     acceptOffer,
     payVisitFee,
+    linkChatThread,
     approveQuote,
     declineQuote,
     approveAdditionalWork,
@@ -68,6 +69,7 @@ export default function JobScreen() {
     recordSettlement,
     cancelJob,
   } = useFundi();
+  const { createOrGetThread } = useChat();
   const [pending, setPending] = useState<Pending | null>(null);
 
   const job = id ? getJob(id) : undefined;
@@ -97,11 +99,44 @@ export default function JobScreen() {
     setPending(null);
   };
 
+  const openPaidJobChat = () => {
+    if (!job.technician) return;
+    const now = new Date().toISOString();
+    const threadId = job.chatThreadId ?? createOrGetThread(
+      job.technician.name,
+      'technician',
+      job.id,
+      {
+        id: job.id,
+        serviceName: job.service,
+        problem: job.problem,
+        address: job.locationLabel,
+        ...(job.locationLatitude !== undefined ? { latitude: job.locationLatitude } : {}),
+        ...(job.locationLongitude !== undefined ? { longitude: job.locationLongitude } : {}),
+        photos: job.photoUris ?? (job.photoUri ? [job.photoUri] : []),
+        videos: job.videoUris ?? (job.videoUri ? [job.videoUri] : []),
+        thumbnailUri: job.photoUris?.[0] ?? job.photoUri,
+        createdAt: job.createdAt ?? now,
+        status: 'ACCEPTED',
+      },
+      job.technician.phone,
+      job.technician.location,
+    );
+    if (!job.chatThreadId) linkChatThread(job.id, threadId);
+    router.replace({ pathname: '/(tabs)/chat', params: { threadId } });
+  };
+
   let stage: ReactNode;
   switch (job.status) {
     case 'REQUESTED':
     case 'MATCHING':
-      stage = <Matching job={job} onCancel={() => setPending('cancel')} />;
+      stage = (
+        <Matching
+          job={job}
+          onChooseTechnician={() => router.push({ pathname: '/select-technician', params: { jobId: job.id } })}
+          onCancel={() => setPending('cancel')}
+        />
+      );
       break;
 
     case 'OFFERED':
@@ -124,6 +159,7 @@ export default function JobScreen() {
           onPay={(method) => {
             tap();
             payVisitFee(job.id, method);
+            openPaidJobChat();
           }}
           onCancel={() => setPending('cancel')}
         />
@@ -132,7 +168,24 @@ export default function JobScreen() {
 
     case 'VISIT_PAID':
     case 'EN_ROUTE':
-      stage = <Tracking job={job} />;
+      stage = (
+        <StageScreen
+          eyebrow="VISIT FEE PAID"
+          title="Continue in your technician chat"
+          subtitle="Your request and attachments are ready for the selected technician to review."
+          footer={
+            <Button
+              label="Open technician chat"
+              icon="chatbubble-ellipses-outline"
+              onPress={openPaidJobChat}
+              testID="open-paid-job-chat-button"
+            />
+          }
+        >
+          {job.technician ? <TechnicianCard technician={job.technician} caption="Selected for this request" /> : null}
+          <Notice tone="info" icon="chatbubbles-outline" text="Coordinate the visit and request a repair offer directly in chat. No technician is automatically tracked." />
+        </StageScreen>
+      );
       break;
 
     case 'ARRIVED':
@@ -204,14 +257,37 @@ export default function JobScreen() {
       break;
 
     default:
-      stage = <JobClosed job={job} />;
+      stage = (
+        <JobClosed
+          job={job}
+          onRebook={() => {
+            router.push({
+              pathname: '/select-technician',
+              params: {
+                jobId: job.id,
+                category: job.service,
+                service: job.service,
+                description: job.problem,
+                problem: job.problem,
+                location: job.locationLabel,
+                address: job.locationLabel,
+                ...(job.locationLatitude !== undefined ? { latitude: String(job.locationLatitude) } : {}),
+                ...(job.locationLongitude !== undefined ? { longitude: String(job.locationLongitude) } : {}),
+              },
+            });
+          }}
+        />
+      );
   }
 
   const dialog = pending ? CONFIRM[pending] : null;
 
   return (
-    <>
-      {stage}
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      {/* <View style={[styles.headerBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8, borderBottomColor: colors.border }]}>
+        <BackButton onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))} />
+      </View> */}
+      <View style={{ flex: 1 }}>{stage}</View>
       <ConfirmDialog
         visible={!!dialog}
         title={dialog?.title ?? ''}
@@ -222,6 +298,11 @@ export default function JobScreen() {
         onConfirm={confirm}
         onCancel={() => setPending(null)}
       />
-    </>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  headerBar: { paddingHorizontal: 20, paddingBottom: 8, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center' },
+});

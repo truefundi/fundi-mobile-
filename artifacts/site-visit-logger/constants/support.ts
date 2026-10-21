@@ -19,7 +19,7 @@ export const FAQS: Faq[] = [
   {
     question: 'How does Fundi work?',
     answer:
-      'Describe the problem and where you are. Fundi finds a verified technician nearby. You pay the visit fee, the technician checks the problem and sends a quote, and you approve it before any repair starts.',
+      'Describe the problem and where you are, then choose an available technician from the marketplace. After you pay the visit fee, your request opens in chat so you can coordinate the visit and receive a repair offer before any work starts.',
   },
   {
     question: 'What is the visit fee?',
@@ -28,7 +28,7 @@ export const FAQS: Faq[] = [
   {
     question: 'Can I cancel a request?',
     answer:
-      'Yes, until you pay the visit fee: while we are searching, once a technician is found, or on the visit fee screen. The app asks you to confirm first.',
+      'Yes, until you pay the visit fee: while choosing a technician, after selecting one, or on the visit fee screen. The app asks you to confirm first.',
   },
   {
     question: 'What if I do not agree with the quote?',

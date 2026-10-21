@@ -12,16 +12,19 @@ import { useWork } from '@/context/WorkContext';
 export function WorkLocked() {
   const { status } = useWork();
   const pending = status === 'pending';
+  const rejected = status === 'rejected';
 
   return (
     <EmptyState
-      icon={pending ? 'clock' : 'file-text'}
+      icon={pending ? 'clock' : rejected ? 'alert-circle' : 'file-text'}
       tone="waiting"
-      title={pending ? 'Documents under review' : 'Finish your application'}
+      title={pending ? 'Documents under review' : rejected ? 'Application needs changes' : 'Finish your application'}
       text={
         pending
           ? 'This opens up as soon as your certificate and ID clear.'
-          : 'Add your trade, ID and a certificate on Home to start taking jobs.'
+          : rejected
+            ? 'Review the feedback and update your documents on Home.'
+            : 'Add your trade, ID and a certificate on Home to start taking jobs.'
       }
     />
   );

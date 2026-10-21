@@ -11,20 +11,34 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useColors } from '@/hooks/useColors';
 
 /** Terminal view for a finished or cancelled job, reachable from My services. */
-export function JobClosed({ job }: { job: Job }) {
+export function JobClosed({ job, hideBack = false, onRebook }: { job: Job; hideBack?: boolean; onRebook?: () => void }) {
   const colors = useColors();
   const router = useRouter();
   const cancelled = job.status === 'CANCELLED';
+  const declined = job.status === 'DECLINED';
+  const terminated = cancelled || declined;
+  const goBack = () => (router.canGoBack() ? router.back() : router.replace('/activity'));
 
   return (
     <StageScreen
-      eyebrow={cancelled ? 'CANCELLED' : 'COMPLETED'}
-      title={cancelled ? 'Request cancelled' : 'Job completed'}
-      subtitle={cancelled ? 'This request was cancelled and no repair was carried out.' : undefined}
-      onBack={() => router.replace('/activity')}
+      eyebrow={declined ? 'DECLINED' : cancelled ? 'CANCELLED' : 'COMPLETED'}
+      title={declined ? 'Request declined' : cancelled ? 'Request cancelled' : 'Job completed'}
+      subtitle={terminated ? 'This request ended and no repair was carried out. You can rebook with another technician.' : undefined}
+      hideBack={hideBack}
+      onBack={goBack}
       footer={
-        cancelled ? (
-          <Button label="Back to my services" variant="outline" onPress={() => router.replace('/activity')} testID="closed-back-button" />
+        terminated ? (
+          <>
+            {onRebook ? (
+              <Button
+                label="Book next technician"
+                icon="person-add-outline"
+                onPress={onRebook}
+                testID="closed-rebook-button"
+              />
+            ) : null}
+            <Button label="Go back" variant="outline" onPress={goBack} testID="closed-back-button" />
+          </>
         ) : (
           <>
             <Button label="View invoice" onPress={() => router.push(`/invoice/${job.id}`)} testID="closed-invoice-button" />

@@ -7,11 +7,13 @@ import { MoneyRow } from '@/components/ui/MoneyRow';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { useColors } from '@/hooks/useColors';
+import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
 
 /** Spec 16 — the repair is done and the balance is ready to settle. */
 export function JobCompleted({ job, onContinue }: { job: Job; onContinue: () => void }) {
   const colors = useColors();
   const finishedAt = new Date(job.statusSince);
+  const photoUri = useRequestMediaUri(job.photoUri ?? '');
 
   return (
     <StageScreen
@@ -51,8 +53,8 @@ export function JobCompleted({ job, onContinue }: { job: Job; onContinue: () => 
       <SectionCard title="Before & after">
         <View style={styles.photoRow}>
           <View style={styles.photo}>
-            {job.photoUri ? (
-              <Image source={{ uri: job.photoUri }} style={[styles.photoImage, { borderColor: colors.border }]} />
+            {photoUri ? (
+              <Image source={{ uri: photoUri }} style={[styles.photoImage, { borderColor: colors.border }]} />
             ) : (
               <View style={[styles.photoEmpty, { backgroundColor: colors.muted, borderColor: colors.border }]}>
                 <Ionicons name="image-outline" size={20} color={colors.mutedForeground} />

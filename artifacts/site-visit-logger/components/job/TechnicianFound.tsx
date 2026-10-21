@@ -9,9 +9,8 @@ import { StageScreen } from '@/components/ui/StageScreen';
 import { TechnicianCard } from '@/components/ui/TechnicianCard';
 import { useColors } from '@/hooks/useColors';
 
-/** Spec 8 — the matched technician has accepted, before any money is taken. */
+/** Shows the technician the customer selected from the local marketplace. */
 export function TechnicianFound({ job, onContinue, onCancel }: { job: Job; onContinue: () => void; onCancel: () => void }) {
-  const colors = useColors();
   if (!job.technician) return null;
 
   return (
@@ -27,12 +26,11 @@ export function TechnicianFound({ job, onContinue, onCancel }: { job: Job; onCon
         </>
       }
     >
-      <TechnicianCard technician={job.technician} caption="Accepted your request" />
+      <TechnicianCard technician={job.technician} caption="Selected for this request" />
 
       <SectionCard title="What happens next">
         <Step icon="card-outline" title="Pay the visit fee" text={`${formatMoney(job.visitFee)} covers travel, inspection and diagnosis.`} />
-        <Step icon="navigate-outline" title="Track the arrival" text={`${job.technician.name.split(' ')[0]} is ${job.technician.distanceKm} km away, about ${job.technician.etaMinutes} minutes.`} />
-        <Step icon="document-text-outline" title="Approve the repair" text="You see a full quote before any repair work starts." last />
+        <Step icon="chatbubble-ellipses-outline" title="Continue in chat" text="After payment, your request opens in chat so you can coordinate with this technician and receive an offer." last />
       </SectionCard>
 
       <Notice tone="info" icon="information-circle-outline" text="Nothing is charged until you confirm on the next screen." />

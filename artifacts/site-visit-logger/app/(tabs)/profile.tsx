@@ -93,13 +93,24 @@ export default function ProfileScreen() {
   };
 
   const working = mode === 'working';
+  const workStatusLabel =
+    status === 'verified' ? 'Verified' :
+      status === 'pending' ? 'Under review' :
+        status === 'rejected' ? 'Action required' : 'Not submitted';
+  const workStatusColor =
+    status === 'verified' ? colors.success :
+      status === 'rejected' ? colors.destructive :
+        status === 'pending' ? colors.warning : colors.mutedForeground;
+  
   const modeHint = !working
     ? 'Find and hire a technician'
     : status === 'verified'
-      ? `Taking jobs${profile ? ` · ${profile.trade}` : ''}`
+      ? `Taking jobs${profile?.serviceExperiences?.length ? ` · ${profile.serviceExperiences.length} trades` : ''}`
       : status === 'pending'
         ? 'Documents under review'
-        : 'Documents needed before you can go online';
+        : status === 'rejected'
+          ? 'Update your documents to continue'
+          : 'Documents needed before you can go online';
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -202,27 +213,58 @@ export default function ProfileScreen() {
 
       {working ? (
         <>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your trade</Text>
-          <View style={[styles.tradeCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.tradeTop}>
-              <Text style={[styles.tradeName, { color: colors.foreground }]}>{profile?.trade ?? 'Not chosen yet'}</Text>
-              <View style={[styles.statusTag, { backgroundColor: status === 'verified' ? colors.successMuted : colors.warningMuted }]}>
-                <Feather
-                  name={status === 'verified' ? 'check-circle' : 'clock'}
-                  size={12}
-                  color={status === 'verified' ? colors.success : colors.warning}
-                />
-                <Text style={[styles.statusText, { color: colors.foreground }]}>
-                  {status === 'verified' ? 'Verified' : status === 'pending' ? 'Under review' : 'Not submitted'}
-                </Text>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your trades</Text>
+          {profile?.serviceExperiences && profile.serviceExperiences.length > 0 ? (
+            profile.serviceExperiences.map((exp, index) => {
+              const expStatus = exp.status ?? 'PENDING';
+              const isApproved = expStatus === 'APPROVED';
+              const isRejected = expStatus === 'DENIED' || expStatus === 'SUSPENDED';
+              
+              const tagBg = isApproved ? colors.successMuted : isRejected ? colors.destructiveMuted : colors.warningMuted;
+              const tagColor = isApproved ? colors.success : isRejected ? colors.destructive : colors.warning;
+              const iconName = isApproved ? 'check-circle' : isRejected ? 'alert-circle' : 'clock';
+              const statusLabel = isApproved ? 'Approved' : isRejected ? 'Action required' : 'Under review';
+
+              return (
+                <View key={`${exp.trade}-${index}`} style={[styles.tradeCard, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 10 }]}>
+                  <View style={styles.tradeTop}>
+                    <Text style={[styles.tradeName, { color: colors.foreground }]}>{exp.trade || exp.customName}</Text>
+                    <View style={[styles.statusTag, { backgroundColor: tagBg }]}>
+                      <Feather name={iconName} size={12} color={tagColor} />
+                      <Text style={[styles.statusText, { color: colors.foreground }]}>{statusLabel}</Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.tradeMeta, { color: colors.mutedForeground }]}>
+                    {exp.yearsOfExperience} {exp.yearsOfExperience === 1 ? 'year' : 'years'} experience
+                  </Text>
+                  {exp.reviewNote ? (
+                    <Text style={[styles.tradeMeta, { color: colors.destructive, marginTop: 4 }]}>
+                      Note: {exp.reviewNote}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })
+          ) : (
+            <View style={[styles.tradeCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={styles.tradeTop}>
+                <Text style={[styles.tradeName, { color: colors.foreground }]}>Not chosen yet</Text>
+                <View style={[styles.statusTag, { backgroundColor: status === 'verified' ? colors.successMuted : status === 'rejected' ? colors.destructiveMuted : colors.warningMuted }]}>
+                  <Feather
+                    name={status === 'verified' ? 'check-circle' : status === 'rejected' ? 'alert-circle' : 'clock'}
+                    size={12}
+                    color={workStatusColor}
+                  />
+                  <Text style={[styles.statusText, { color: colors.foreground }]}>
+                    {workStatusLabel}
+                  </Text>
+                </View>
               </View>
+              <Text style={[styles.tradeMeta, { color: colors.mutedForeground }]}>
+                Submit your ID and a certificate to start taking jobs.
+              </Text>
             </View>
-            <Text style={[styles.tradeMeta, { color: colors.mutedForeground }]}>
-              {profile
-                ? `${profile.certificateUris.length} ${profile.certificateUris.length === 1 ? 'certificate' : 'certificates'} on file`
-                : 'Submit your ID and a certificate to start taking jobs.'}
-            </Text>
-          </View>
+          )}
         </>
       ) : null}
 

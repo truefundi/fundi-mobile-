@@ -31,6 +31,9 @@ type ProfileContextValue = {
   updateProfile: (changes: ProfileChanges) => Promise<void>;
   savedPlaces: SavedPlace[];
   savePlaces: (places: SavedPlace[]) => Promise<void>;
+  addSavedPlace: (place: Omit<SavedPlace, 'id'>) => Promise<void>;
+  updateSavedPlace: (id: string, patch: Partial<SavedPlace>) => Promise<void>;
+  removeSavedPlace: (id: string) => Promise<void>;
   preferences: Preferences;
   updatePreferences: (patch: Partial<Preferences>) => Promise<void>;
 };
@@ -46,14 +49,6 @@ function parse(raw: string | null): LocalProfile {
   }
 }
 
-/**
- * The customer's own profile layer, kept beside AuthContext rather than inside it.
- *
- * Sign-in and the session belong to the server (AuthContext). Picture, name and
- * area edits, saved places and preferences stay on the device per phone number
- * until the backend's `PATCH /me` and upload endpoints exist; then updateProfile
- * sends them there and this layer shrinks to the parts the server does not keep.
- */
 export function ProfileProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
   const [local, setLocal] = useState<LocalProfile>({});
@@ -104,13 +99,39 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const savePlaces = useCallback(
     async (places: SavedPlace[]) =>
       write((current) => {
-        // A default that was deleted is no default at all.
         const defaultPlaceId = places.some((place) => place.id === current.preferences?.defaultPlaceId)
           ? current.preferences?.defaultPlaceId
           : undefined;
         return { ...current, savedPlaces: places, preferences: { ...current.preferences, defaultPlaceId } };
       }),
     [write],
+  );
+
+  const addSavedPlace = useCallback(
+    async (place: Omit<SavedPlace, 'id'>) => {
+      const newPlace: SavedPlace = {
+        ...place,
+        id: 'place-' + Date.now(),
+      };
+      await savePlaces([...(local.savedPlaces ?? []), newPlace]);
+    },
+    [local.savedPlaces, savePlaces],
+  );
+
+  const updateSavedPlace = useCallback(
+    async (id: string, patch: Partial<SavedPlace>) => {
+      const updated = (local.savedPlaces ?? []).map((p) => (p.id === id ? { ...p, ...patch } : p));
+      await savePlaces(updated);
+    },
+    [local.savedPlaces, savePlaces],
+  );
+
+  const removeSavedPlace = useCallback(
+    async (id: string) => {
+      const filtered = (local.savedPlaces ?? []).filter((p) => p.id !== id);
+      await savePlaces(filtered);
+    },
+    [local.savedPlaces, savePlaces],
   );
 
   const updatePreferences = useCallback(
@@ -126,10 +147,13 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       updateProfile,
       savedPlaces: local.savedPlaces ?? [],
       savePlaces,
+      addSavedPlace,
+      updateSavedPlace,
+      removeSavedPlace,
       preferences,
       updatePreferences,
     }),
-    [account, local, preferences, savePlaces, updatePreferences, updateProfile],
+    [account, local, preferences, savePlaces, addSavedPlace, updateSavedPlace, removeSavedPlace, updatePreferences, updateProfile],
   );
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;

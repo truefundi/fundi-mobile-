@@ -1,9 +1,10 @@
 /**
  * The Fundi job lifecycle.
  *
- * REQUEST -> MATCH -> ACCEPT -> PAY VISIT FEE -> TRACK -> ARRIVE -> DIAGNOSE
+ * REQUEST -> MANUAL TECHNICIAN SELECTION -> ACCEPT -> PAY VISIT FEE -> CHAT
  * -> QUOTE -> APPROVE -> REPAIR -> COMPLETE -> PAYMENT -> RATE
  */
+import type { Coordinates } from '@/lib/location';
 
 export type JobStatus =
   | 'REQUESTED'
@@ -24,15 +25,24 @@ export type JobStatus =
   | 'PAYMENT_REPORTED'
   | 'COMPLETED'
   | 'CANCELLED'
+  | 'DECLINED'
   | 'DISPUTED';
+
+export type RequestLifecycleStatus =
+  | 'REQUEST_RECEIVED'
+  | 'PENDING_RESPONSE'
+  | 'OFFER_MADE'
+  | 'ACCEPTED'
+  | 'DECLINED'
+  | 'CANCELLED';
 
 /** Customer-facing wording for each status. */
 export const STATUS_LABEL: Record<JobStatus, string> = {
   REQUESTED: 'Request sent',
-  MATCHING: 'Finding a technician',
+  MATCHING: 'Choose a technician',
   OFFERED: 'Technician found',
   ACCEPTED: 'Visit fee due',
-  VISIT_PAID: 'Visit fee paid',
+  VISIT_PAID: 'Visit fee paid · chat ready',
   EN_ROUTE: 'On the way',
   ARRIVED: 'Technician arrived',
   DIAGNOSING: 'Diagnosing',
@@ -46,6 +56,7 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   PAYMENT_REPORTED: 'Payment recorded',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
+  DECLINED: 'Declined',
   DISPUTED: 'Disputed',
 };
 
@@ -71,14 +82,20 @@ export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   PAYMENT_REPORTED: 'progress',
   COMPLETED: 'success',
   CANCELLED: 'danger',
+  DECLINED: 'danger',
   DISPUTED: 'danger',
 };
 
 /** A job is finished when it reaches one of these. */
-export const CLOSED_STATUSES: JobStatus[] = ['COMPLETED', 'CANCELLED'];
+export const CLOSED_STATUSES: JobStatus[] = ['COMPLETED', 'CANCELLED', 'DECLINED'];
 
 export function isClosed(status: JobStatus): boolean {
   return CLOSED_STATUSES.includes(status);
+}
+
+/** Whether a job ended prematurely due to cancellation or declining. */
+export function isTerminated(status: JobStatus): boolean {
+  return status === 'CANCELLED' || status === 'DECLINED';
 }
 
 export type Technician = {
@@ -87,11 +104,12 @@ export type Technician = {
   skill: string;
   rating: number;
   jobsCompleted: number;
-  distanceKm: number;
+  distanceKm?: number;
   etaMinutes: number;
   initials: string;
   phone: string;
   yearsExperience: number;
+  location?: Coordinates;
 };
 
 export type QuoteLine = {
@@ -141,22 +159,25 @@ export type Job = {
   problem: string;
   urgency: 'Emergency' | 'Today' | 'Schedule';
   locationLabel: string;
+  locationLatitude?: number;
+  locationLongitude?: number;
   photoUri?: string;
+  photoUris?: string[];
   /**
    * Local video the customer attached. Like photoUri it is a device URI until
    * the backend's upload endpoint (POST /uploads/presign) exists; the request
    * payload then carries the uploaded URL instead.
    */
   videoUri?: string;
+  videoUris?: string[];
   /** When a Schedule request should be visited, as an ISO date-time. Only set when urgency is Schedule. */
   scheduledFor?: string;
   status: JobStatus;
-  /** ISO timestamp of the last status change — drives the simulated timers. */
+  /** ISO timestamp of the last status change. */
   statusSince: string;
   createdAt: string;
   technician?: Technician;
-  /** A technician on this device took the job, so they drive it, not the timers. */
-  takenByTechnician?: boolean;
+  chatThreadId?: string;
   visitFee: number;
   visitPaymentMethod?: PaymentMethod;
   quote?: Quote;

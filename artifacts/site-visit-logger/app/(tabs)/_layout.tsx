@@ -6,6 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Tabs } from 'expo-router';
+// @ts-ignore
 import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
 
@@ -42,6 +43,10 @@ function NativeTabLayout() {
         <Icon sf={working ? { default: 'briefcase', selected: 'briefcase.fill' } : { default: 'clock', selected: 'clock.fill' }} />
         <Label>{working ? 'Jobs' : 'Activity'}</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="chat">
+        <Icon sf={{ default: 'bubble.left.and.bubble.right', selected: 'bubble.left.and.bubble.right.fill' }} />
+        <Label>Chats</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="profile">
         <Icon sf={{ default: 'person', selected: 'person.fill' }} />
         <Label>Profile</Label>
@@ -71,7 +76,7 @@ function ClassicTabLayout() {
           borderTopWidth: isWeb ? 1 : 0,
           borderTopColor: colors.border,
           elevation: 0,
-          ...(isWeb ? { height: 84 } : {}),
+          ...(isWeb ? { height: 64, paddingBottom: 6, paddingTop: 4 } : {}),
         },
         tabBarBackground: () =>
           isIOS ? (
@@ -112,6 +117,13 @@ function ClassicTabLayout() {
             ) : (
               <Feather name={working ? 'sliders' : 'tool'} size={22} color={color} />
             ),
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'Chats',
+          tabBarIcon: ({ color }) => <Feather name="message-square" size={21} color={color} />,
         }}
       />
       <Tabs.Screen
