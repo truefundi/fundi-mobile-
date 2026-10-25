@@ -39,7 +39,7 @@ export interface SosButtonProps {
 export function SosButton({
   onPress,
   size = 64,
-  innerSize = 60,
+  innerSize = 54,
   style,
   accessibilityLabel = 'Emergency SOS',
   testID = 'sos-fab-button',

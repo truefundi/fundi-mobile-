@@ -1,4 +1,4 @@
-import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+﻿import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
@@ -22,6 +22,9 @@ import { useFloatingActionVisibility } from '@/hooks/useFloatingActionVisibility
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
+import { EmergencyServiceCard } from '@/components/home/EmergencyServiceCard';
+import { useAds } from '@/context/AdsContext';
+import { AdsCarousel } from '@/components/home/AdsCarousel';
 
 const SCREEN_GUTTER = 20;
 const GRID_GAP = 10;
@@ -89,6 +92,9 @@ export default function HomeScreen({
   });
 
   const requestService = (service: string) => router.push({ pathname: '/request', params: { service } });
+
+  // Get the Ads if available
+  const { ads, isLoading } = useAds();
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -187,29 +193,15 @@ export default function HomeScreen({
               </Pressable>
             ) : null}
 
-            {isSearching ? null : (
-              // The whole card is the button, not only the small arrow inside it.
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Request emergency service"
-                testID="emergency-service-button"
-                onPress={() => router.push({ pathname: '/request', params: { service: 'Emergency Service', emergency: 'true' } })}
-                style={({ pressed }) => [styles.emergency, { backgroundColor: colors.primary, opacity: pressed ? 0.88 : 1 }]}
-              >
-                <View style={styles.emergencyCopy}>
-                  <Text style={[styles.emergencyKicker, { color: colors.secondary }]}>NEED HELP NOW?</Text>
-                  <Text style={[styles.emergencyTitle, { color: colors.primaryForeground }]}>Emergency service</Text>
-                  <Text style={[styles.emergencyText, { color: colors.secondary }]}>Find an available technician near you.</Text>
-                </View>
-                <View style={[styles.emergencyButton, { backgroundColor: colors.primaryForeground }]}>
-                  <Ionicons name="arrow-forward" size={20} color={colors.primary} />
-                </View>
-              </Pressable>
+              {isSearching ? null : !isLoading && ads && ads.length > 0 ? (
+                <AdsCarousel ads={ads} />
+              ) : (
+              <EmergencyServiceCard />
             )}
 
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.foreground }]} numberOfLines={1}>
-                {isSearching ? `Results for “${serviceQuery.trim()}”` : 'What service do you need?'}
+                {isSearching ? `Results for â€œ${serviceQuery.trim()}â€` : 'What service do you need?'}
               </Text>
               <Pressable onPress={() => router.navigate('/services')} testID="see-all-services-button" hitSlop={10}>
                 <Text style={[styles.seeAll, { color: colors.primary }]}>See all</Text>
@@ -264,7 +256,7 @@ export default function HomeScreen({
                         <View style={styles.recentCopy}>
                           <Text style={[styles.recentTitle, { color: colors.foreground }]} numberOfLines={1}>{job.service}</Text>
                           <Text style={[styles.recentMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
-                            {job.technician?.name ?? 'Unmatched'} · Completed
+                            {job.technician?.name ?? 'Unmatched'} Â· Completed
                           </Text>
                         </View>
                         <View style={styles.recentAmount}>
@@ -355,3 +347,5 @@ const styles = StyleSheet.create({
   activeOpenText: { fontFamily: 'Inter_700Bold', fontSize: 13 },
   amount: { fontFamily: 'Inter_700Bold', fontSize: 14 },
 });
+
+
