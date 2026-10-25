@@ -14,9 +14,11 @@ import { formatMoney, isClosed, repairTotal } from '@/constants/jobs';
 import { searchServices, SERVICES, type Service } from '@/constants/services';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { FloatingActionGroup } from '@/components/ui/FloatingActionGroup';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkHome } from '@/components/work/WorkHome';
 import { useColors } from '@/hooks/useColors';
+import { useFloatingActionVisibility } from '@/hooks/useFloatingActionVisibility';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
@@ -28,7 +30,26 @@ const THREE_COLUMN_MIN = 330;
 /** Home shows the first six services; the rest are one tap away, or one search. */
 const HOME_SERVICE_COUNT = 6;
 
-export default function HomeScreen() {
+export interface HomeScreenProps {
+  /** Explicitly toggle hiding the AI Chatbot button */
+  hideBot?: boolean;
+  /** Explicitly toggle hiding the emergency SOS button */
+  hideSos?: boolean;
+  /** Hide both floating action buttons */
+  hideFloatingActions?: boolean;
+  /** Custom handler for AI Chatbot press */
+  onPressBot?: () => void;
+  /** Custom handler for emergency SOS press */
+  onPressSos?: () => void;
+}
+
+export default function HomeScreen({
+  hideBot,
+  hideSos,
+  hideFloatingActions,
+  onPressBot,
+  onPressSos,
+}: HomeScreenProps = {}) {
   const colors = useColors();
   const bottomPadding = useTabScreenPadding();
   // Card widths are computed from the real screen width rather than percentages,
@@ -56,6 +77,16 @@ export default function HomeScreen() {
   const isSearching = serviceQuery.trim().length > 0;
   // A search looks through every service, not just the six on show.
   const shownServices = isSearching ? searchServices(serviceQuery) : SERVICES.slice(0, HOME_SERVICE_COUNT);
+
+  // Compute visibility based on mode, active job state, search input, and explicit overrides
+  const { hideBot: computedHideBot, hideSos: computedHideSos } = useFloatingActionVisibility({
+    hideAll: hideFloatingActions,
+    hideBot,
+    hideSos,
+    mode,
+    isSearching,
+    activeJob,
+  });
 
   const requestService = (service: string) => router.push({ pathname: '/request', params: { service } });
 
@@ -253,6 +284,13 @@ export default function HomeScreen() {
           </>
         )}
       </ScrollView>
+
+      <FloatingActionGroup
+        hideBot={computedHideBot}
+        hideSos={computedHideSos}
+        onPressBot={onPressBot}
+        onPressSos={onPressSos}
+      />
     </View>
   );
 }
