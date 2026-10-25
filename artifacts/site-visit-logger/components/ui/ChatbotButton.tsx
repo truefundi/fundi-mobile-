@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
+  Animated,
   Platform,
   Pressable,
   StyleProp,
   StyleSheet,
+  View,
   ViewStyle,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -14,8 +16,10 @@ import { vibrate } from '@/lib/haptics';
 export interface ChatbotButtonProps {
   /** Optional press handler. Defaults to routing to /chatbot. */
   onPress?: () => void;
-  /** Size (diameter) in pixels. Defaults to 56. */
+  /** Size (width & height) in pixels. Defaults to 56. */
   size?: number;
+  /** Custom corner radius. Defaults to 16 (squircle profile for 56px button). */
+  borderRadius?: number;
   /** Icon name from MaterialCommunityIcons: defaults to 'robot'. */
   iconName?: 'robot' | 'robot-outline' | keyof typeof MaterialCommunityIcons.glyphMap;
   /** Custom icon size in pixels. Defaults to proportional (28px for 56px button). */
@@ -24,19 +28,22 @@ export interface ChatbotButtonProps {
   style?: StyleProp<ViewStyle>;
   /** Accessibility label for screen readers. */
   accessibilityLabel?: string;
+  /** Accessibility hint. */
+  accessibilityHint?: string;
   /** Test identifier. */
   testID?: string;
-  /** Optional tooltip or hint. */
-  accessibilityHint?: string;
 }
 
 /**
- * Circular floating action button for the Fundi AI Chatbot.
- * Styled with the primary brand color and a prominent robot AI icon in primaryForeground.
+ * Modern squircle floating action button for the Fundi AI Chatbot.
+ * - Shape: Square with rounded corners (iOS-style continuous curve squircle).
+ * - Visuals: Primary brand background, frosted inner bevel, and primary-tinted glow shadow.
+ * - Interaction: Tactile spring compression on press.
  */
 export function ChatbotButton({
   onPress,
-  size = 56,
+  size = 42,
+  borderRadius,
   iconName = 'robot',
   iconSize,
   style,
@@ -46,6 +53,25 @@ export function ChatbotButton({
 }: ChatbotButtonProps) {
   const colors = useColors();
   const router = useRouter();
+  const pressScale = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(pressScale, {
+      toValue: 0.92,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 4,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(pressScale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 25,
+      bounciness: 8,
+    }).start();
+  };
 
   const handlePress = () => {
     vibrate();
@@ -54,7 +80,6 @@ export function ChatbotButton({
       return;
     }
 
-    console.log('[ChatbotButton] Routing to /chatbot');
     try {
       router.push('/chatbot' as any);
     } catch (error) {
@@ -62,9 +87,10 @@ export function ChatbotButton({
     }
   };
 
-  const resolvedIconSize = iconSize ?? Math.round(size * 0.5); // 28px for 56px button
-  const borderRadius = Math.round(size / 2);
+  const resolvedRadius = borderRadius ?? Math.round(size * 0.28); // ~16px for 56px button
+  const resolvedIconSize = iconSize ?? Math.round(size * 0.52); // ~29px for 56px button
   const iconColor = colors.primaryForeground || '#ffffff';
+  const primaryBg = colors.primary || '#f97316';
 
   return (
     <Pressable
@@ -72,53 +98,86 @@ export function ChatbotButton({
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
       testID={testID}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       onPress={handlePress}
-      style={({ pressed }) => [
-        styles.button,
-        {
-          width: size,
-          height: size,
-          borderRadius,
-          backgroundColor: colors.primary,
-          shadowColor: '#000000',
-          opacity: pressed ? 0.88 : 1,
-          transform: [{ scale: pressed ? 0.94 : 1 }],
-        },
-        style,
-      ]}
     >
-      <MaterialCommunityIcons
-        name={iconName}
-        size={resolvedIconSize}
-        color={iconColor}
-        style={styles.icon}
-      />
+      <Animated.View
+        style={[
+          styles.container,
+          {
+            width: size,
+            height: size,
+            borderRadius: resolvedRadius,
+            backgroundColor: primaryBg,
+            shadowColor: primaryBg,
+            transform: [{ scale: pressScale }],
+          },
+          style,
+        ]}
+      >
+        {/* Subtle Frosted Inner Bevel Rim */}
+        <View
+          style={[
+            styles.innerBevel,
+            {
+              borderRadius: Math.max(0, resolvedRadius - 2),
+            },
+          ]}
+        />
+
+        {/* AI Robot Icon */}
+        <MaterialCommunityIcons
+          name={iconName}
+          size={resolvedIconSize}
+          color={iconColor}
+          style={styles.icon}
+        />
+
+        {/* Micro Sparkle Indicator Accent */}
+        <View style={styles.sparkleAccent}>
+          <MaterialCommunityIcons name="sparkles" size={10} color={iconColor} />
+        </View>
+      </Animated.View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  button: {
+  container: {
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
     ...Platform.select({
       ios: {
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.22,
-        shadowRadius: 5,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.35,
+        shadowRadius: 10,
       },
       android: {
-        elevation: 6,
+        elevation: 8,
       },
       web: {
-        boxShadow: '0 4px 10px rgba(0, 0, 0, 0.18)',
+        boxShadow: '0 8px 20px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08)',
         cursor: 'pointer',
       },
     }),
+  },
+  innerBevel: {
+    ...StyleSheet.absoluteFillObject,
+    margin: 1.5,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.28)',
   },
   icon: {
     textAlign: 'center',
     textAlignVertical: 'center',
     includeFontPadding: false,
+  },
+  sparkleAccent: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    opacity: 0.85,
   },
 });

@@ -195,13 +195,13 @@ export default function HomeScreen({
 
               {isSearching ? null : !isLoading && ads && ads.length > 0 ? (
                 <AdsCarousel ads={ads} />
-              ) : (
+            ) : (
               <EmergencyServiceCard />
             )}
 
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.foreground }]} numberOfLines={1}>
-                {isSearching ? `Results for â€œ${serviceQuery.trim()}â€` : 'What service do you need?'}
+                {isSearching ? `Results for ${serviceQuery.trim()}` : 'What service do you need?'}
               </Text>
               <Pressable onPress={() => router.navigate('/services')} testID="see-all-services-button" hitSlop={10}>
                 <Text style={[styles.seeAll, { color: colors.primary }]}>See all</Text>
