@@ -31,6 +31,7 @@ import {
   FLAT_BOOKING_FEE_CURRENCY,
   formatBookingFee,
 } from '@/constants/jobs';
+import { getServiceBookingFee } from '@/constants/services';
 
 type PaymentChannel = 'MTN_MOMO' | 'AIRTEL_MONEY' | 'CARD_WALLET';
 
@@ -75,6 +76,7 @@ export default function CheckoutPaymentScreen() {
   const params = useLocalSearchParams<{
     requestId?: string;
     technicianId?: string;
+    service?: string;
     amount?: string;
     currency?: string;
   }>();
@@ -90,7 +92,8 @@ export default function CheckoutPaymentScreen() {
     return MOCK_MARKETPLACE_TECHNICIANS[0];
   }, [job?.technician, params.technicianId]);
 
-  const bookingAmount = job?.bookingFee?.amount ?? (params.amount ? parseFloat(params.amount) : FLAT_BOOKING_FEE);
+  const targetService = job?.service || params.service || technician?.service;
+  const bookingAmount = job?.bookingFee?.amount ?? (params.amount ? parseFloat(params.amount) : getServiceBookingFee(targetService));
   const bookingCurrency = job?.bookingFee?.currency ?? params.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
   const [selectedChannel, setSelectedChannel] = useState<PaymentChannel>('MTN_MOMO');

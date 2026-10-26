@@ -163,7 +163,7 @@ export default function JobScreen() {
               <Button
                 label="Review & Pay Booking Fee"
                 icon="arrow-forward"
-                onPress={() => router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id } })}
+                onPress={() => router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service } })}
                 testID="review-booking-fee-button"
               />
               <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} testID="visit-fee-cancel-button" />
@@ -270,7 +270,7 @@ export default function JobScreen() {
                   onPress={() =>
                     router.push({
                       pathname: '/checkout/booking-fee',
-                      params: { requestId: job.id, technicianId: job.technician?.id },
+                      params: { requestId: job.id, technicianId: job.technician?.id, service: job.service },
                     })
                   }
                   testID="pay-booking-fee-pending-button"

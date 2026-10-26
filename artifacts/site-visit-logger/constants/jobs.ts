@@ -5,6 +5,9 @@
  * -> QUOTE -> APPROVE -> REPAIR -> COMPLETE -> PAYMENT -> RATE
  */
 import type { Coordinates } from '@/lib/location';
+import { DEFAULT_BOOKING_FEE, getServiceBookingFee } from '@/constants/services';
+
+export { getServiceBookingFee };
 
 export type RequestType = 'STANDARD' | 'SOS';
 
@@ -224,7 +227,7 @@ export interface ServiceRequest {
 export interface Job extends ServiceRequest {}
 
 /** Single flat Service Booking Fee paid to confirm the booking and unlock direct technician messaging. */
-export const FLAT_BOOKING_FEE = 2500;
+export const FLAT_BOOKING_FEE = DEFAULT_BOOKING_FEE;
 export const FLAT_BOOKING_FEE_CURRENCY = 'RWF';
 
 export function formatBookingFee(amount: number = FLAT_BOOKING_FEE, currency: string = FLAT_BOOKING_FEE_CURRENCY): string {

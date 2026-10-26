@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { jobsKey, LEGACY_JOBS_KEY } from '@/constants/storage';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
+import { getServiceBookingFee } from '@/constants/services';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import {
@@ -327,7 +328,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       const id = data.id ?? makeId('job');
       const urgency = data.urgency ?? (data.type === 'SOS' ? 'Emergency' : 'Today');
       const initialStatus: JobStatus = data.status ?? 'PAYMENT_PENDING';
-      const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? visitFeeFor(urgency));
+      const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? getServiceBookingFee(data.service));
 
       const draft: Job = {
         id,
@@ -498,7 +499,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     } = request;
     const now = new Date().toISOString();
     const id = makeId('job');
-    const fee = visitFeeFor(request.urgency);
+    const fee = getServiceBookingFee(request.service);
     const base: Job = {
       ...jobRequest,
       photoUri: photos[0]?.uri,

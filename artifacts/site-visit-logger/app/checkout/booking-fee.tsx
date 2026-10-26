@@ -26,6 +26,7 @@ import {
   FLAT_BOOKING_FEE_CURRENCY,
   formatBookingFee,
 } from '@/constants/jobs';
+import { getServiceBookingFee } from '@/constants/services';
 
 export default function BookingFeeReviewScreen() {
   const colors = useColors();
@@ -73,11 +74,12 @@ export default function BookingFeeReviewScreen() {
     return MOCK_MARKETPLACE_TECHNICIANS[0];
   }, [job?.technician, params.technicianId]);
 
-  const serviceName = job?.service || params.service || 'General Maintenance';
+  const serviceName = job?.service || params.service || technician?.service || 'General Maintenance';
   const problemDesc = job?.problem || params.problem || 'Standard Service Request';
   const locationText = job?.locationLabel || params.locationLabel || params.address || 'Kigali, Rwanda';
 
-  const bookingAmount = job?.bookingFee?.amount ?? FLAT_BOOKING_FEE;
+  const serviceBookingFee = getServiceBookingFee(serviceName);
+  const bookingAmount = job?.bookingFee?.amount ?? serviceBookingFee;
   const bookingCurrency = job?.bookingFee?.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
   const handleProceedToPayment = () => {
@@ -107,6 +109,7 @@ export default function BookingFeeReviewScreen() {
       params: {
         requestId: finalRequestId,
         technicianId: technician?.id,
+        service: serviceName,
         amount: bookingAmount.toString(),
         currency: bookingCurrency,
       },
@@ -283,7 +286,7 @@ export default function BookingFeeReviewScreen() {
         ]}
       >
         <View style={styles.totalRow}>
-          <View>
+          <View style={styles.priceContainerBottom}>
             <Text style={[styles.footerLabel, { color: colors.mutedForeground }]}>Due now</Text>
             <Text style={[styles.footerPrice, { color: colors.foreground }]}>
               {formatBookingFee(bookingAmount, bookingCurrency)}
@@ -293,7 +296,7 @@ export default function BookingFeeReviewScreen() {
             label="Pay Booking Fee"
             icon="arrow-forward"
             onPress={handleProceedToPayment}
-            style={{ flex: 1, marginLeft: 16 }}
+            style={{ marginLeft: 16, alignSelf: 'center' }}
             testID="proceed-to-pay-booking-fee-button"
           />
         </View>
@@ -472,6 +475,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 16,
+  },
+  priceContainerBottom: {
+    justifyContent: 'center',
   },
   footerLabel: {
     fontFamily: 'Inter_400Regular',

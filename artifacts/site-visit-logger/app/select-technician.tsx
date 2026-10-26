@@ -105,6 +105,7 @@ export default function SelectTechnicianScreen() {
       params: {
         requestId: targetJob.id,
         technicianId: tech.id,
+        service: targetJob.service,
       },
     });
   };

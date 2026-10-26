@@ -21,6 +21,7 @@ import {
   type MarketplaceTechnician,
 } from '@/constants/technicians';
 import { FLAT_BOOKING_FEE, FLAT_BOOKING_FEE_CURRENCY, formatBookingFee } from '@/constants/jobs';
+import { getServiceBookingFee } from '@/constants/services';
 
 export default function TechnicianProfileScreen() {
   const colors = useColors();
@@ -49,18 +50,21 @@ export default function TechnicianProfileScreen() {
     return found || MOCK_MARKETPLACE_TECHNICIANS[0];
   }, [technicianId]);
 
+  const targetService = service || tech?.service || 'General Maintenance';
+  const serviceBookingFee = getServiceBookingFee(targetService);
+
   const handleBookNow = () => {
     let finalRequestId = job?.id;
 
     if (!finalRequestId) {
       finalRequestId = createDraftRequest({
-        service: service || tech?.service || 'General Maintenance',
+        service: targetService,
         problem: problem || 'General Service Request',
         locationLabel: locationLabel || 'Kigali, Rwanda',
         urgency: 'Today',
         type: 'STANDARD',
         bookingFee: {
-          amount: FLAT_BOOKING_FEE,
+          amount: serviceBookingFee,
           currency: FLAT_BOOKING_FEE_CURRENCY,
           status: 'PENDING',
         },
@@ -77,6 +81,7 @@ export default function TechnicianProfileScreen() {
       params: {
         requestId: finalRequestId,
         technicianId: tech?.id,
+        service: targetService,
       },
     });
   };
@@ -181,7 +186,7 @@ export default function TechnicianProfileScreen() {
             <Text style={[styles.pricingTitle, { color: colors.foreground }]}>Transparent Fundi Pricing</Text>
           </View>
           <Text style={[styles.pricingBody, { color: colors.mutedForeground }]}>
-            Pay only a single flat <Text style={{ color: colors.foreground, fontWeight: '700' }}>Service Booking Fee ({formatBookingFee()})</Text> to secure this technician and unlock direct chat.
+            Pay only a single flat <Text style={{ color: colors.foreground, fontWeight: '700' }}>Service Booking Fee ({formatBookingFee(serviceBookingFee)})</Text> to secure this technician and unlock direct chat.
           </Text>
           <Text style={[styles.pricingBody, { color: colors.mutedForeground, marginTop: 6 }]}>
             There are zero consultation or guarantee fees. Labor and repair materials are negotiated and settled directly with {tech.name}.

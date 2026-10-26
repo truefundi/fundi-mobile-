@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { workKey } from '@/constants/storage';
+import { getServiceBookingFee } from '@/constants/services';
 import {
   type TechnicianApplication,
   type WorkProfile,
@@ -241,7 +242,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     const id = data.id ?? `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
     const urgency = data.urgency ?? (data.type === 'SOS' ? 'Emergency' : 'Today');
-    const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? (urgency === 'Emergency' ? 110 : 75));
+    const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? getServiceBookingFee(data.service));
     const draft: Job = {
       id,
       reference: data.reference ?? `FND-${Math.floor(1000 + Math.random() * 9000)}`,
