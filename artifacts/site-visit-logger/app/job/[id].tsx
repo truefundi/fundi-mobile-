@@ -16,7 +16,6 @@ import { RepairInProgress } from '@/components/job/RepairInProgress';
 import { RepairQuote } from '@/components/job/RepairQuote';
 import { Settlement } from '@/components/job/Settlement';
 import { TechnicianFound } from '@/components/job/TechnicianFound';
-import { VisitFee } from '@/components/job/VisitFee';
 import { TechnicianCard } from '@/components/ui/TechnicianCard';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -123,7 +122,7 @@ export default function JobScreen() {
       job.technician.location,
     );
     if (!job.chatThreadId) linkChatThread(job.id, threadId);
-    router.replace({ pathname: '/(tabs)/chat', params: { threadId } });
+    router.push({ pathname: `/chat/${threadId}` as any, params: { requestId: job.id } });
   };
 
   let stage: ReactNode;

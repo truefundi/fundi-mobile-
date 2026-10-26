@@ -48,6 +48,7 @@ export type ChatMessage = {
   senderRole: 'client' | 'technician';
   text: string;
   timestamp: string;
+  imageUri?: string;
   serviceRequest?: ServiceRequestDetails;
   priceOffer?: ServiceOffer;
   cancelledByRole?: 'client' | 'technician';
@@ -81,7 +82,7 @@ type ChatContextValue = {
   threads: ChatThread[];
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
-  sendMessage: (threadId: string, text: string) => Promise<void>;
+  sendMessage: (threadId: string, text: string, imageUri?: string) => Promise<void>;
   updateRequestStatus: (threadId: string, requestId: string, status: RequestLifecycleStatus, reason?: string) => Promise<void>;
   sendPriceOffer: (threadId: string, amount: number, notes?: string, senderRole?: 'client' | 'technician') => Promise<void>;
   respondToOffer: (threadId: string, offerId: string, status: 'ACCEPTED' | 'DECLINED') => Promise<void>;
@@ -210,7 +211,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   };
 
   const sendMessage = useCallback(
-    async (threadId: string, text: string) => {
+    async (threadId: string, text: string, imageUri?: string) => {
       if (!account) return;
       const now = new Date().toISOString();
       const newMessage: ChatMessage = {
@@ -218,15 +219,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         senderId: account.id,
         senderName: account.name,
         senderRole: account.role === 'TECHNICIAN' ? 'technician' : 'client',
-        text,
+        text: text || (imageUri ? 'Photo attachment' : ''),
+        imageUri,
         timestamp: now,
       };
+
+      const lastSnippet = text || (imageUri ? '📷 Photo attachment' : '');
 
       const updated = threads.map((thread) => {
         if (thread.id === threadId) {
           return {
             ...thread,
-            lastMessage: text,
+            lastMessage: lastSnippet,
             lastMessageTime: now,
             messages: [...thread.messages, newMessage],
           };

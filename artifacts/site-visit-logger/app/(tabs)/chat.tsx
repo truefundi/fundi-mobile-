@@ -327,6 +327,14 @@ export default function ChatTabScreen() {
     );
   }, [sortedThreads, account?.id, userRole, account?.name]);
 
+  useEffect(() => {
+    if (requestedThreadId) {
+      router.replace({
+        pathname: `/chat/${requestedThreadId}` as any,
+      });
+    }
+  }, [requestedThreadId, router]);
+
   const handlePreviewPress = (preview: ConversationPreview) => {
     if (preview.navigatesToSelectTechnician && preview.selectTechnicianParams) {
       router.push({
@@ -336,6 +344,10 @@ export default function ChatTabScreen() {
       return;
     }
     setActiveThreadId(preview.thread.id);
+    router.push({
+      pathname: `/chat/${preview.thread.id}` as any,
+      params: { requestId: preview.thread.jobId },
+    });
   };
 
   const isThreadTerminated =

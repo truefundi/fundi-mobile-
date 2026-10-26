@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   Platform,
   ScrollView,
@@ -46,6 +46,19 @@ export default function BookingFeeReviewScreen() {
   }>();
 
   const job = params.requestId ? getJob(params.requestId) : undefined;
+
+  // Route Guard: If booking fee has already been settled, redirect to chat immediately to prevent duplicate charges or re-entry
+  useEffect(() => {
+    if (job?.bookingFee?.status === 'PAID') {
+      const destinationThreadId = job.chatThreadId || job.chatId || job.id;
+      router.replace({
+        pathname: `/chat/${destinationThreadId}` as any,
+        params: {
+          requestId: job.id,
+        },
+      });
+    }
+  }, [job?.bookingFee?.status, job?.chatThreadId, job?.chatId, job?.id, router]);
 
   // Resolve technician from job or technicianId parameter
   const technician: MarketplaceTechnician | undefined = useMemo(() => {

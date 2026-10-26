@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   Modal,
   Platform,
   Pressable,
@@ -105,6 +106,37 @@ export default function CheckoutPaymentScreen() {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [transactionRef, setTransactionRef] = useState<string>('');
 
+  // Route Guard: If booking fee is already settled, redirect to chat immediately
+  useEffect(() => {
+    if (job?.bookingFee?.status === 'PAID' && !isProcessing && !paymentSuccess) {
+      const destinationThreadId = job.chatThreadId || job.chatId || job.id;
+      router.replace({
+        pathname: `/chat/${destinationThreadId}` as any,
+        params: {
+          requestId: job.id,
+        },
+      });
+    }
+  }, [job?.bookingFee?.status, job?.chatThreadId, job?.chatId, job?.id, isProcessing, paymentSuccess, router]);
+
+  // Back guard: Prevent hardware back navigation once payment is confirmed or already paid
+  useEffect(() => {
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (paymentSuccess || job?.bookingFee?.status === 'PAID') {
+        const dest = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
+        if (dest) {
+          router.replace({
+            pathname: `/chat/${dest}` as any,
+            params: { requestId: job?.id || params.requestId },
+          });
+          return true;
+        }
+      }
+      return false;
+    });
+    return () => backSub.remove();
+  }, [paymentSuccess, job?.bookingFee?.status, job?.chatThreadId, job?.chatId, job?.id, params.requestId, router]);
+
   const handlePay = () => {
     if (!params.requestId && !job?.id) {
       setPaymentError('Request reference is missing. Please go back and try again.');
@@ -175,7 +207,17 @@ export default function CheckoutPaymentScreen() {
   };
 
   const handleCancel = () => {
-    // Allows back-navigation without creating or opening an active chat session
+    // Allows back-navigation without creating or opening an active chat session when unpaid
+    if (paymentSuccess || job?.bookingFee?.status === 'PAID') {
+      const dest = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
+      if (dest) {
+        router.replace({
+          pathname: `/chat/${dest}` as any,
+          params: { requestId: job?.id || params.requestId },
+        });
+        return;
+      }
+    }
     router.back();
   };
 
