@@ -4,6 +4,7 @@ import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
+import { FloatingActionGroup, type FloatingActionGroupProps } from '@/components/ui/FloatingActionGroup';
 import { useColors } from '@/hooks/useColors';
 
 type Props = {
@@ -16,10 +17,27 @@ type Props = {
   onBack?: () => void;
   /** Hide the back control on stages the customer cannot reverse out of. */
   hideBack?: boolean;
+  /** Custom floating action overlay or components. */
+  floatingActions?: ReactNode;
+  /** Whether to render the default FloatingActionGroup on this stage screen. */
+  showFloatingActions?: boolean;
+  /** Options for the default FloatingActionGroup if showFloatingActions is true. */
+  floatingActionOptions?: Partial<FloatingActionGroupProps>;
 };
 
 /** Shared chrome for every stage of the job journey. */
-export function StageScreen({ eyebrow, title, subtitle, children, footer, onBack, hideBack }: Props) {
+export function StageScreen({
+  eyebrow,
+  title,
+  subtitle,
+  children,
+  footer,
+  onBack,
+  hideBack,
+  floatingActions,
+  showFloatingActions = false,
+  floatingActionOptions,
+}: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -47,6 +65,16 @@ export function StageScreen({ eyebrow, title, subtitle, children, footer, onBack
         >
           {footer}
         </View>
+      ) : null}
+
+      {floatingActions ? (
+        floatingActions
+      ) : showFloatingActions ? (
+        <FloatingActionGroup
+          isTabScreen={false}
+          bottomOffset={footer ? (Platform.OS === 'web' ? 88 : insets.bottom + 80) : undefined}
+          {...floatingActionOptions}
+        />
       ) : null}
     </View>
   );

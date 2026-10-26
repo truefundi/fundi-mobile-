@@ -21,6 +21,7 @@ import { WorkProvider } from '@/context/WorkContext';
 import { configureApi, checkApiHealth } from '@/lib/api';
 import { ChatProvider } from '@/context/ChatContext';
 import { NotificationProvider } from '@/context/NotificationContext';
+import { AdsProvider } from '@/context/AdsContext';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -114,6 +115,7 @@ function RootLayoutNav() {
         <Stack.Screen name="saved-locations" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen name="help" options={{ headerShown: false }} />
+        <Stack.Screen name="chatbot" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>
   );
@@ -170,11 +172,13 @@ export default function RootLayout() {
                 <FundiProvider>
                   <WorkProvider>
                     <ChatProvider>
-                      <GestureHandlerRootView>
-                        <KeyboardProvider>
-                          <RootLayoutNav />
-                        </KeyboardProvider>
-                      </GestureHandlerRootView>
+                      <AdsProvider>
+                        <GestureHandlerRootView style={{ flex: 1 }}>
+                          <KeyboardProvider>
+                            <RootLayoutNav />
+                          </KeyboardProvider>
+                        </GestureHandlerRootView>
+                      </AdsProvider>
                     </ChatProvider>
                   </WorkProvider>
                 </FundiProvider>
