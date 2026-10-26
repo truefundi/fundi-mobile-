@@ -290,7 +290,7 @@ export default function BookingFeeReviewScreen() {
             </Text>
           </View>
           <Button
-            label="Proceed to Pay Booking Fee"
+            label="Pay Booking Fee"
             icon="arrow-forward"
             onPress={handleProceedToPayment}
             style={{ flex: 1, marginLeft: 16 }}
