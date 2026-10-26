@@ -7,17 +7,32 @@ import { useNotifications } from '@/context/NotificationContext';
 import {
   isClosed,
   visitFeeFor,
+  type BookingFee,
   type Job,
   type JobEvent,
   type JobStatus,
   type PaymentMethod,
+  type PaymentStatus,
   type Quote,
   type Rating,
+  type RequestLifecycleStatus,
+  type RequestStatus,
+  type RequestType,
+  type ServiceRequest,
   type SettlementMethod,
   type Technician,
 } from '@/constants/jobs';
 
-export type { Job, JobStatus } from '@/constants/jobs';
+export type {
+  BookingFee,
+  Job,
+  JobStatus,
+  PaymentStatus,
+  RequestLifecycleStatus,
+  RequestStatus,
+  RequestType,
+  ServiceRequest,
+} from '@/constants/jobs';
 
 type RequestMedia = {
   uri: string;
@@ -29,6 +44,8 @@ type NewRequest = Pick<
   Job,
   'service' | 'problem' | 'urgency' | 'locationLabel' | 'locationLatitude' | 'locationLongitude' | 'photoUri' | 'videoUri'
 > & {
+  type?: RequestType;
+  bookingFee?: BookingFee;
   photos?: RequestMedia[];
   videos?: RequestMedia[];
   photoSizeBytes?: number;
@@ -44,6 +61,9 @@ type FundiContextValue = {
   /** Every status change in reverse-chronological order, newest first. */
   events: (JobEvent & { jobId: string; service: string })[];
   addRequest: (request: NewRequest) => Promise<string>;
+  createDraftRequest: (data: Partial<ServiceRequest>) => string;
+  markBookingFeePaid: (requestId: string, transactionId: string) => void;
+  initializeChatId: (requestId: string, chatId?: string) => string;
   /** Customer saw the matched technician and wants to continue. */
   acceptOffer: (id: string) => void;
   payVisitFee: (id: string, method: PaymentMethod) => void;
@@ -64,7 +84,7 @@ type FundiContextValue = {
   completeRepair: (id: string) => void;
 };
 
-const FundiContext = createContext<FundiContextValue | undefined>(undefined);
+export const FundiContext = createContext<FundiContextValue | undefined>(undefined);
 
 /** Customer-facing copy for the notification feed, one entry per status change. */
 const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = {
@@ -73,6 +93,8 @@ const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = 
   OFFERED: { title: 'Technician selected', text: 'Review the technician you selected before continuing.' },
   ACCEPTED: { title: 'Technician accepted your request', text: 'Pay the visit fee to confirm the callout.' },
   VISIT_PAID: { title: 'Payment successful', text: 'Your visit fee has been received.' },
+  DISPATCHED: { title: 'Technician dispatched', text: 'A technician has been dispatched to your location.' },
+  ACTIVE: { title: 'Request active', text: 'Your request is currently active.' },
   EN_ROUTE: { title: 'Your technician is on the way', text: 'Follow the arrival time on the tracking screen.' },
   ARRIVED: { title: 'Your technician has arrived', text: 'Diagnosis will begin shortly.' },
   DIAGNOSING: { title: 'Diagnosis in progress', text: 'Your technician is inspecting the problem.' },
@@ -82,7 +104,7 @@ const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = 
   REPAIR_IN_PROGRESS: { title: 'Repair in progress', text: 'We will let you know as soon as the work is done.' },
   ADDITIONAL_APPROVAL_REQUIRED: { title: 'Extra work needs your approval', text: 'Nothing is charged until you approve it.' },
   REPAIR_COMPLETED: { title: 'Repair completed', text: 'Review the summary and settle the balance.' },
-  PAYMENT_PENDING: { title: 'Payment pending', text: 'Tell us how the repair was paid.' },
+  PAYMENT_PENDING: { title: 'Payment pending', text: 'Payment is required to continue.' },
   PAYMENT_REPORTED: { title: 'Payment recorded', text: 'Your invoice is ready to view.' },
   COMPLETED: { title: 'Job completed', text: 'Thanks for using Fundi. Rate your technician to help others.' },
   CANCELLED: { title: 'Request cancelled', text: 'This job was cancelled.' },
@@ -102,6 +124,10 @@ function makeReference(): string {
  * appending a notification event. Pure — callers replace the job in state.
  */
 function transition(job: Job, next: JobStatus): Job {
+  if (next === 'ACTIVE' && job.bookingFee?.status !== 'PAID') {
+    throw new Error(`Cannot transition unpaid request (${job.id}) to ACTIVE status: booking fee must be PAID.`);
+  }
+
   const now = new Date().toISOString();
   const moved: Job = { ...job, status: next, statusSince: now };
 
@@ -133,8 +159,18 @@ async function loadJobs(key: string): Promise<Job[]> {
   }
   if (!stored) return [];
   try {
-    const parsed = JSON.parse(stored) as Job[];
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed = JSON.parse(stored) as Partial<Job>[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => ({
+      ...item,
+      type: item.type ?? 'STANDARD',
+      bookingFee: item.bookingFee ?? {
+        amount: item.visitFee ?? visitFeeFor(item.urgency ?? 'Today'),
+        currency: 'RWF',
+        status: item.status === 'VISIT_PAID' || item.visitPaymentMethod ? 'PAID' : 'PENDING',
+        paidAt: item.status === 'VISIT_PAID' ? item.statusSince : undefined,
+      },
+    })) as Job[];
   } catch {
     return [];
   }
@@ -191,6 +227,15 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     const currentJob = jobsRef.current.find((job) => job.id === id);
     if (!currentJob) return;
     const updatedJob = change(currentJob);
+
+    if (updatedJob.status === 'ACTIVE' && updatedJob.bookingFee?.status !== 'PAID') {
+      throw new Error(`Cannot transition unpaid request (${updatedJob.id}) to ACTIVE status: booking fee must be PAID.`);
+    }
+
+    if (updatedJob.chatId && updatedJob.bookingFee?.status !== 'PAID') {
+      throw new Error(`Cannot initialize chatId on unpaid request (${updatedJob.id}): booking fee must be PAID.`);
+    }
+
     const updatedJobs = jobsRef.current.map((job) => (job.id === id ? updatedJob : job));
     jobsRef.current = updatedJobs;
     setJobs(updatedJobs);
@@ -233,10 +278,147 @@ export function FundiProvider({ children }: { children: ReactNode }) {
 
   const linkChatThread = useCallback(
     (id: string, threadId: string) => {
-      update(id, (job) => ({ ...job, chatThreadId: threadId }));
+      update(id, (job) => {
+        if (job.bookingFee?.status !== 'PAID' && (job.status === 'PAYMENT_PENDING' || job.type === 'SOS')) {
+          throw new Error(`Cannot initialize chatId on unpaid request (${job.id}): booking fee must be PAID.`);
+        }
+        return {
+          ...job,
+          chatThreadId: threadId,
+          ...(job.bookingFee?.status === 'PAID' ? { chatId: threadId } : {}),
+        };
+      });
       linkJobThread(id, threadId);
     },
     [linkJobThread, update],
+  );
+
+  const initializeChatId = useCallback(
+    (requestId: string, explicitChatId?: string): string => {
+      const job = jobsRef.current.find((j) => j.id === requestId);
+      if (!job) throw new Error(`Request not found: ${requestId}`);
+      if (job.bookingFee?.status !== 'PAID') {
+        throw new Error(`Cannot initialize chatId on unpaid request (${requestId}): booking fee must be PAID.`);
+      }
+      const finalChatId = explicitChatId || makeId('chat');
+      update(requestId, (current) => ({
+        ...current,
+        chatId: finalChatId,
+        chatThreadId: current.chatThreadId ?? finalChatId,
+      }));
+      return finalChatId;
+    },
+    [update],
+  );
+
+  const createDraftRequest = useCallback(
+    (data: Partial<ServiceRequest>): string => {
+      const bookingFeeStatus: PaymentStatus = data.bookingFee?.status ?? 'PENDING';
+      const isPaid = bookingFeeStatus === 'PAID';
+
+      if (!isPaid && data.status === 'ACTIVE') {
+        throw new Error('Cannot transition unpaid request to ACTIVE status: booking fee must be PAID.');
+      }
+      if (!isPaid && data.chatId) {
+        throw new Error('Cannot initialize chatId on unpaid request: booking fee must be PAID.');
+      }
+
+      const now = new Date().toISOString();
+      const id = data.id ?? makeId('job');
+      const urgency = data.urgency ?? (data.type === 'SOS' ? 'Emergency' : 'Today');
+      const initialStatus: JobStatus = data.status ?? 'PAYMENT_PENDING';
+      const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? visitFeeFor(urgency));
+
+      const draft: Job = {
+        id,
+        reference: data.reference ?? makeReference(),
+        service: data.service ?? (data.type === 'SOS' ? 'Emergency SOS' : 'General Maintenance'),
+        problem: data.problem ?? '',
+        urgency,
+        locationLabel: data.locationLabel ?? 'Current Location',
+        locationLatitude: data.locationLatitude,
+        locationLongitude: data.locationLongitude,
+        photoUri: data.photoUri,
+        photoUris: data.photoUris ?? (data.photoUri ? [data.photoUri] : []),
+        videoUri: data.videoUri,
+        videoUris: data.videoUris ?? (data.videoUri ? [data.videoUri] : []),
+        scheduledFor: data.scheduledFor,
+        status: initialStatus,
+        statusSince: now,
+        createdAt: data.createdAt ?? now,
+        technician: data.technician,
+        chatThreadId: isPaid ? (data.chatThreadId ?? data.chatId) : undefined,
+        chatId: isPaid ? (data.chatId ?? data.chatThreadId) : undefined,
+        visitFee: data.visitFee ?? feeAmount,
+        visitPaymentMethod: data.visitPaymentMethod,
+        quote: data.quote,
+        additionalWork: data.additionalWork,
+        additionalWorkApproved: data.additionalWorkApproved,
+        settlementMethod: data.settlementMethod,
+        rating: data.rating,
+        completedAt: data.completedAt,
+        type: data.type ?? 'STANDARD',
+        bookingFee: {
+          amount: feeAmount,
+          currency: data.bookingFee?.currency ?? 'RWF',
+          status: bookingFeeStatus,
+          paidAt: data.bookingFee?.paidAt,
+          transactionId: data.bookingFee?.transactionId,
+        },
+        events: data.events ?? [],
+      };
+
+      const copy = EVENT_COPY[initialStatus];
+      if (copy && draft.events.length === 0) {
+        draft.events = [{ id: makeId('evt'), status: initialStatus, title: copy.title, text: copy.text, at: now }];
+      }
+
+      const updatedJobs = [draft, ...jobsRef.current];
+      jobsRef.current = updatedJobs;
+      setJobs(updatedJobs);
+
+      if (draft.events[0]) {
+        addNotification({
+          id: draft.events[0].id,
+          jobId: draft.id,
+          status: initialStatus,
+          service: draft.service,
+          title: draft.events[0].title,
+          text: draft.events[0].text,
+          at: now,
+        });
+      }
+
+      return id;
+    },
+    [addNotification],
+  );
+
+  const markBookingFeePaid = useCallback(
+    (requestId: string, transactionId: string) => {
+      update(requestId, (job) => {
+        const now = new Date().toISOString();
+        const updatedBookingFee: BookingFee = {
+          ...job.bookingFee,
+          amount: job.bookingFee?.amount ?? job.visitFee ?? visitFeeFor(job.urgency),
+          currency: job.bookingFee?.currency ?? 'RWF',
+          status: 'PAID',
+          paidAt: now,
+          transactionId,
+        };
+        const nextStatus: JobStatus = job.status === 'PAYMENT_PENDING'
+          ? (job.type === 'SOS' ? 'DISPATCHED' : 'VISIT_PAID')
+          : job.status;
+
+        const updatedJob: Job = {
+          ...job,
+          bookingFee: updatedBookingFee,
+        };
+
+        return nextStatus !== job.status ? transition(updatedJob, nextStatus) : updatedJob;
+      });
+    },
+    [update],
   );
 
   const findAnotherTechnician = useCallback(
@@ -316,6 +498,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     } = request;
     const now = new Date().toISOString();
     const id = makeId('job');
+    const fee = visitFeeFor(request.urgency);
     const base: Job = {
       ...jobRequest,
       photoUri: photos[0]?.uri,
@@ -327,7 +510,13 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       status: 'REQUESTED',
       statusSince: now,
       createdAt: now,
-      visitFee: visitFeeFor(request.urgency),
+      visitFee: fee,
+      type: request.type ?? (request.urgency === 'Emergency' ? 'SOS' : 'STANDARD'),
+      bookingFee: request.bookingFee ?? {
+        amount: fee,
+        currency: 'RWF',
+        status: 'PENDING',
+      },
       events: [],
     };
     const copy = EVENT_COPY.REQUESTED!;
@@ -358,9 +547,28 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       events,
       getJob: (id) => jobs.find((job) => job.id === id),
       addRequest,
+      createDraftRequest,
+      markBookingFeePaid,
+      initializeChatId,
       acceptOffer: (id) => advance(id, 'ACCEPTED'),
       payVisitFee: (id, method) =>
-        update(id, (job) => transition({ ...job, visitPaymentMethod: method }, 'VISIT_PAID')),
+        update(id, (job) =>
+          transition(
+            {
+              ...job,
+              visitPaymentMethod: method,
+              bookingFee: {
+                ...job.bookingFee,
+                amount: job.bookingFee?.amount ?? job.visitFee,
+                currency: job.bookingFee?.currency ?? 'RWF',
+                status: 'PAID',
+                paidAt: new Date().toISOString(),
+                transactionId: job.bookingFee?.transactionId ?? makeId('tx'),
+              },
+            },
+            'VISIT_PAID',
+          ),
+        ),
       approveQuote: (id) => advance(id, 'QUOTE_APPROVED'),
       declineQuote: (id) => advance(id, 'CANCELLED'),
       approveAdditionalWork: (id) =>
@@ -380,7 +588,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       submitDiagnosis,
       completeRepair,
     };
-  }, [addRequest, advance, completeRepair, findAnotherTechnician, isHydrated, jobs, linkChatThread, markArrived, selectTechnician, submitDiagnosis, update]);
+  }, [addRequest, advance, completeRepair, createDraftRequest, findAnotherTechnician, initializeChatId, isHydrated, jobs, linkChatThread, markArrived, markBookingFeePaid, selectTechnician, submitDiagnosis, update]);
 
   return <FundiContext.Provider value={value}>{children}</FundiContext.Provider>;
 }

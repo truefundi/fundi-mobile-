@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { workKey } from '@/constants/storage';
 import {
@@ -8,9 +8,30 @@ import {
   type WorkStatus,
 } from '@/constants/work';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
-import type { Job } from '@/constants/jobs';
+import {
+  type BookingFee,
+  type Job,
+  type JobStatus,
+  type PaymentStatus,
+  type RequestLifecycleStatus,
+  type RequestStatus,
+  type RequestType,
+  type ServiceRequest,
+} from '@/constants/jobs';
 import { useAuth } from '@/context/AuthContext';
+import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
+
+export type {
+  BookingFee,
+  Job,
+  JobStatus,
+  PaymentStatus,
+  RequestLifecycleStatus,
+  RequestStatus,
+  RequestType,
+  ServiceRequest,
+} from '@/constants/jobs';
 
 /** Which side of the marketplace the app is showing. */
 export type Mode = 'hiring' | 'working';
@@ -191,6 +212,9 @@ type WorkContextValue = {
   mine: Job[];
   done: Job[];
   earnings: number;
+  createDraftRequest: (data: Partial<ServiceRequest>) => string;
+  markBookingFeePaid: (requestId: string, transactionId: string) => void;
+  initializeChatId?: (requestId: string, chatId?: string) => string;
 };
 
 const WorkContext = createContext<WorkContextValue | null>(null);
@@ -198,8 +222,104 @@ const WorkContext = createContext<WorkContextValue | null>(null);
 /** Technician profile and verification state are server-owned; local storage keeps only the draft. */
 export function WorkProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
+  const fundi = useContext(FundiContext);
   const [state, setState] = useState<Stored>(EMPTY);
   const storageKey = account ? workKey(account.phone) : null;
+
+  const [localDrafts, setLocalDrafts] = useState<Job[]>([]);
+  const localDraftsRef = useRef<Job[]>([]);
+
+  const localCreateDraftRequest = useCallback((data: Partial<ServiceRequest>): string => {
+    const bookingFeeStatus: PaymentStatus = data.bookingFee?.status ?? 'PENDING';
+    const isPaid = bookingFeeStatus === 'PAID';
+    if (!isPaid && data.status === 'ACTIVE') {
+      throw new Error('Cannot transition unpaid request to ACTIVE status: booking fee must be PAID.');
+    }
+    if (!isPaid && data.chatId) {
+      throw new Error('Cannot initialize chatId on unpaid request: booking fee must be PAID.');
+    }
+    const id = data.id ?? `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    const urgency = data.urgency ?? (data.type === 'SOS' ? 'Emergency' : 'Today');
+    const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? (urgency === 'Emergency' ? 110 : 75));
+    const draft: Job = {
+      id,
+      reference: data.reference ?? `FND-${Math.floor(1000 + Math.random() * 9000)}`,
+      service: data.service ?? (data.type === 'SOS' ? 'Emergency SOS' : 'General Maintenance'),
+      problem: data.problem ?? '',
+      urgency,
+      locationLabel: data.locationLabel ?? 'Current Location',
+      locationLatitude: data.locationLatitude,
+      locationLongitude: data.locationLongitude,
+      photoUri: data.photoUri,
+      photoUris: data.photoUris ?? (data.photoUri ? [data.photoUri] : []),
+      videoUri: data.videoUri,
+      videoUris: data.videoUris ?? (data.videoUri ? [data.videoUri] : []),
+      scheduledFor: data.scheduledFor,
+      status: data.status ?? 'PAYMENT_PENDING',
+      statusSince: now,
+      createdAt: data.createdAt ?? now,
+      technician: data.technician,
+      chatThreadId: isPaid ? (data.chatThreadId ?? data.chatId) : undefined,
+      chatId: isPaid ? (data.chatId ?? data.chatThreadId) : undefined,
+      visitFee: data.visitFee ?? feeAmount,
+      visitPaymentMethod: data.visitPaymentMethod,
+      quote: data.quote,
+      additionalWork: data.additionalWork,
+      additionalWorkApproved: data.additionalWorkApproved,
+      settlementMethod: data.settlementMethod,
+      rating: data.rating,
+      completedAt: data.completedAt,
+      type: data.type ?? 'STANDARD',
+      bookingFee: {
+        amount: feeAmount,
+        currency: data.bookingFee?.currency ?? 'RWF',
+        status: bookingFeeStatus,
+        paidAt: data.bookingFee?.paidAt,
+        transactionId: data.bookingFee?.transactionId,
+      },
+      events: data.events ?? [],
+    };
+    localDraftsRef.current = [draft, ...localDraftsRef.current];
+    setLocalDrafts(localDraftsRef.current);
+    return id;
+  }, []);
+
+  const localMarkBookingFeePaid = useCallback((requestId: string, transactionId: string) => {
+    const job = localDraftsRef.current.find((j) => j.id === requestId);
+    if (!job) return;
+    const now = new Date().toISOString();
+    const nextStatus = job.status === 'PAYMENT_PENDING' ? (job.type === 'SOS' ? 'DISPATCHED' : 'VISIT_PAID') : job.status;
+    const updated: Job = {
+      ...job,
+      status: nextStatus,
+      bookingFee: {
+        ...job.bookingFee,
+        status: 'PAID',
+        paidAt: now,
+        transactionId,
+      },
+    };
+    localDraftsRef.current = localDraftsRef.current.map((j) => (j.id === requestId ? updated : j));
+    setLocalDrafts(localDraftsRef.current);
+  }, []);
+
+  const localInitializeChatId = useCallback((requestId: string, explicitChatId?: string): string => {
+    const job = localDraftsRef.current.find((j) => j.id === requestId);
+    if (!job) throw new Error(`Request not found: ${requestId}`);
+    if (job.bookingFee?.status !== 'PAID') {
+      throw new Error(`Cannot initialize chatId on unpaid request (${requestId}): booking fee must be PAID.`);
+    }
+    const finalChatId = explicitChatId || `chat-${Date.now()}`;
+    const updated: Job = {
+      ...job,
+      chatId: finalChatId,
+      chatThreadId: job.chatThreadId ?? finalChatId,
+    };
+    localDraftsRef.current = localDraftsRef.current.map((j) => (j.id === requestId ? updated : j));
+    setLocalDrafts(localDraftsRef.current);
+    return finalChatId;
+  }, []);
 
   const update = useCallback(
     (next: (current: Stored) => Stored) => {
@@ -484,8 +604,11 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       mine: [],
       done: [],
       earnings: 0,
+      createDraftRequest: fundi ? fundi.createDraftRequest : localCreateDraftRequest,
+      markBookingFeePaid: fundi ? fundi.markBookingFeePaid : localMarkBookingFeePaid,
+      initializeChatId: fundi ? fundi.initializeChatId : localInitializeChatId,
     };
-  }, [account, refreshApplication, state, storageKey, update]);
+  }, [account, fundi, localCreateDraftRequest, localInitializeChatId, localMarkBookingFeePaid, refreshApplication, state, storageKey, update]);
 
   return <WorkContext.Provider value={value}>{children}</WorkContext.Provider>;
 }

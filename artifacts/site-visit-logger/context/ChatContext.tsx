@@ -3,8 +3,10 @@ import React, { createContext, type ReactNode, useCallback, useContext, useEffec
 import { useAuth } from '@/context/AuthContext';
 import { useFundi } from '@/context/FundiContext';
 import { useNotifications } from '@/context/NotificationContext';
-import type { RequestLifecycleStatus } from '@/constants/jobs';
+import type { BookingFee, JobStatus, RequestLifecycleStatus, RequestType, ServiceRequest } from '@/constants/jobs';
 import type { Coordinates } from '@/lib/location';
+
+export type { ServiceRequest } from '@/constants/jobs';
 
 export type ServiceRequestDetails = {
   id: string;
@@ -20,6 +22,9 @@ export type ServiceRequestDetails = {
   videos: string[];
   createdAt: string;
   status: RequestLifecycleStatus;
+  type?: RequestType;
+  bookingFee?: BookingFee;
+  chatId?: string;
   declineReason?: string;
   cancelledByRole?: 'client' | 'technician';
   cancelledByName?: string;
@@ -259,7 +264,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         REQUEST_RECEIVED: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
         PENDING_RESPONSE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
         OFFER_MADE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
-        ACCEPTED: ['CANCELLED'],
+        ACCEPTED: ['CANCELLED', 'DISPATCHED', 'ACTIVE'],
+        PAYMENT_PENDING: ['CANCELLED', 'DISPATCHED', 'ACTIVE'],
+        DISPATCHED: ['CANCELLED', 'ACTIVE'],
+        ACTIVE: ['CANCELLED'],
         DECLINED: [],
         CANCELLED: [],
       };

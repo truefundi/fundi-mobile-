@@ -6,12 +6,26 @@
  */
 import type { Coordinates } from '@/lib/location';
 
+export type RequestType = 'STANDARD' | 'SOS';
+
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
+
+export type BookingFee = {
+  amount: number;
+  currency: string;
+  status: PaymentStatus;
+  paidAt?: string;
+  transactionId?: string;
+};
+
 export type JobStatus =
   | 'REQUESTED'
   | 'MATCHING'
   | 'OFFERED'
   | 'ACCEPTED'
   | 'VISIT_PAID'
+  | 'DISPATCHED'
+  | 'ACTIVE'
   | 'EN_ROUTE'
   | 'ARRIVED'
   | 'DIAGNOSING'
@@ -28,13 +42,18 @@ export type JobStatus =
   | 'DECLINED'
   | 'DISPUTED';
 
+export type RequestStatus = JobStatus;
+
 export type RequestLifecycleStatus =
   | 'REQUEST_RECEIVED'
   | 'PENDING_RESPONSE'
   | 'OFFER_MADE'
   | 'ACCEPTED'
   | 'DECLINED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'PAYMENT_PENDING'
+  | 'DISPATCHED'
+  | 'ACTIVE';
 
 /** Customer-facing wording for each status. */
 export const STATUS_LABEL: Record<JobStatus, string> = {
@@ -43,6 +62,8 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   OFFERED: 'Technician found',
   ACCEPTED: 'Visit fee due',
   VISIT_PAID: 'Visit fee paid · chat ready',
+  DISPATCHED: 'Technician dispatched',
+  ACTIVE: 'Active',
   EN_ROUTE: 'On the way',
   ARRIVED: 'Technician arrived',
   DIAGNOSING: 'Diagnosing',
@@ -69,6 +90,8 @@ export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   OFFERED: 'action',
   ACCEPTED: 'action',
   VISIT_PAID: 'progress',
+  DISPATCHED: 'progress',
+  ACTIVE: 'progress',
   EN_ROUTE: 'progress',
   ARRIVED: 'progress',
   DIAGNOSING: 'progress',
@@ -152,7 +175,7 @@ export type JobEvent = {
   at: string;
 };
 
-export type Job = {
+export interface ServiceRequest {
   id: string;
   reference: string;
   service: string;
@@ -178,6 +201,7 @@ export type Job = {
   createdAt: string;
   technician?: Technician;
   chatThreadId?: string;
+  chatId?: string;
   visitFee: number;
   visitPaymentMethod?: PaymentMethod;
   quote?: Quote;
@@ -187,7 +211,17 @@ export type Job = {
   rating?: Rating;
   completedAt?: string;
   events: JobEvent[];
-};
+  type: RequestType;
+  bookingFee: {
+    amount: number;
+    currency: string;
+    status: PaymentStatus;
+    paidAt?: string;
+    transactionId?: string;
+  };
+}
+
+export interface Job extends ServiceRequest {}
 
 /** Emergency visits cost more because the technician drops everything. */
 export const VISIT_FEE = 75;
