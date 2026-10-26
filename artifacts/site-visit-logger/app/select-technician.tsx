@@ -100,28 +100,13 @@ export default function SelectTechnicianScreen() {
     if (!targetJob) return;
 
     selectTechnician(targetJob.id, toJobTechnician(tech, requestLocation));
-    const threadId = createOrGetThread(
-      tech.name,
-      'technician',
-      targetJob.id,
-      {
-        id: targetJob.id,
-        serviceName: targetJob.service,
-        problem: targetJob.problem,
-        address: targetJob.locationLabel,
-        ...(targetJob.locationLatitude !== undefined ? { latitude: targetJob.locationLatitude } : {}),
-        ...(targetJob.locationLongitude !== undefined ? { longitude: targetJob.locationLongitude } : {}),
-        thumbnailUri: targetJob.photoUris?.[0] ?? targetJob.photoUri,
-        photos: targetJob.photoUris ?? (targetJob.photoUri ? [targetJob.photoUri] : []),
-        videos: targetJob.videoUris ?? (targetJob.videoUri ? [targetJob.videoUri] : []),
-        createdAt: targetJob.createdAt,
-        status: 'REQUEST_RECEIVED',
+    router.push({
+      pathname: '/checkout/booking-fee',
+      params: {
+        requestId: targetJob.id,
+        technicianId: tech.id,
       },
-      tech.phoneNumber,
-      tech.location,
-    );
-    linkChatThread(targetJob.id, threadId);
-    router.replace(`/job/${targetJob.id}`);
+    });
   };
 
   return (
@@ -262,6 +247,22 @@ export default function SelectTechnicianScreen() {
                   {formatDistance(distance) ?? 'Distance unavailable'}
                 </Text>
               </View>
+              <Pressable
+                onPress={() => {
+                  router.push({
+                    pathname: `/technician/${item.id}` as any,
+                    params: {
+                      requestId: requestJob?.id,
+                      service,
+                      problem,
+                      locationLabel,
+                    },
+                  });
+                }}
+                style={{ paddingVertical: 4, paddingHorizontal: 6 }}
+              >
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: colors.primary }}>Profile →</Text>
+              </Pressable>
             </View>
           </Pressable>
         )}

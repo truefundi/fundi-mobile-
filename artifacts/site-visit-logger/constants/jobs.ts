@@ -223,6 +223,17 @@ export interface ServiceRequest {
 
 export interface Job extends ServiceRequest {}
 
+/** Single flat Service Booking Fee paid to confirm the booking and unlock direct technician messaging. */
+export const FLAT_BOOKING_FEE = 2500;
+export const FLAT_BOOKING_FEE_CURRENCY = 'RWF';
+
+export function formatBookingFee(amount: number = FLAT_BOOKING_FEE, currency: string = FLAT_BOOKING_FEE_CURRENCY): string {
+  if (currency === 'RWF') {
+    return `RWF ${amount.toLocaleString()}`;
+  }
+  return `$${amount.toLocaleString()}`;
+}
+
 /** Emergency visits cost more because the technician drops everything. */
 export const VISIT_FEE = 75;
 export const EMERGENCY_VISIT_FEE = 110;
