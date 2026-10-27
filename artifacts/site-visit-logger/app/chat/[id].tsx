@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -78,8 +78,6 @@ export default function StandaloneChatScreen() {
   const { account } = useAuth();
   const {
     threads,
-    activeThreadId,
-    setActiveThreadId,
     sendMessage,
     sendPriceOffer,
     respondToOffer,
@@ -143,19 +141,7 @@ export default function StandaloneChatScreen() {
   const [declineRequestId, setDeclineRequestId] = useState<string | null>(null);
   const [declineReasonText, setDeclineReasonText] = useState('');
 
-  // Keep activeThreadId synchronized
-  useEffect(() => {
-    if (thread?.id && activeThreadId !== thread.id) {
-      setActiveThreadId(thread.id);
-    }
-  }, [thread?.id, activeThreadId, setActiveThreadId]);
 
-  // Reset activeThreadId strictly on screen unmount
-  useEffect(() => {
-    return () => {
-      setActiveThreadId(null);
-    };
-  }, [setActiveThreadId]);
 
   // Inject existing request card into message feed if not already present
   const displayMessages = useMemo(() => {

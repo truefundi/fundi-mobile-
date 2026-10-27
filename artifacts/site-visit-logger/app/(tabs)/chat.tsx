@@ -171,7 +171,7 @@ export default function ChatTabScreen() {
   const router = useRouter();
   const { threadId: requestedThreadId } = useLocalSearchParams<{ threadId?: string }>();
   const { account } = useAuth();
-  const { threads, setActiveThreadId } = useChat();
+  const { threads } = useChat();
 
   const userRole = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
 
@@ -183,11 +183,6 @@ export default function ChatTabScreen() {
       });
     }
   }, [requestedThreadId, router]);
-
-  // Ensure activeThreadId is reset when looking at the conversations list
-  useEffect(() => {
-    setActiveThreadId(null);
-  }, [setActiveThreadId]);
 
   const sortedThreads = useMemo(() => {
     return [...threads].sort(

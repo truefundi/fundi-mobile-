@@ -136,7 +136,7 @@ export function ChatbotButton({
 
         {/* Micro Sparkle Indicator Accent */}
         <View style={styles.sparkleAccent}>
-          <MaterialCommunityIcons name="sparkles" size={10} color={iconColor} />
+          <MaterialCommunityIcons name={"sparkles" as any} size={10} color={iconColor} />
         </View>
       </Animated.View>
     </Pressable>
@@ -164,7 +164,7 @@ const styles = StyleSheet.create({
     }),
   },
   innerBevel: {
-    ...StyleSheet.absoluteFillObject,
+    ...(StyleSheet.absoluteFill as any),
     margin: 1.5,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.28)',

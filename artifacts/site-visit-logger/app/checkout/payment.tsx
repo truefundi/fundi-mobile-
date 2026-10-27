@@ -72,7 +72,7 @@ export default function CheckoutPaymentScreen() {
   const router = useRouter();
   const { account } = useAuth();
   const { getJob, markBookingFeePaid, linkChatThread } = useFundi();
-  const { createOrGetThread, setActiveThreadId } = useChat();
+  const { createOrGetThread } = useChat();
 
   const params = useLocalSearchParams<{
     requestId?: string;
@@ -187,7 +187,6 @@ export default function CheckoutPaymentScreen() {
 
         // Link thread to request now that it is paid
         linkChatThread(targetRequestId, threadId);
-        setActiveThreadId(threadId);
 
         // Auto-navigate to /chat/[id] after 1.4s of success animation
         setTimeout(() => {
