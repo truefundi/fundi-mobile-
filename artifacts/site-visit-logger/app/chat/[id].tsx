@@ -143,15 +143,19 @@ export default function StandaloneChatScreen() {
   const [declineRequestId, setDeclineRequestId] = useState<string | null>(null);
   const [declineReasonText, setDeclineReasonText] = useState('');
 
-  // Keep activeThreadId synchronized and reset on unmount to prevent trapping the tab listing
+  // Keep activeThreadId synchronized
   useEffect(() => {
-    if (thread && activeThreadId !== thread.id) {
+    if (thread?.id && activeThreadId !== thread.id) {
       setActiveThreadId(thread.id);
     }
+  }, [thread?.id, activeThreadId, setActiveThreadId]);
+
+  // Reset activeThreadId strictly on screen unmount
+  useEffect(() => {
     return () => {
       setActiveThreadId(null);
     };
-  }, [thread, activeThreadId, setActiveThreadId]);
+  }, [setActiveThreadId]);
 
   // Inject existing request card into message feed if not already present
   const displayMessages = useMemo(() => {
