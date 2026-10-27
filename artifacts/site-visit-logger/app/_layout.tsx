@@ -107,6 +107,7 @@ function RootLayoutNav() {
         <Stack.Screen name="technician/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="checkout/booking-fee" options={{ headerShown: false }} />
         <Stack.Screen name="checkout/payment" options={{ headerShown: false }} />
+        <Stack.Screen name="checkout/sos-dispatch" options={{ headerShown: false }} />
         <Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
         {/* Every screen below draws its own back control, so the stack header is off. */}
         <Stack.Screen name="request" options={{ headerShown: false }} />

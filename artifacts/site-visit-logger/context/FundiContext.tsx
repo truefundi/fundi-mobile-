@@ -76,6 +76,8 @@ type FundiContextValue = {
   recordSettlement: (id: string, method: SettlementMethod) => void;
   submitRating: (id: string, rating: Rating) => void;
   cancelJob: (id: string, recipientPhones?: string[]) => void;
+  advance: (id: string, next: JobStatus) => void;
+  assignEmergencyTechnician: (id: string, technician: Technician) => void;
   /** Assigns a manually selected mock technician to the request. */
   selectTechnician: (id: string, technician: Technician) => void;
   linkChatThread: (id: string, threadId: string) => void;
@@ -91,6 +93,7 @@ export const FundiContext = createContext<FundiContextValue | undefined>(undefin
 const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = {
   REQUESTED: { title: 'Request sent', text: 'Choose an available technician for your request.' },
   MATCHING: { title: 'Choose a technician', text: 'Browse the available local mock technicians.' },
+  SEARCHING_DISPATCH: { title: 'Emergency Dispatch Active', text: 'Alerting nearby verified emergency technicians...' },
   OFFERED: { title: 'Technician selected', text: 'Review the technician you selected before continuing.' },
   ACCEPTED: { title: 'Technician accepted your request', text: 'Pay the visit fee to confirm the callout.' },
   VISIT_PAID: { title: 'Payment successful', text: 'Your visit fee has been received.' },
@@ -269,10 +272,17 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   const selectTechnician = useCallback(
     (id: string, technician: Technician) => {
       update(id, (job) =>
-        job.status === 'REQUESTED' || job.status === 'MATCHING' || job.status === 'OFFERED' || job.status === 'CANCELLED'
+        job.status === 'REQUESTED' || job.status === 'MATCHING' || job.status === 'OFFERED' || job.status === 'CANCELLED' || job.status === 'SEARCHING_DISPATCH'
           ? transition({ ...job, technician }, 'OFFERED')
           : job,
       );
+    },
+    [update],
+  );
+
+  const assignEmergencyTechnician = useCallback(
+    (id: string, technician: Technician) => {
+      update(id, (job) => transition({ ...job, technician }, 'ACCEPTED'));
     },
     [update],
   );
@@ -407,9 +417,12 @@ export function FundiProvider({ children }: { children: ReactNode }) {
           paidAt: now,
           transactionId,
         };
-        const nextStatus: JobStatus = job.status === 'PAYMENT_PENDING'
-          ? (job.type === 'SOS' ? 'DISPATCHED' : 'VISIT_PAID')
-          : job.status;
+        const nextStatus: JobStatus =
+          job.type === 'SOS'
+            ? 'SEARCHING_DISPATCH'
+            : job.status === 'PAYMENT_PENDING'
+              ? 'VISIT_PAID'
+              : job.status;
 
         const updatedJob: Job = {
           ...job,
@@ -582,6 +595,8 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       submitRating: (id, rating) => update(id, (job) => ({ ...job, rating })),
       cancelJob: (id, recipientPhones) =>
         update(id, (job) => transition(job, 'CANCELLED'), recipientPhones),
+      advance,
+      assignEmergencyTechnician,
       selectTechnician,
       linkChatThread,
       findAnotherTechnician,
@@ -589,7 +604,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       submitDiagnosis,
       completeRepair,
     };
-  }, [addRequest, advance, completeRepair, createDraftRequest, findAnotherTechnician, initializeChatId, isHydrated, jobs, linkChatThread, markArrived, markBookingFeePaid, selectTechnician, submitDiagnosis, update]);
+  }, [addRequest, advance, assignEmergencyTechnician, completeRepair, createDraftRequest, findAnotherTechnician, initializeChatId, isHydrated, jobs, linkChatThread, markArrived, markBookingFeePaid, selectTechnician, submitDiagnosis, update]);
 
   return <FundiContext.Provider value={value}>{children}</FundiContext.Provider>;
 }

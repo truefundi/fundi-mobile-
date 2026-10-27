@@ -24,6 +24,7 @@ export type BookingFee = {
 export type JobStatus =
   | 'REQUESTED'
   | 'MATCHING'
+  | 'SEARCHING_DISPATCH'
   | 'OFFERED'
   | 'ACCEPTED'
   | 'VISIT_PAID'
@@ -62,6 +63,7 @@ export type RequestLifecycleStatus =
 export const STATUS_LABEL: Record<JobStatus, string> = {
   REQUESTED: 'Request sent',
   MATCHING: 'Choose a technician',
+  SEARCHING_DISPATCH: 'Dispatching technician',
   OFFERED: 'Technician found',
   ACCEPTED: 'Visit fee due',
   VISIT_PAID: 'Visit fee paid · chat ready',
@@ -90,6 +92,7 @@ export type StatusTone = 'progress' | 'action' | 'success' | 'danger';
 export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   REQUESTED: 'progress',
   MATCHING: 'progress',
+  SEARCHING_DISPATCH: 'progress',
   OFFERED: 'action',
   ACCEPTED: 'action',
   VISIT_PAID: 'progress',
@@ -240,6 +243,7 @@ export function formatBookingFee(amount: number = FLAT_BOOKING_FEE, currency: st
 /** Emergency visits cost more because the technician drops everything. */
 export const VISIT_FEE = 75;
 export const EMERGENCY_VISIT_FEE = 110;
+export const EMERGENCY_DISPATCH_FEE = 5000;
 
 /** Fundi's cut of the visit fee. The repair itself settles between the two parties. */
 export const COMMISSION_RATE = 0.3;

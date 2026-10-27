@@ -19,6 +19,7 @@ import { useNotifications } from '@/context/NotificationContext';
 const STATUS_ICON: Partial<Record<JobStatus | RequestLifecycleStatus, keyof typeof Ionicons.glyphMap>> = {
   REQUESTED: 'paper-plane-outline',
   MATCHING: 'search-outline',
+  SEARCHING_DISPATCH: 'radio-outline',
   OFFERED: 'person-add-outline',
   ACCEPTED: 'checkmark-circle-outline',
   VISIT_PAID: 'card-outline',

@@ -4,6 +4,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -89,10 +90,12 @@ export default function StandaloneChatScreen() {
     id: routeId,
     requestId,
     firstMessage,
+    type: typeParam,
   } = useLocalSearchParams<{
     id?: string;
     requestId?: string;
     firstMessage?: string;
+    type?: string;
   }>();
 
   // Find target thread by thread ID or associated job/request ID
@@ -113,6 +116,8 @@ export default function StandaloneChatScreen() {
   const threadServiceRequest = useMemo(() => {
     return thread?.messages.find((m) => Boolean(m.serviceRequest))?.serviceRequest;
   }, [thread?.messages]);
+
+  const isSos = typeParam === 'SOS' || job?.type === 'SOS' || threadServiceRequest?.type === 'SOS';
 
   // Check booking fee gatekeeping status
   const hasAssociatedBooking = Boolean(job || threadServiceRequest?.bookingFee || thread?.jobId);
@@ -226,6 +231,23 @@ export default function StandaloneChatScreen() {
     }
   };
 
+  const technicianPhone = thread?.technicianPhone || job?.technician?.phone;
+
+  const handleCallTechnician = () => {
+    if (technicianPhone) {
+      Linking.openURL(`tel:${technicianPhone}`);
+    }
+  };
+
+  const handleOpenMap = () => {
+    const lat = job?.locationLatitude ?? threadServiceRequest?.latitude;
+    const lng = job?.locationLongitude ?? threadServiceRequest?.longitude;
+    const address = job?.locationLabel ?? threadServiceRequest?.address;
+    if (canOpenMapNavigation({ latitude: lat, longitude: lng, address })) {
+      openMapNavigation({ latitude: lat, longitude: lng, address });
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       style={[styles.screen, { backgroundColor: colors.background }]}
@@ -245,50 +267,115 @@ export default function StandaloneChatScreen() {
       >
         <BackButton onPress={handleBack} />
         <View style={styles.headerInfo}>
-          <Text numberOfLines={1} style={[styles.headerName, { color: colors.foreground }]}>
-            {otherName}
-          </Text>
+          <View style={styles.headerTitleRow}>
+            <Text numberOfLines={1} style={[styles.headerName, { color: colors.foreground }]}>
+              {otherName}
+            </Text>
+            {isSos && (
+              <View style={styles.sosInlineBadge} testID="sos-chat-header-badge">
+                <View style={styles.sosDot} />
+                <Text style={styles.sosInlineBadgeText}>SOS Priority</Text>
+              </View>
+            )}
+          </View>
           <View style={styles.headerStatusRow}>
             <View
               style={[
                 styles.onlineDot,
-                { backgroundColor: isThreadTerminated ? colors.destructive : isBookingFeePaid ? colors.success : colors.warning },
+                {
+                  backgroundColor: isSos
+                    ? '#ef4444'
+                    : isThreadTerminated
+                      ? colors.destructive
+                      : isBookingFeePaid
+                        ? colors.success
+                        : colors.warning,
+                },
               ]}
             />
-            <Text style={[styles.headerStatusText, { color: colors.mutedForeground }]}>
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.headerStatusText,
+                { color: isSos ? '#ef4444' : colors.mutedForeground, fontWeight: isSos ? '600' : '400' },
+              ]}
+            >
               {isThreadTerminated
                 ? 'Request Inactive'
-                : thread?.agreedPrice
-                  ? `Agreed: RWF ${thread.agreedPrice.toLocaleString()}`
-                  : isBookingFeePaid
-                    ? 'Booking Confirmed · Chat Active'
-                    : 'Booking Fee Pending'}
+                : isSos
+                  ? '⚡ 5–15m ETA · En route'
+                  : thread?.agreedPrice
+                    ? `Agreed: RWF ${thread.agreedPrice.toLocaleString()}`
+                    : isBookingFeePaid
+                      ? 'Booking Confirmed · Chat Active'
+                      : 'Booking Fee Pending'}
             </Text>
           </View>
         </View>
 
-        {/* Shortcut to unified Job Tracking screen */}
-        {targetJobId ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="View Job Tracking"
-            testID="chat-header-job-tracking-button"
-            onPress={() => router.push(`/job/${targetJobId}` as any)}
-            style={({ pressed }) => [
-              styles.headerJobBtn,
-              {
-                backgroundColor: colors.secondary,
-                borderColor: colors.border,
-                opacity: pressed ? 0.8 : 1,
-              },
-            ]}
-          >
-            <Ionicons name="clipboard-outline" size={15} color={colors.primary} />
-            <Text style={[styles.headerJobBtnText, { color: colors.primary }]}>Job Details</Text>
-          </Pressable>
-        ) : (
-          <View style={{ width: 34 }} />
-        )}
+        {/* Quick Actions (Call / GPS for SOS) & Job Tracking */}
+        <View style={styles.headerActionsRow}>
+          {isSos && (
+            <>
+              {technicianPhone && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Call Technician"
+                  testID="chat-header-call-button"
+                  onPress={handleCallTechnician}
+                  style={({ pressed }) => [
+                    styles.headerActionBtn,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                      opacity: pressed ? 0.75 : 1,
+                    },
+                  ]}
+                >
+                  <Ionicons name="call" size={15} color="#ef4444" />
+                </Pressable>
+              )}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open Navigation"
+                testID="chat-header-gps-button"
+                onPress={handleOpenMap}
+                style={({ pressed }) => [
+                  styles.headerActionBtn,
+                  {
+                    backgroundColor: colors.card,
+                    borderColor: colors.border,
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}
+              >
+                <Ionicons name="navigate" size={15} color="#ef4444" />
+              </Pressable>
+            </>
+          )}
+
+          {targetJobId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="View Job Tracking"
+              testID="chat-header-job-tracking-button"
+              onPress={() => router.push(`/job/${targetJobId}` as any)}
+              style={({ pressed }) => [
+                styles.headerJobBtn,
+                {
+                  backgroundColor: colors.secondary,
+                  borderColor: colors.border,
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
+            >
+              <Ionicons name="clipboard-outline" size={15} color={colors.primary} />
+              {!isSos && <Text style={[styles.headerJobBtnText, { color: colors.primary }]}>Job Details</Text>}
+            </Pressable>
+          ) : !isSos ? (
+            <View style={{ width: 34 }} />
+          ) : null}
+        </View>
       </View>
 
       {/* Cancellation / Termination Notice Banner */}
@@ -326,7 +413,7 @@ export default function StandaloneChatScreen() {
       )}
 
       {/* Booking Confirmed / First Message Banner */}
-      {firstMessage === 'true' && isBookingFeePaid && !isThreadTerminated && (
+      {firstMessage === 'true' && isBookingFeePaid && !isThreadTerminated && !isSos && (
         <View style={styles.bannerPadding}>
           <Notice
             tone="success"
@@ -1034,9 +1121,36 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
   },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   headerName: {
     fontFamily: 'Inter_700Bold',
     fontSize: 16,
+  },
+  sosInlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  sosDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ef4444',
+  },
+  sosInlineBadgeText: {
+    color: '#ef4444',
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 11,
   },
   headerStatusRow: {
     flexDirection: 'row',
@@ -1052,6 +1166,19 @@ const styles = StyleSheet.create({
   headerStatusText: {
     fontFamily: 'Inter_400Regular',
     fontSize: 12,
+  },
+  headerActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  headerActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerJobBtn: {
     flexDirection: 'row',

@@ -121,6 +121,7 @@ export default function CheckoutPaymentScreen() {
 
   // Back guard: Prevent hardware back navigation once payment is confirmed or already paid
   useEffect(() => {
+    if (Platform.OS !== 'android') return;
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (paymentSuccess || job?.bookingFee?.status === 'PAID') {
         const dest = job?.chatThreadId || job?.chatId || job?.id || params.requestId;

@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 
 type Variant = 'primary' | 'secondary' | 'outline' | 'danger';
@@ -19,7 +19,7 @@ type Props = {
   /** The compact build for actions inside cards and empty states. */
   size?: 'large' | 'small';
   testID?: string;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   /** Override the label color, e.g. white text on a solid background. */
   textColor?: string;
 };
