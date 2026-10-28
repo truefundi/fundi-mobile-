@@ -216,6 +216,11 @@ export interface ServiceRequest {
   settlementMethod?: SettlementMethod;
   rating?: Rating;
   completedAt?: string;
+  clientName?: string;
+  clientPhone?: string;
+  agreedPrice?: number;
+  completedPhotoUri?: string;
+  cancellationReason?: string;
   events: JobEvent[];
   type: RequestType;
   bookingFee: {

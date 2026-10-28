@@ -9,6 +9,7 @@ import {
   logout as logoutApi,
   registerWithPin,
   restoreSession,
+  updateUserRole,
   type ApiUser,
 } from '@/lib/auth-api';
 
@@ -39,6 +40,8 @@ type AuthContextValue = {
   register: (name: string, phone: string, pin: string, role?: 'CUSTOMER' | 'TECHNICIAN') => Promise<void>;
   /** Signs in with Phone and 5-digit PIN. */
   login: (phone: string, pin: string) => Promise<void>;
+  /** Updates the active account role (e.g. promoting to TECHNICIAN). */
+  updateRole: (role: 'CUSTOMER' | 'TECHNICIAN') => Promise<void>;
   /** Optional legacy helpers for compatibility */
   resendCode: () => Promise<void>;
   verifyCode: (entered: string) => Promise<void>;
@@ -120,6 +123,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setVerification(null);
   }, []);
 
+  const updateRole = useCallback(
+    async (newRole: 'CUSTOMER' | 'TECHNICIAN') => {
+      if (!account) return;
+      await updateUserRole(account.phone, newRole);
+      setAccount((prev) => (prev ? { ...prev, role: newRole } : null));
+    },
+    [account],
+  );
+
   const resendCode = useCallback(async () => {
     // No-op for PIN auth
   }, []);
@@ -156,13 +168,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isHydrated,
       register,
       login,
+      updateRole,
       resendCode,
       verifyCode,
       cancelVerification,
       signOut,
       deleteAccount,
     }),
-    [account, cancelVerification, deleteAccount, isHydrated, login, register, resendCode, signOut, verification, verifyCode],
+    [account, cancelVerification, deleteAccount, isHydrated, login, register, resendCode, signOut, updateRole, verification, verifyCode],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
