@@ -186,6 +186,11 @@ export type Job = {
   settlementMethod?: SettlementMethod;
   rating?: Rating;
   completedAt?: string;
+  clientName?: string;
+  clientPhone?: string;
+  agreedPrice?: number;
+  completedPhotoUri?: string;
+  cancellationReason?: string;
   events: JobEvent[];
 };
 

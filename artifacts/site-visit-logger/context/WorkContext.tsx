@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { workKey } from '@/constants/storage';
 import {
@@ -8,9 +8,11 @@ import {
   type WorkStatus,
 } from '@/constants/work';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
-import type { Job } from '@/constants/jobs';
+import { isClosed, isTerminated, COMMISSION_RATE, type Job, type JobStatus } from '@/constants/jobs';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
+import { updateUserRole } from '@/lib/auth-api';
 
 /** Which side of the marketplace the app is showing. */
 export type Mode = 'hiring' | 'working';
@@ -176,6 +178,58 @@ async function appendLocalFile(form: FormData, uri: string, fileName: string, mi
   } as any);
 }
 
+export const TECH_JOBS_KEY = '@fundi/technician-jobs';
+
+const DEMO_TECH_JOBS: Record<string, Job[]> = {
+  '+250788555555': [
+    {
+      id: 'tech-job-claude-1',
+      reference: 'FND-8821',
+      service: 'Plumbing & Pipe Repair',
+      problem: 'Kitchen sink drain pipe is fractured and leaking water onto the kitchen cabinet floor. Needs immediate pipe replacement and sealing.',
+      urgency: 'Today',
+      locationLabel: 'KG 622 St, Kimihurura, Kigali',
+      locationLatitude: -1.9536,
+      locationLongitude: 30.0928,
+      status: 'REPAIR_IN_PROGRESS',
+      statusSince: new Date(Date.now() - 3600000).toISOString(),
+      createdAt: new Date(Date.now() - 7200000).toISOString(),
+      clientName: 'Alice Uwase',
+      clientPhone: '+250788111111',
+      agreedPrice: 28000,
+      visitFee: 28000,
+      chatThreadId: 'thread-demo-alice',
+      events: [
+        {
+          id: 'evt-claude-1',
+          status: 'REPAIR_IN_PROGRESS',
+          title: 'Job in progress',
+          text: 'Technician started the job with agreed fee of RWF 28,000',
+          at: new Date(Date.now() - 3600000).toISOString(),
+        },
+      ],
+    },
+    {
+      id: 'tech-job-claude-2',
+      reference: 'FND-6412',
+      service: 'Bathroom Shower Installation',
+      problem: 'Installed dual-head shower system and verified water pressure and heating.',
+      urgency: 'Today',
+      locationLabel: 'KN 3 Ave, Kiyovu, Kigali',
+      status: 'COMPLETED',
+      statusSince: new Date(Date.now() - 86400000).toISOString(),
+      createdAt: new Date(Date.now() - 90000000).toISOString(),
+      completedAt: new Date(Date.now() - 86400000).toISOString(),
+      clientName: 'Eric Mugabo',
+      clientPhone: '+250788222222',
+      agreedPrice: 45000,
+      visitFee: 45000,
+      chatThreadId: 'thread-demo-eric',
+      events: [],
+    },
+  ],
+};
+
 type WorkContextValue = {
   mode: Mode;
   setMode: (mode: Mode) => void;
@@ -190,7 +244,11 @@ type WorkContextValue = {
   offers: Job[];
   mine: Job[];
   done: Job[];
+  cancelled: Job[];
   earnings: number;
+  addOrUpdateJob: (job: Job) => Promise<void>;
+  cancelJob: (jobId: string, reason: string) => Promise<void>;
+  completeJob: (jobId: string, completedPhotoUri?: string) => Promise<void>;
 };
 
 const WorkContext = createContext<WorkContextValue | null>(null);
@@ -198,8 +256,145 @@ const WorkContext = createContext<WorkContextValue | null>(null);
 /** Technician profile and verification state are server-owned; local storage keeps only the draft. */
 export function WorkProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
+  const { addNotification } = useNotifications();
   const [state, setState] = useState<Stored>(EMPTY);
+  const [techJobs, setTechJobs] = useState<Job[]>([]);
+  const techJobsRef = useRef<Job[]>([]);
   const storageKey = account ? workKey(account.phone) : null;
+
+  useEffect(() => {
+    if (!account?.phone) {
+      setTechJobs([]);
+      techJobsRef.current = [];
+      return;
+    }
+    const key = `${TECH_JOBS_KEY}/${account.phone}`;
+    void AsyncStorage.getItem(key).then((raw) => {
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setTechJobs(parsed);
+            techJobsRef.current = parsed;
+            return;
+          }
+        } catch {}
+      }
+      const defaults = DEMO_TECH_JOBS[account.phone] ?? [];
+      setTechJobs(defaults);
+      techJobsRef.current = defaults;
+      if (defaults.length > 0) {
+        void AsyncStorage.setItem(key, JSON.stringify(defaults));
+      }
+    });
+  }, [account?.phone]);
+
+  const addOrUpdateJob = useCallback(
+    async (job: Job) => {
+      const updated = [job, ...techJobsRef.current.filter((j) => j.id !== job.id)];
+      techJobsRef.current = updated;
+      setTechJobs(updated);
+      if (account?.phone) {
+        await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
+      }
+    },
+    [account?.phone],
+  );
+
+  const cancelJob = useCallback(
+    async (jobId: string, reason: string) => {
+      const now = new Date().toISOString();
+      const targetJob = techJobsRef.current.find((j) => j.id === jobId);
+      const updated = techJobsRef.current.map((j) => {
+        if (j.id === jobId) {
+          return {
+            ...j,
+            status: 'CANCELLED' as JobStatus,
+            cancellationReason: reason,
+            statusSince: now,
+            events: [
+              ...j.events,
+              {
+                id: `evt-${Date.now()}`,
+                status: 'CANCELLED' as JobStatus,
+                title: 'Job cancelled by technician',
+                text: reason,
+                at: now,
+              },
+            ],
+          };
+        }
+        return j;
+      });
+      techJobsRef.current = updated;
+      setTechJobs(updated);
+      if (account?.phone) {
+        await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
+      }
+      if (targetJob?.clientPhone) {
+        addNotification({
+          id: `cancel-${jobId}-${Date.now()}`,
+          jobId,
+          threadId: targetJob.chatThreadId,
+          status: 'CANCELLED',
+          service: targetJob.service,
+          title: 'Job cancelled by technician',
+          text: `The technician cancelled the in-progress job: ${reason}`,
+          at: now,
+          recipientPhones: [targetJob.clientPhone],
+        });
+      }
+    },
+    [account?.phone, addNotification],
+  );
+
+  const completeJob = useCallback(
+    async (jobId: string, completedPhotoUri?: string) => {
+      const now = new Date().toISOString();
+      const targetJob = techJobsRef.current.find((j) => j.id === jobId);
+      const updated = techJobsRef.current.map((j) => {
+        if (j.id === jobId) {
+          return {
+            ...j,
+            status: 'COMPLETED' as JobStatus,
+            completedPhotoUri,
+            completedAt: now,
+            statusSince: now,
+            events: [
+              ...j.events,
+              {
+                id: `evt-${Date.now()}`,
+                status: 'COMPLETED' as JobStatus,
+                title: 'Job completed',
+                text: 'Technician has completed the work successfully.',
+                at: now,
+              },
+            ],
+          };
+        }
+        return j;
+      });
+      techJobsRef.current = updated;
+      setTechJobs(updated);
+      if (account?.phone) {
+        await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
+      }
+      if (targetJob?.clientPhone) {
+        addNotification({
+          id: `complete-${jobId}-${Date.now()}`,
+          jobId,
+          threadId: targetJob.chatThreadId,
+          status: 'COMPLETED',
+          service: targetJob.service,
+          title: 'Job completed',
+          text: `Your technician has completed the service (${targetJob.service}). Agreed fee: RWF ${(targetJob.agreedPrice || targetJob.visitFee || 0).toLocaleString()}.`,
+          at: now,
+          recipientPhones: [targetJob.clientPhone],
+        });
+      }
+    },
+    [account?.phone, addNotification],
+  );
 
   const update = useCallback(
     (next: (current: Stored) => Stored) => {
@@ -218,6 +413,10 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
   const refreshApplication = useCallback(async () => {
     if (!storageKey) return;
+    if (account?.role !== 'TECHNICIAN') {
+      setState((current) => ({ ...current, status: 'none' }));
+      return;
+    }
     try {
       const serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
         authenticated: true,
@@ -227,19 +426,14 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       });
       setState((current) => {
         const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID' && document.status !== 'DENIED');
-        const hasCertificate = documents.some((document) => document.type === 'CERTIFICATE' && document.status !== 'DENIED');
-
-        // Safely check for either the URL or the raw Object Key in case the backend hasn't been updated yet
-        const hasProfilePic = !!(serverProfile.profilePictureUrl || (serverProfile as any).profilePictureObjectKey);
-
-        const applicationNeedsFiles = !hasProfilePic || !hasNationalId || !hasCertificate;
+        const applicationNeedsFiles = !hasNationalId;
         const next: Stored = {
           ...current,
           status: statusFromApi(serverProfile.verificationStatus),
           isAvailable: serverProfile.availabilityStatus === 'ONLINE',
           profile: mapProfile(serverProfile, documents, current.profile),
           applicationError: applicationNeedsFiles
-            ? 'Your application is missing a profile picture, national ID, or certificate. Add the missing items and retry.'
+            ? 'Your application is missing your national ID document. Add your ID and retry.'
             : null,
           submissionFailed: applicationNeedsFiles,
         };
@@ -267,7 +461,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState((current) => ({ ...current, applicationError: message }));
       throw error;
     }
-  }, [storageKey]);
+  }, [account?.role, storageKey]);
 
   useEffect(() => {
     if (!storageKey) {
@@ -278,7 +472,13 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     AsyncStorage.getItem(storageKey)
       .then((raw) => {
         if (!mounted) return;
-        setState(parseStored(raw));
+        const parsed = parseStored(raw);
+        // Non-technicians must complete the technician application first
+        if (account?.role !== 'TECHNICIAN') {
+          setState({ ...parsed, status: 'none' });
+          return;
+        }
+        setState(parsed);
         void refreshApplication().catch(() => undefined);
       })
       .catch((error: unknown) => {
@@ -458,8 +658,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', { authenticated: true }),
             apiRequest<ApiTechnicianDocument[]>('/api/v1/technicians/profile/documents', { authenticated: true }),
           ]);
+          if (account?.phone) {
+            await updateUserRole(account.phone, 'TECHNICIAN');
+          }
           savedState = {
             ...savedState,
+            mode: 'working',
             status: statusFromApi(updatedProfile.verificationStatus),
             isAvailable: updatedProfile.availabilityStatus === 'ONLINE',
             profile: mapProfile(updatedProfile, updatedDocuments, localDraft),
@@ -481,11 +685,17 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         }
       },
       offers: [],
-      mine: [],
-      done: [],
-      earnings: 0,
+      mine: techJobs.filter((j) => !isClosed(j.status) && !isTerminated(j.status)),
+      done: techJobs.filter((j) => j.status === 'COMPLETED' || j.status === 'REPAIR_COMPLETED'),
+      cancelled: techJobs.filter((j) => isTerminated(j.status)),
+      earnings: techJobs
+        .filter((j) => j.status === 'COMPLETED' || j.status === 'REPAIR_COMPLETED')
+        .reduce((sum, j) => sum + (j.agreedPrice || j.visitFee * (1 - COMMISSION_RATE)), 0),
+      addOrUpdateJob,
+      cancelJob,
+      completeJob,
     };
-  }, [account, refreshApplication, state, storageKey, update]);
+  }, [account, addOrUpdateJob, cancelJob, completeJob, refreshApplication, state, storageKey, techJobs, update]);
 
   return <WorkContext.Provider value={value}>{children}</WorkContext.Provider>;
 }

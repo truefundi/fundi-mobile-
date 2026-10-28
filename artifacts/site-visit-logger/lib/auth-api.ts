@@ -225,6 +225,55 @@ export async function logout(): Promise<void> {
   await clearTokens();
 }
 
+/**
+ * Update a user's role (e.g. promoting from CUSTOMER to TECHNICIAN upon application submission).
+ */
+export async function updateUserRole(
+  phoneNumber: string,
+  newRole: 'CUSTOMER' | 'TECHNICIAN' = 'TECHNICIAN',
+): Promise<ApiUser | null> {
+  const cleaned = phoneNumber.trim();
+  let user: ApiUser | null = null;
+
+  if (TEST_USERS[cleaned]) {
+    TEST_USERS[cleaned].role = newRole;
+    user = { ...TEST_USERS[cleaned], role: newRole };
+  }
+
+  const stored = await getStoredUsers();
+  if (stored[cleaned]) {
+    stored[cleaned] = { ...stored[cleaned], role: newRole };
+    user = stored[cleaned];
+    await saveStoredUsers(stored);
+  } else if (user) {
+    stored[cleaned] = user;
+    await saveStoredUsers(stored);
+  }
+
+  // Update current session user if present
+  try {
+    const raw = isWeb()
+      ? window.localStorage.getItem(MOCK_CURRENT_USER_KEY)
+      : await AsyncStorage.getItem(MOCK_CURRENT_USER_KEY);
+    if (raw) {
+      const current = JSON.parse(raw);
+      if (current && (current.phoneNumber === cleaned || !user)) {
+        current.role = newRole;
+        user = current;
+      }
+    }
+  } catch {}
+
+  if (user) {
+    if (isWeb()) {
+      window.localStorage.setItem(MOCK_CURRENT_USER_KEY, JSON.stringify(user));
+    }
+    await AsyncStorage.setItem(MOCK_CURRENT_USER_KEY, JSON.stringify(user));
+  }
+
+  return user;
+}
+
 export async function deleteCurrentAccount(): Promise<void> {
   await logout();
-}
+}
