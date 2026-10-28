@@ -16,7 +16,6 @@ import { RepairInProgress } from '@/components/job/RepairInProgress';
 import { RepairQuote } from '@/components/job/RepairQuote';
 import { Settlement } from '@/components/job/Settlement';
 import { TechnicianFound } from '@/components/job/TechnicianFound';
-import { VisitFee } from '@/components/job/VisitFee';
 import { TechnicianCard } from '@/components/ui/TechnicianCard';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -123,7 +122,7 @@ export default function JobScreen() {
       job.technician.location,
     );
     if (!job.chatThreadId) linkChatThread(job.id, threadId);
-    router.replace({ pathname: '/(tabs)/chat', params: { threadId } });
+    router.push({ pathname: `/chat/${threadId}` as any, params: { requestId: job.id } });
   };
 
   let stage: ReactNode;
@@ -154,25 +153,40 @@ export default function JobScreen() {
 
     case 'ACCEPTED':
       stage = (
-        <VisitFee
-          job={job}
-          onPay={(method) => {
-            tap();
-            payVisitFee(job.id, method);
-            openPaidJobChat();
-          }}
-          onCancel={() => setPending('cancel')}
-        />
+        <StageScreen
+          eyebrow="SERVICE BOOKING FEE"
+          title="Confirm your technician booking"
+          subtitle="Pay the flat Service Booking Fee to unlock direct real-time chat with your technician."
+          footer={
+            <>
+              <Button
+                label="Review & Pay Booking Fee"
+                icon="arrow-forward"
+                onPress={() => router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service } })}
+                testID="review-booking-fee-button"
+              />
+              <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} testID="visit-fee-cancel-button" />
+            </>
+          }
+        >
+          {job.technician ? <TechnicianCard technician={job.technician} compact caption="Selected specialist" /> : null}
+          <Notice
+            tone="info"
+            icon="information-circle-outline"
+            text="This booking fee secures your request and unlocks direct chat with your technician. The final cost of the repair/service will be agreed upon and settled directly between you and the technician."
+          />
+        </StageScreen>
       );
       break;
 
+    case 'DISPATCHED':
     case 'VISIT_PAID':
     case 'EN_ROUTE':
       stage = (
         <StageScreen
-          eyebrow="VISIT FEE PAID"
+          eyebrow="BOOKING CONFIRMED"
           title="Continue in your technician chat"
-          subtitle="Your request and attachments are ready for the selected technician to review."
+          subtitle="Your booking fee is paid. Your request and attachments are ready for the technician to review."
           footer={
             <Button
               label="Open technician chat"
@@ -241,6 +255,39 @@ export default function JobScreen() {
       break;
 
     case 'PAYMENT_PENDING':
+      if (!job.quote) {
+        stage = (
+          <StageScreen
+            eyebrow="SERVICE BOOKING FEE"
+            title="Service Booking Fee Required"
+            subtitle="Pay the flat Service Booking Fee to confirm your technician and unlock direct chat."
+            footer={
+              <>
+                <Button
+                  label="Pay Booking Fee"
+                  icon="arrow-forward"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/checkout/booking-fee',
+                      params: { requestId: job.id, technicianId: job.technician?.id, service: job.service },
+                    })
+                  }
+                  testID="pay-booking-fee-pending-button"
+                />
+                <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} />
+              </>
+            }
+          >
+            {job.technician ? <TechnicianCard technician={job.technician} compact caption="Selected specialist" /> : null}
+            <Notice
+              tone="info"
+              icon="information-circle-outline"
+              text="This booking fee secures your request and unlocks direct chat with your technician. The final cost of the repair/service will be agreed upon and settled directly between you and the technician."
+            />
+          </StageScreen>
+        );
+        break;
+      }
       stage = (
         <Settlement
           job={job}

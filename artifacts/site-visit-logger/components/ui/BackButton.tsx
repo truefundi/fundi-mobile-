@@ -8,10 +8,11 @@ type Props = {
   testID?: string;
   /** Read out instead of "Go back" when the arrow does something narrower. */
   accessibilityLabel?: string;
+  color?: string;
 };
 
 /** The one back arrow: a 44pt target, so it is easy to hit on any phone. */
-export function BackButton({ onPress, testID, accessibilityLabel = 'Go back' }: Props) {
+export function BackButton({ onPress, testID, accessibilityLabel = 'Go back', color }: Props) {
   const colors = useColors();
   return (
     <Pressable
@@ -22,7 +23,7 @@ export function BackButton({ onPress, testID, accessibilityLabel = 'Go back' }: 
       hitSlop={6}
       style={({ pressed }) => [styles.button, { backgroundColor: pressed ? colors.muted : 'transparent' }]}
     >
-      <Feather name="arrow-left" size={22} color={colors.foreground} />
+      <Feather name="arrow-left" size={22} color={color ?? colors.foreground} />
     </Pressable>
   );
 }

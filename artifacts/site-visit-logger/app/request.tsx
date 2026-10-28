@@ -16,6 +16,7 @@ import { PageHeading } from '@/components/ui/PageHeading';
 import { useColors } from '@/hooks/useColors';
 import { SERVICES } from '@/constants/services';
 import { PLACE_ICON, type SavedPlace } from '@/constants/places';
+import { useAuth } from '@/context/AuthContext';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
@@ -51,12 +52,32 @@ export default function RequestScreen() {
   const { width } = useWindowDimensions();
   const narrow = width < 360;
   const router = useRouter();
-  const { service: serviceParam } = useLocalSearchParams<{ service?: string }>();
-  
-  const [service, setService] = useState(serviceParam || SERVICES[0]?.label || 'General Maintenance');
+  const { service: serviceParam, emergency: emergencyParam } = useLocalSearchParams<{
+    service?: string;
+    emergency?: string;
+  }>();
+  const isEmergency = emergencyParam === 'true';
+
+  const [service, setService] = useState(
+    isEmergency
+      ? (serviceParam || 'Emergency Service')
+      : (serviceParam || SERVICES[0]?.label || 'General Maintenance')
+  );
   const { addRequest } = useFundi();
-  const { savedPlaces, preferences } = useProfile();
+  const { account } = useAuth();
+  const { profile, savedPlaces, preferences } = useProfile();
   const defaultAddress = savedPlaces.find((place) => place.id === preferences.defaultPlaceId)?.address;
+
+  // Emergency contact info auto-fill
+  const defaultContactName = profile?.name || account?.name || '';
+  const defaultContactPhone = profile?.phone || account?.phone || '';
+  const [contactName, setContactName] = useState(defaultContactName);
+  const [contactPhone, setContactPhone] = useState(defaultContactPhone);
+
+  useEffect(() => {
+    if (defaultContactName && !contactName) setContactName(defaultContactName);
+    if (defaultContactPhone && !contactPhone) setContactPhone(defaultContactPhone);
+  }, [defaultContactName, defaultContactPhone]);
 
   const [step, setStep] = useState(1);
   const [problem, setProblem] = useState('');
@@ -89,8 +110,75 @@ export default function RequestScreen() {
   const [draftError, setDraftError] = useState('');
 
   useEffect(() => {
-    if (defaultAddress) setAddress((current) => (current.trim() ? current : defaultAddress));
-  }, [defaultAddress]);
+    if (defaultAddress && !isEmergency) setAddress((current) => (current.trim() ? current : defaultAddress));
+  }, [defaultAddress, isEmergency]);
+
+  // Auto-fill current GPS location in emergency flow
+  useEffect(() => {
+    if (!isEmergency) return;
+    let active = true;
+
+    const autoFetchGpsLocation = async () => {
+      setIsLocating(true);
+      try {
+        if (Platform.OS === 'web') {
+          if (typeof navigator !== 'undefined' && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                if (!active) return;
+                const coords = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
+                setCurrentAddressCoords(coords);
+                setIsUsingCurrentLocation(true);
+                setAddress((prev) => (prev && prev !== defaultAddress ? prev : `Current Location (${coords})`));
+                setIsLocating(false);
+              },
+              () => {
+                if (active) setIsLocating(false);
+              },
+              { enableHighAccuracy: true, timeout: 8000 }
+            );
+          } else {
+            if (active) setIsLocating(false);
+          }
+        } else {
+          const perm = await Location.requestForegroundPermissionsAsync();
+          if (perm.granted) {
+            const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            if (!active) return;
+            const coords = `${current.coords.latitude.toFixed(6)}, ${current.coords.longitude.toFixed(6)}`;
+            setCurrentAddressCoords(coords);
+            setIsUsingCurrentLocation(true);
+            try {
+              const geocoded = await Location.reverseGeocodeAsync({
+                latitude: current.coords.latitude,
+                longitude: current.coords.longitude,
+              });
+              if (!active) return;
+              if (geocoded && geocoded.length > 0) {
+                const place = geocoded[0];
+                const parts = [place.name, place.street, place.district || place.subregion, place.city].filter(Boolean);
+                const resolved = parts.join(', ') || `Current GPS Location (${coords})`;
+                setAddress(resolved);
+              } else {
+                setAddress(`Current GPS Location (${coords})`);
+              }
+            } catch {
+              if (active) setAddress(`Current GPS Location (${coords})`);
+            }
+          }
+          if (active) setIsLocating(false);
+        }
+      } catch {
+        if (active) setIsLocating(false);
+      }
+    };
+
+    void autoFetchGpsLocation();
+
+    return () => {
+      active = false;
+    };
+  }, [isEmergency, defaultAddress]);
 
   const hasAddress = address.trim().length > 0;
   const hasProgress = problem.trim().length > 0 || photos.length > 0 || !!video || (hasAddress && address !== defaultAddress);
@@ -285,11 +373,18 @@ export default function RequestScreen() {
       const persistedVideo = video
         ? (await persistRequestMedia([{ uri: video.uri, name: video.name, mimeType: video.mimeType }]))[0]
         : undefined;
+      const formattedProblem = isEmergency
+        ? `${problem.trim() || 'Immediate emergency service required.'}${
+            contactPhone ? `\n[Emergency Contact: ${contactName || 'Primary Contact'} · ${contactPhone}]` : ''
+          }`
+        : problem.trim();
+
       const jobId = await addRequest({
-        service,
-        problem: problem.trim(),
-        urgency: 'Today',
-        locationLabel: address.trim(),
+        service: isEmergency ? (service || 'Emergency Service') : service,
+        problem: formattedProblem,
+        urgency: isEmergency ? 'Emergency' : 'Today',
+        type: isEmergency ? 'SOS' : 'STANDARD',
+        locationLabel: address.trim() || 'Current GPS Location',
         locationLatitude: selectedLocation.latitude,
         locationLongitude: selectedLocation.longitude,
         photos: photos.map((photo, index) => ({
@@ -308,10 +403,18 @@ export default function RequestScreen() {
         videoMimeType: video?.mimeType,
       });
       await notify('success');
-      router.replace({
-        pathname: '/select-technician',
-        params: { jobId },
-      });
+
+      if (isEmergency) {
+        router.replace({
+          pathname: '/checkout/sos-dispatch' as any,
+          params: { requestId: jobId, jobId },
+        });
+      } else {
+        router.replace({
+          pathname: '/select-technician',
+          params: { jobId },
+        });
+      }
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Your request could not be sent. Please try again.');
     } finally {
@@ -419,28 +522,94 @@ export default function RequestScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8 }]}>
-      <BackButton
-        onPress={goBack}
-        testID="request-back-button"
-        accessibilityLabel={editing ? 'Close editor' : step > 1 ? 'Go back' : 'Close request'}
-      />
-      <Text style={[styles.stepText, { color: colors.mutedForeground }]}>
-        Step {step} of {LAST_STEP} · {STEP_NAMES[step - 1]}
-      </Text>
-      <View style={styles.topSpacer} />
-    </View>
+        <BackButton
+          onPress={goBack}
+          testID="request-back-button"
+          accessibilityLabel={editing ? 'Close editor' : step > 1 ? 'Go back' : 'Close request'}
+        />
+        {isEmergency ? (
+          <View style={styles.sosInlineBadge} testID="emergency-priority-badge">
+            <View style={styles.sosDot} />
+            <Text style={styles.sosInlineBadgeText}>SOS Priority</Text>
+          </View>
+        ) : (
+          <Text style={[styles.stepText, { color: colors.mutedForeground }]}>
+            Step {step} of {LAST_STEP} · {STEP_NAMES[step - 1]}
+          </Text>
+        )}
+        <View style={styles.topSpacer} />
+      </View>
       <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
-        <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${(step / LAST_STEP) * 100}%` }]} />
+        <View
+          style={[
+            styles.progressFill,
+            { backgroundColor: isEmergency ? '#ef4444' : colors.primary, width: `${(step / LAST_STEP) * 100}%` },
+          ]}
+        />
       </View>
 
       <KeyboardAwareScrollViewCompat contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {step === 1 && (
           <>
             <PageHeading
-              eyebrow={service}
-              title="Tell us what you need"
-              subtitle="Fill in the required fields to connect with a verified technician."
+              eyebrow={isEmergency ? 'Emergency SOS' : service}
+              title={isEmergency ? 'Urgent Request Details' : 'Tell us what you need'}
+              subtitle={
+                isEmergency
+                  ? 'Nearest verified specialist dispatched directly upon confirmation.'
+                  : 'Fill in the required fields to connect with a verified technician.'
+              }
             />
+
+            {isEmergency && (
+              <View style={[styles.emergencyContactCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.emergencyContactHeader}>
+                  <Ionicons name="call-outline" size={16} color="#ef4444" />
+                  <Text style={[styles.emergencyContactTitle, { color: colors.foreground }]}>
+                    Emergency Callback Info
+                  </Text>
+                  <View style={[styles.autoFillBadge, { backgroundColor: colors.secondary }]}>
+                    <Text style={[styles.autoFillBadgeText, { color: colors.mutedForeground }]}>Auto-filled</Text>
+                  </View>
+                </View>
+                <Text style={[styles.emergencyContactHint, { color: colors.mutedForeground }]}>
+                  Direct callback contact for the responding specialist.
+                </Text>
+                <View style={styles.emergencyInputsRow}>
+                  <View style={styles.emergencyInputCol}>
+                    <Text style={[styles.inputMicroLabel, { color: colors.mutedForeground }]}>Contact Name</Text>
+                    <TextInput
+                      accessibilityLabel="Emergency contact name"
+                      testID="emergency-contact-name-input"
+                      value={contactName}
+                      onChangeText={setContactName}
+                      placeholder="Contact Name"
+                      placeholderTextColor={colors.mutedForeground}
+                      style={[
+                        styles.contactTextInput,
+                        { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border },
+                      ]}
+                    />
+                  </View>
+                  <View style={styles.emergencyInputCol}>
+                    <Text style={[styles.inputMicroLabel, { color: colors.mutedForeground }]}>Callback Phone</Text>
+                    <TextInput
+                      accessibilityLabel="Emergency callback phone"
+                      testID="emergency-contact-phone-input"
+                      value={contactPhone}
+                      onChangeText={setContactPhone}
+                      keyboardType="phone-pad"
+                      placeholder="078..."
+                      placeholderTextColor={colors.mutedForeground}
+                      style={[
+                        styles.contactTextInput,
+                        { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border },
+                      ]}
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
 
             <FieldLabel label="Service Type" required style={styles.firstLabel} />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.serviceScroll}>
@@ -453,8 +622,8 @@ export default function RequestScreen() {
                     style={[
                       styles.serviceChip,
                       {
-                        backgroundColor: selected ? colors.primary : colors.card,
-                        borderColor: selected ? colors.primary : colors.border,
+                        backgroundColor: selected ? (isEmergency ? '#ef4444' : colors.primary) : colors.card,
+                        borderColor: selected ? (isEmergency ? '#ef4444' : colors.primary) : colors.border,
                       },
                     ]}
                   >
@@ -467,6 +636,49 @@ export default function RequestScreen() {
             </ScrollView>
 
             <FieldLabel label="What is the problem?" required style={styles.sectionLabel} />
+            {isEmergency && (
+              <View style={styles.emergencyQuickTagsWrap}>
+                <Text style={[styles.emergencyQuickLabel, { color: colors.mutedForeground }]}>
+                  Quick Problem Select:
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsScroll}>
+                  {[
+                    'Burst Pipe / Flooding',
+                    'Electrical Sparking / Outage',
+                    'Gas Odor / Hazard',
+                    'Door Lockout / Break-in',
+                    'HVAC Breakdown',
+                  ].map((tag) => {
+                    const isSelected = problem === tag;
+                    return (
+                      <Pressable
+                        key={tag}
+                        onPress={() => {
+                          setProblem(tag);
+                          if (problemError) setProblemError('');
+                        }}
+                        style={[
+                          styles.emergencyQuickTag,
+                          {
+                            backgroundColor: isSelected ? 'rgba(239, 68, 68, 0.08)' : colors.card,
+                            borderColor: isSelected ? '#ef4444' : colors.border,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.emergencyQuickTagText,
+                            { color: isSelected ? '#ef4444' : colors.foreground },
+                          ]}
+                        >
+                          {tag}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
             <TextInput
               accessibilityLabel="Describe the problem"
               testID="problem-input"
@@ -475,7 +687,7 @@ export default function RequestScreen() {
                 setProblem(val);
                 if (problemError) setProblemError('');
               }}
-              placeholder="For example: the kitchen tap has been leaking..."
+              placeholder={isEmergency ? "Describe emergency details (e.g., flooding in kitchen, main switch tripped)..." : "For example: the kitchen tap has been leaking..."}
               placeholderTextColor={colors.mutedForeground}
               multiline
               textAlignVertical="top"
@@ -490,6 +702,22 @@ export default function RequestScreen() {
             {renderMediaPicker(photos, setPhotos, video, setVideo, photoError, setPhotoError)}
 
             <FieldLabel label="Where is the service needed?" required style={styles.sectionLabel} />
+            {isLocating && (
+              <View style={[styles.emergencyGpsBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <ActivityIndicator size="small" color="#ef4444" />
+                <Text style={[styles.emergencyGpsBannerText, { color: colors.mutedForeground }]}>
+                  Auto-detecting current GPS coordinates...
+                </Text>
+              </View>
+            )}
+            {isUsingCurrentLocation && !isLocating && (
+              <View style={[styles.emergencyGpsBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Ionicons name="location" size={16} color="#ef4444" />
+                <Text style={[styles.emergencyGpsBannerText, { color: colors.foreground }]}>
+                  Current GPS location auto-filled
+                </Text>
+              </View>
+            )}
             <AddressFields
               value={address}
               onChange={(val) => {
@@ -657,7 +885,17 @@ export default function RequestScreen() {
                 </View>
               ) : null}
             </View>
-            <Notice tone="brand" icon="shield-checkmark-outline" text="Find technician to dispatch a nearby verified specialist." />
+            {isEmergency ? (
+              <View style={{ marginTop: 14 }}>
+                <Notice
+                  tone="brand"
+                  icon="flash-outline"
+                  text="SOS Dispatch: Request broadcasts immediately to nearby verified specialists upon confirmation."
+                />
+              </View>
+            ) : (
+              <Notice tone="brand" icon="shield-checkmark-outline" text="Find technician to dispatch a nearby verified specialist." />
+            )}
             {editing ? null : errorView(error)}
           </>
         )}
@@ -670,8 +908,17 @@ export default function RequestScreen() {
         ]}
       >
         <Button
-          label={step === LAST_STEP ? 'Find technician' : 'Continue'}
+          label={
+            isEmergency
+              ? step === LAST_STEP
+                ? 'Proceed to SOS Dispatch'
+                : 'Continue to Review'
+              : step === LAST_STEP
+                ? 'Find technician'
+                : 'Continue'
+          }
           icon={narrow && step === LAST_STEP ? undefined : 'arrow-forward'}
+          variant={isEmergency ? 'danger' : 'primary'}
           loading={isSubmitting}
           disabled={!!editing}
           onPress={next}
@@ -873,5 +1120,116 @@ const styles = StyleSheet.create({
   step1MapText: {
     fontFamily: 'Inter_500Medium',
     fontSize: 13,
+  },
+  sosInlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  sosDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ef4444',
+  },
+  sosInlineBadgeText: {
+    color: '#ef4444',
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
+  emergencyContactCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+  },
+  emergencyContactHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  emergencyContactTitle: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 14,
+    flex: 1,
+  },
+  autoFillBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  autoFillBadgeText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 11,
+  },
+  emergencyContactHint: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  emergencyInputsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  emergencyInputCol: {
+    flex: 1,
+    minWidth: 130,
+  },
+  inputMicroLabel: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  contactTextInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 14,
+  },
+  emergencyQuickTagsWrap: {
+    marginBottom: 10,
+  },
+  emergencyQuickLabel: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
+    marginBottom: 6,
+  },
+  quickTagsScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  emergencyQuickTag: {
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  emergencyQuickTagText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
+  },
+  emergencyGpsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  emergencyGpsBannerText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
   },
 });

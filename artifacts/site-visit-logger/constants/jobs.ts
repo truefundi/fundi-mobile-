@@ -5,13 +5,31 @@
  * -> QUOTE -> APPROVE -> REPAIR -> COMPLETE -> PAYMENT -> RATE
  */
 import type { Coordinates } from '@/lib/location';
+import { DEFAULT_BOOKING_FEE, getServiceBookingFee } from '@/constants/services';
+
+export { getServiceBookingFee };
+
+export type RequestType = 'STANDARD' | 'SOS';
+
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
+
+export type BookingFee = {
+  amount: number;
+  currency: string;
+  status: PaymentStatus;
+  paidAt?: string;
+  transactionId?: string;
+};
 
 export type JobStatus =
   | 'REQUESTED'
   | 'MATCHING'
+  | 'SEARCHING_DISPATCH'
   | 'OFFERED'
   | 'ACCEPTED'
   | 'VISIT_PAID'
+  | 'DISPATCHED'
+  | 'ACTIVE'
   | 'EN_ROUTE'
   | 'ARRIVED'
   | 'DIAGNOSING'
@@ -28,21 +46,29 @@ export type JobStatus =
   | 'DECLINED'
   | 'DISPUTED';
 
+export type RequestStatus = JobStatus;
+
 export type RequestLifecycleStatus =
   | 'REQUEST_RECEIVED'
   | 'PENDING_RESPONSE'
   | 'OFFER_MADE'
   | 'ACCEPTED'
   | 'DECLINED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'PAYMENT_PENDING'
+  | 'DISPATCHED'
+  | 'ACTIVE';
 
 /** Customer-facing wording for each status. */
 export const STATUS_LABEL: Record<JobStatus, string> = {
   REQUESTED: 'Request sent',
   MATCHING: 'Choose a technician',
+  SEARCHING_DISPATCH: 'Dispatching technician',
   OFFERED: 'Technician found',
   ACCEPTED: 'Visit fee due',
   VISIT_PAID: 'Visit fee paid · chat ready',
+  DISPATCHED: 'Technician dispatched',
+  ACTIVE: 'Active',
   EN_ROUTE: 'On the way',
   ARRIVED: 'Technician arrived',
   DIAGNOSING: 'Diagnosing',
@@ -66,9 +92,12 @@ export type StatusTone = 'progress' | 'action' | 'success' | 'danger';
 export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   REQUESTED: 'progress',
   MATCHING: 'progress',
+  SEARCHING_DISPATCH: 'progress',
   OFFERED: 'action',
   ACCEPTED: 'action',
   VISIT_PAID: 'progress',
+  DISPATCHED: 'progress',
+  ACTIVE: 'progress',
   EN_ROUTE: 'progress',
   ARRIVED: 'progress',
   DIAGNOSING: 'progress',
@@ -152,7 +181,7 @@ export type JobEvent = {
   at: string;
 };
 
-export type Job = {
+export interface ServiceRequest {
   id: string;
   reference: string;
   service: string;
@@ -178,6 +207,7 @@ export type Job = {
   createdAt: string;
   technician?: Technician;
   chatThreadId?: string;
+  chatId?: string;
   visitFee: number;
   visitPaymentMethod?: PaymentMethod;
   quote?: Quote;
@@ -192,11 +222,33 @@ export type Job = {
   completedPhotoUri?: string;
   cancellationReason?: string;
   events: JobEvent[];
-};
+  type: RequestType;
+  bookingFee: {
+    amount: number;
+    currency: string;
+    status: PaymentStatus;
+    paidAt?: string;
+    transactionId?: string;
+  };
+}
+
+export interface Job extends ServiceRequest {}
+
+/** Single flat Service Booking Fee paid to confirm the booking and unlock direct technician messaging. */
+export const FLAT_BOOKING_FEE = DEFAULT_BOOKING_FEE;
+export const FLAT_BOOKING_FEE_CURRENCY = 'RWF';
+
+export function formatBookingFee(amount: number = FLAT_BOOKING_FEE, currency: string = FLAT_BOOKING_FEE_CURRENCY): string {
+  if (currency === 'RWF') {
+    return `RWF ${amount.toLocaleString()}`;
+  }
+  return `$${amount.toLocaleString()}`;
+}
 
 /** Emergency visits cost more because the technician drops everything. */
 export const VISIT_FEE = 75;
 export const EMERGENCY_VISIT_FEE = 110;
+export const EMERGENCY_DISPATCH_FEE = 5000;
 
 /** Fundi's cut of the visit fee. The repair itself settles between the two parties. */
 export const COMMISSION_RATE = 0.3;

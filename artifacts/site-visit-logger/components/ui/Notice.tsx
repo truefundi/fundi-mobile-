@@ -3,7 +3,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 
-type Tone = 'info' | 'success' | 'warning' | 'brand' | 'neutral';
+type Tone = 'info' | 'success' | 'warning' | 'brand' | 'neutral' | 'danger';
 
 type Props = {
   tone: Tone;
@@ -25,6 +25,7 @@ export function Notice({ tone, icon, text, testID }: Props) {
     warning: { background: colors.warningMuted, foreground: colors.warningForeground, border: colors.warningMuted },
     brand: { background: colors.secondary, foreground: colors.secondaryForeground, border: colors.secondary },
     neutral: { background: colors.muted, foreground: colors.mutedForeground, border: colors.border },
+    danger: { background: '#fee2e2', foreground: '#dc2626', border: '#fca5a5' },
   }[tone];
 
   return (

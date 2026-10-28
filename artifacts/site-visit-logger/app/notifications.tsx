@@ -19,6 +19,7 @@ import { useNotifications } from '@/context/NotificationContext';
 const STATUS_ICON: Partial<Record<JobStatus | RequestLifecycleStatus, keyof typeof Ionicons.glyphMap>> = {
   REQUESTED: 'paper-plane-outline',
   MATCHING: 'search-outline',
+  SEARCHING_DISPATCH: 'radio-outline',
   OFFERED: 'person-add-outline',
   ACCEPTED: 'checkmark-circle-outline',
   VISIT_PAID: 'card-outline',
@@ -71,7 +72,7 @@ export default function NotificationsScreen() {
   const openNotification = (item: (typeof notifications)[number]) => {
     if (!item.read) toggleRead(item.id);
     if (item.threadId) {
-      router.push({ pathname: '/(tabs)/chat', params: { threadId: item.threadId } });
+      router.push({ pathname: `/chat/${item.threadId}` as any, params: { requestId: item.jobId } });
     } else if (item.jobId) {
       router.push(`/job/${item.jobId}`);
     }
