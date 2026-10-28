@@ -11,6 +11,7 @@ import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } fro
 import type { Job } from '@/constants/jobs';
 import { useAuth } from '@/context/AuthContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
+import { updateUserRole } from '@/lib/auth-api';
 
 /** Which side of the marketplace the app is showing. */
 export type Mode = 'hiring' | 'working';
@@ -218,6 +219,10 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
   const refreshApplication = useCallback(async () => {
     if (!storageKey) return;
+    if (account?.role !== 'TECHNICIAN') {
+      setState((current) => ({ ...current, status: 'none' }));
+      return;
+    }
     try {
       const serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
         authenticated: true,
@@ -227,19 +232,14 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       });
       setState((current) => {
         const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID' && document.status !== 'DENIED');
-        const hasCertificate = documents.some((document) => document.type === 'CERTIFICATE' && document.status !== 'DENIED');
-
-        // Safely check for either the URL or the raw Object Key in case the backend hasn't been updated yet
-        const hasProfilePic = !!(serverProfile.profilePictureUrl || (serverProfile as any).profilePictureObjectKey);
-
-        const applicationNeedsFiles = !hasProfilePic || !hasNationalId || !hasCertificate;
+        const applicationNeedsFiles = !hasNationalId;
         const next: Stored = {
           ...current,
           status: statusFromApi(serverProfile.verificationStatus),
           isAvailable: serverProfile.availabilityStatus === 'ONLINE',
           profile: mapProfile(serverProfile, documents, current.profile),
           applicationError: applicationNeedsFiles
-            ? 'Your application is missing a profile picture, national ID, or certificate. Add the missing items and retry.'
+            ? 'Your application is missing your national ID document. Add your ID and retry.'
             : null,
           submissionFailed: applicationNeedsFiles,
         };
@@ -267,7 +267,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState((current) => ({ ...current, applicationError: message }));
       throw error;
     }
-  }, [storageKey]);
+  }, [account?.role, storageKey]);
 
   useEffect(() => {
     if (!storageKey) {
@@ -278,7 +278,13 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     AsyncStorage.getItem(storageKey)
       .then((raw) => {
         if (!mounted) return;
-        setState(parseStored(raw));
+        const parsed = parseStored(raw);
+        // Non-technicians must complete the technician application first
+        if (account?.role !== 'TECHNICIAN') {
+          setState({ ...parsed, status: 'none' });
+          return;
+        }
+        setState(parsed);
         void refreshApplication().catch(() => undefined);
       })
       .catch((error: unknown) => {
@@ -458,8 +464,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', { authenticated: true }),
             apiRequest<ApiTechnicianDocument[]>('/api/v1/technicians/profile/documents', { authenticated: true }),
           ]);
+          if (account?.phone) {
+            await updateUserRole(account.phone, 'TECHNICIAN');
+          }
           savedState = {
             ...savedState,
+            mode: 'working',
             status: statusFromApi(updatedProfile.verificationStatus),
             isAvailable: updatedProfile.availabilityStatus === 'ONLINE',
             profile: mapProfile(updatedProfile, updatedDocuments, localDraft),
