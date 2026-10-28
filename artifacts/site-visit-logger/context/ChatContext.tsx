@@ -54,6 +54,7 @@ export type ChatMessage = {
   cancelledByRole?: 'client' | 'technician';
   cancelledByName?: string;
   cancelledById?: string;
+  read?: boolean;
 };
 
 export type ChatThread = {
@@ -72,6 +73,7 @@ export type ChatThread = {
   lastMessage: string;
   lastMessageTime: string;
   agreedPrice?: number;
+  unreadCount?: number;
   messages: ChatMessage[];
   cancelledByRole?: 'client' | 'technician';
   cancelledByName?: string;
@@ -83,6 +85,7 @@ type ChatContextValue = {
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
   sendMessage: (threadId: string, text: string, imageUri?: string) => Promise<void>;
+  markThreadAsRead: (threadId: string) => Promise<void>;
   updateRequestStatus: (threadId: string, requestId: string, status: RequestLifecycleStatus, reason?: string) => Promise<void>;
   sendPriceOffer: (threadId: string, amount: number, notes?: string, senderRole?: 'client' | 'technician') => Promise<void>;
   respondToOffer: (threadId: string, offerId: string, status: 'ACCEPTED' | 'DECLINED') => Promise<void>;
@@ -222,6 +225,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         text: text || (imageUri ? 'Photo attachment' : ''),
         imageUri,
         timestamp: now,
+        read: false,
       };
 
       const lastSnippet = text || (imageUri ? '📷 Photo attachment' : '');
@@ -232,6 +236,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             ...thread,
             lastMessage: lastSnippet,
             lastMessageTime: now,
+            unreadCount: (thread.unreadCount ?? 0) + 1,
             messages: [...thread.messages, newMessage],
           };
         }
@@ -241,6 +246,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       await persistThreads(updated);
     },
     [account, threads],
+  );
+
+  const markThreadAsRead = useCallback(
+    async (threadId: string) => {
+      let changed = false;
+      const updated = threads.map((thread) => {
+        if (thread.id === threadId) {
+          const hasUnread =
+            (thread.unreadCount !== undefined && thread.unreadCount > 0) ||
+            thread.messages.some((m) => m.read === false);
+          if (hasUnread) {
+            changed = true;
+            return {
+              ...thread,
+              unreadCount: 0,
+              messages: thread.messages.map((m) => (m.read === false ? { ...m, read: true } : m)),
+            };
+          }
+        }
+        return thread;
+      });
+      if (changed) {
+        await persistThreads(updated);
+      }
+    },
+    [threads],
   );
 
   const updateRequestStatus = useCallback(
@@ -653,6 +684,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       activeThreadId,
       setActiveThreadId,
       sendMessage,
+      markThreadAsRead,
       updateRequestStatus,
       sendPriceOffer,
       respondToOffer,
@@ -660,7 +692,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       endRequestThread,
       createOrGetThread,
     }),
-    [threads, activeThreadId, sendMessage, updateRequestStatus, sendPriceOffer, respondToOffer, acceptRequestThread, endRequestThread, createOrGetThread],
+    [threads, activeThreadId, sendMessage, markThreadAsRead, updateRequestStatus, sendPriceOffer, respondToOffer, acceptRequestThread, endRequestThread, createOrGetThread],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

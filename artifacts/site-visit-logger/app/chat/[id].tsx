@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -28,9 +28,11 @@ import { useAuth } from '@/context/AuthContext';
 import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { isCancellationEvent } from '@/lib/cancellation';
+import { STATUS_LABEL } from '@/constants/jobs';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
 /** Helper to reliably render request thumbnails and gallery images with fallback */
 function StableRequestImage({
@@ -80,6 +82,7 @@ export default function StandaloneChatScreen() {
   const {
     threads,
     sendMessage,
+    markThreadAsRead,
     sendPriceOffer,
     respondToOffer,
     updateRequestStatus,
@@ -231,6 +234,13 @@ export default function StandaloneChatScreen() {
     }
   };
 
+  // Mark thread as read when viewed
+  useEffect(() => {
+    if (thread?.id) {
+      void markThreadAsRead(thread.id);
+    }
+  }, [thread?.id, markThreadAsRead]);
+
   const technicianPhone = thread?.technicianPhone || job?.technician?.phone;
 
   const handleCallTechnician = () => {
@@ -239,14 +249,43 @@ export default function StandaloneChatScreen() {
     }
   };
 
+  const targetLat = job?.locationLatitude ?? threadServiceRequest?.latitude;
+  const targetLng = job?.locationLongitude ?? threadServiceRequest?.longitude;
+  const targetAddress = job?.locationLabel ?? threadServiceRequest?.address;
+  const canNavigate = Boolean(
+    canOpenMapNavigation({ latitude: targetLat, longitude: targetLng, address: targetAddress })
+  );
+
   const handleOpenMap = () => {
-    const lat = job?.locationLatitude ?? threadServiceRequest?.latitude;
-    const lng = job?.locationLongitude ?? threadServiceRequest?.longitude;
-    const address = job?.locationLabel ?? threadServiceRequest?.address;
-    if (canOpenMapNavigation({ latitude: lat, longitude: lng, address })) {
-      openMapNavigation({ latitude: lat, longitude: lng, address });
+    if (canNavigate) {
+      openMapNavigation({ latitude: targetLat, longitude: targetLng, address: targetAddress });
     }
   };
+
+  const avatarUri =
+    (job?.technician as any)?.avatarUrl ||
+    (job?.technician as any)?.photoUri ||
+    undefined;
+
+  const jobStatusText = useMemo(() => {
+    if (isThreadTerminated) return 'Request Inactive';
+    if (job?.status && STATUS_LABEL[job.status]) {
+      return STATUS_LABEL[job.status];
+    }
+    if (threadServiceRequest?.status) {
+      if (threadServiceRequest.status === 'ACCEPTED') return 'Accepted · Chat Active';
+      if (threadServiceRequest.status === 'DECLINED') return 'Declined';
+      if (threadServiceRequest.status === 'CANCELLED') return 'Cancelled';
+      if (threadServiceRequest.status === 'PENDING_RESPONSE') return 'Pending Response';
+    }
+    if (thread?.agreedPrice) {
+      return `Agreed: RWF ${thread.agreedPrice.toLocaleString()}`;
+    }
+    if (isBookingFeePaid) {
+      return 'Chat Active';
+    }
+    return 'Booking Fee Pending';
+  }, [isThreadTerminated, job?.status, threadServiceRequest?.status, thread?.agreedPrice, isBookingFeePaid]);
 
   return (
     <KeyboardAvoidingView
@@ -266,114 +305,84 @@ export default function StandaloneChatScreen() {
         ]}
       >
         <BackButton onPress={handleBack} />
+
+        {/* Profile Avatar with Initial Fallback */}
+        <ProfileAvatar
+          uri={avatarUri}
+          name={otherName}
+          knownInitials={job?.technician?.initials}
+          size={38}
+          style={styles.headerAvatarWrap}
+          testID="chat-header-avatar"
+        />
+
+        {/* Header Name (safely truncated)& Job Status Subtitle*/}
         <View style={styles.headerInfo}>
-          <View style={styles.headerTitleRow}>
-            <Text numberOfLines={1} style={[styles.headerName, { color: colors.foreground }]}>
-              {otherName}
-            </Text>
-            {isSos && (
-              <View style={styles.sosInlineBadge} testID="sos-chat-header-badge">
-                <View style={styles.sosDot} />
-                <Text style={styles.sosInlineBadgeText}>SOS Priority</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.headerStatusRow}>
-            <View
-              style={[
-                styles.onlineDot,
-                {
-                  backgroundColor: isSos
-                    ? '#ef4444'
-                    : isThreadTerminated
-                      ? colors.destructive
-                      : isBookingFeePaid
-                        ? colors.success
-                        : colors.warning,
-                },
-              ]}
-            />
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.headerStatusText,
-                { color: isSos ? '#ef4444' : colors.mutedForeground, fontWeight: isSos ? '600' : '400' },
-              ]}
-            >
-              {isThreadTerminated
-                ? 'Request Inactive'
-                : isSos
-                  ? '⚡ 5–15m ETA · En route'
-                  : thread?.agreedPrice
-                    ? `Agreed: RWF ${thread.agreedPrice.toLocaleString()}`
-                    : isBookingFeePaid
-                      ? 'Booking Confirmed · Chat Active'
-                      : 'Booking Fee Pending'}
-            </Text>
-          </View>
+          <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.headerName, { color: colors.foreground }]}>
+            {otherName}
+          </Text>
+          <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.headerJobStatus, { color: colors.mutedForeground }]}>
+            {jobStatusText}
+          </Text>
         </View>
 
-        {/* Quick Actions (Call / GPS for SOS) & Job Tracking */}
+        {/* Clean Icon-Only Action Buttons */}
         <View style={styles.headerActionsRow}>
-          {isSos && (
-            <>
-              {technicianPhone && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Call Technician"
-                  testID="chat-header-call-button"
-                  onPress={handleCallTechnician}
-                  style={({ pressed }) => [
-                    styles.headerActionBtn,
-                    {
-                      backgroundColor: colors.card,
-                      borderColor: colors.border,
-                      opacity: pressed ? 0.75 : 1,
-                    },
-                  ]}
-                >
-                  <Ionicons name="call" size={15} color="#ef4444" />
-                </Pressable>
-              )}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open Navigation"
-                testID="chat-header-gps-button"
-                onPress={handleOpenMap}
-                style={({ pressed }) => [
-                  styles.headerActionBtn,
-                  {
-                    backgroundColor: colors.card,
-                    borderColor: colors.border,
-                    opacity: pressed ? 0.75 : 1,
-                  },
-                ]}
-              >
-                <Ionicons name="navigate" size={15} color="#ef4444" />
-              </Pressable>
-            </>
-          )}
+          {technicianPhone ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Call"
+              testID="chat-header-call-button"
+              onPress={handleCallTechnician}
+              style={({ pressed }) => [
+                styles.headerIconBtn,
+                {
+                  backgroundColor: colors.secondary,
+                  borderColor: colors.border,
+                  opacity: pressed ? 0.75 : 1,
+                },
+              ]}
+            >
+              <Ionicons name="call" size={17} color={colors.primary} />
+            </Pressable>
+          ) : null}
+
+          {canNavigate ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Navigate"
+              testID="chat-header-gps-button"
+              onPress={handleOpenMap}
+              style={({ pressed }) => [
+                styles.headerIconBtn,
+                {
+                  backgroundColor: colors.secondary,
+                  borderColor: colors.border,
+                  opacity: pressed ? 0.75 : 1,
+                },
+              ]}
+            >
+              <Ionicons name="navigate" size={17} color={colors.destructive} />
+            </Pressable>
+          ) : null}
 
           {targetJobId ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="View Job Tracking"
+              accessibilityLabel="Job Details"
               testID="chat-header-job-tracking-button"
               onPress={() => router.push(`/job/${targetJobId}` as any)}
               style={({ pressed }) => [
-                styles.headerJobBtn,
+                styles.headerIconBtn,
                 {
                   backgroundColor: colors.secondary,
                   borderColor: colors.border,
-                  opacity: pressed ? 0.8 : 1,
+                  opacity: pressed ? 0.75 : 1,
                 },
               ]}
             >
-              <Ionicons name="clipboard-outline" size={15} color={colors.primary} />
-              {!isSos && <Text style={[styles.headerJobBtnText, { color: colors.primary }]}>Job Details</Text>}
+              <Ionicons name="analytics" size={20} color={colors.tint} />
             </Pressable>
-          ) : !isSos ? (
-            <View style={{ width: 34 }} />
           ) : null}
         </View>
       </View>
@@ -1117,81 +1126,86 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 1,
   },
+  headerAvatarWrap: {
+    marginLeft: 6,
+    marginRight: 10,
+  },
+  headerAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    marginLeft: 6,
+    marginRight: 10,
+  },
+  headerAvatarImage: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+  },
+  headerAvatarInitial: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 15,
+  },
   headerInfo: {
     flex: 1,
-    marginLeft: 12,
-  },
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    minWidth: 0,
   },
   headerName: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 16,
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 15,
   },
-  sosInlineBadge: {
+  headerJobStatus: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    marginTop: 1,
+  },
+  headerSosRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+  },
+  sosTag: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: 'rgba(239, 68, 68, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(239, 68, 68, 0.25)',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
   },
   sosDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: '#ef4444',
   },
-  sosInlineBadgeText: {
+  sosTagText: {
     color: '#ef4444',
     fontFamily: 'Inter_600SemiBold',
-    fontSize: 11,
-  },
-  headerStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  onlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  headerStatusText: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 12,
+    fontSize: 10,
+    letterSpacing: 0.4,
   },
   headerActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginLeft: 8,
   },
-  headerActionBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  headerIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  headerJobBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    borderWidth: 1,
-  },
-  headerJobBtnText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 12,
   },
   bannerPadding: {
     paddingHorizontal: 16,
