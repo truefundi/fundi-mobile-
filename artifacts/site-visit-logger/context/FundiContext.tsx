@@ -75,7 +75,8 @@ type FundiContextValue = {
   startSettlement: (id: string) => void;
   recordSettlement: (id: string, method: SettlementMethod) => void;
   submitRating: (id: string, rating: Rating) => void;
-  cancelJob: (id: string, recipientPhones?: string[]) => void;
+  cancelJob: (id: string, reason?: string, recipientPhones?: string[]) => void;
+  updateJob: (id: string, updates: Partial<Job>, recipientPhones?: string[]) => void;
   advance: (id: string, next: JobStatus) => void;
   assignEmergencyTechnician: (id: string, technician: Technician) => void;
   /** Assigns a manually selected mock technician to the request. */
@@ -98,7 +99,8 @@ const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = 
   ACCEPTED: { title: 'Technician accepted your request', text: 'Pay the visit fee to confirm the callout.' },
   VISIT_PAID: { title: 'Payment successful', text: 'Your visit fee has been received.' },
   DISPATCHED: { title: 'Technician dispatched', text: 'A technician has been dispatched to your location.' },
-  ACTIVE: { title: 'Request active', text: 'Your request is currently active.' },
+  ACTIVE: { title: 'Technician accepted request', text: 'Technician accepted the job. Coordinate details in chat.' },
+  IN_PROGRESS: { title: 'Job in progress', text: 'Technician has started work on your job.' },
   EN_ROUTE: { title: 'Your technician is on the way', text: 'Follow the arrival time on the tracking screen.' },
   ARRIVED: { title: 'Your technician has arrived', text: 'Diagnosis will begin shortly.' },
   DIAGNOSING: { title: 'Diagnosis in progress', text: 'Your technician is inspecting the problem.' },
@@ -593,8 +595,9 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       recordSettlement: (id, method) =>
         update(id, (job) => transition({ ...job, settlementMethod: method }, 'PAYMENT_REPORTED')),
       submitRating: (id, rating) => update(id, (job) => ({ ...job, rating })),
-      cancelJob: (id, recipientPhones) =>
-        update(id, (job) => transition(job, 'CANCELLED'), recipientPhones),
+      cancelJob: (id, reason, recipientPhones) => update(id, (job) => ({ ...transition(job, 'CANCELLED'), ...(reason ? { cancellationReason: reason } : {}) }), recipientPhones),
+      updateJob: (id, updates, recipientPhones) => update(id, (job) => { const now = new Date().toISOString(); const nextStatus = updates.status ?? job.status; let moved: Job = { ...job, ...updates, status: nextStatus, statusSince: nextStatus !== job.status ? now : job.statusSince }; if (nextStatus === 'COMPLETED') { moved.completedAt = updates.completedAt ?? now; } if (nextStatus !== job.status && EVENT_COPY[nextStatus]) { const copy = EVENT_COPY[nextStatus]!; moved.events = [...job.events, { id: makeId('evt'), status: nextStatus, title: copy.title, text: copy.text, at: now }]; } return moved; }, recipientPhones),
+
       advance,
       assignEmergencyTechnician,
       selectTechnician,

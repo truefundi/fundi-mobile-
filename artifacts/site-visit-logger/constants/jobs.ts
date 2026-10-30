@@ -29,7 +29,7 @@ export type JobStatus =
   | 'ACCEPTED'
   | 'VISIT_PAID'
   | 'DISPATCHED'
-  | 'ACTIVE'
+  | 'ACTIVE' | 'IN_PROGRESS'
   | 'EN_ROUTE'
   | 'ARRIVED'
   | 'DIAGNOSING'
@@ -57,7 +57,7 @@ export type RequestLifecycleStatus =
   | 'CANCELLED'
   | 'PAYMENT_PENDING'
   | 'DISPATCHED'
-  | 'ACTIVE';
+  | 'ACTIVE' | 'IN_PROGRESS';
 
 /** Customer-facing wording for each status. */
 export const STATUS_LABEL: Record<JobStatus, string> = {
@@ -68,7 +68,7 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   ACCEPTED: 'Visit fee due',
   VISIT_PAID: 'Visit fee paid · chat ready',
   DISPATCHED: 'Technician dispatched',
-  ACTIVE: 'Active',
+  ACTIVE: 'Active', IN_PROGRESS: 'In Progress',
   EN_ROUTE: 'On the way',
   ARRIVED: 'Technician arrived',
   DIAGNOSING: 'Diagnosing',
@@ -97,7 +97,7 @@ export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   ACCEPTED: 'action',
   VISIT_PAID: 'progress',
   DISPATCHED: 'progress',
-  ACTIVE: 'progress',
+  ACTIVE: 'progress', IN_PROGRESS: 'progress',
   EN_ROUTE: 'progress',
   ARRIVED: 'progress',
   DIAGNOSING: 'progress',

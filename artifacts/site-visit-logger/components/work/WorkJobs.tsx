@@ -27,7 +27,7 @@ type Tab = 'In Progress' | 'Completed' | 'Cancelled';
 export function WorkJobs() {
   const colors = useColors();
   const router = useRouter();
-  const { mine, done, cancelled, earnings, cancelJob, completeJob } = useWork();
+  const { mine, done, cancelled, earnings, cancelJob, completeJob, startJob } = useWork();
   const [tab, setTab] = useState<Tab>('In Progress');
 
   // Selected job for the Details Modal
@@ -47,6 +47,18 @@ export function WorkJobs() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const visibleJobs: Job[] = tab === 'In Progress' ? mine : tab === 'Completed' ? done : cancelled;
+
+  const handleStartJob = async (job: Job) => {
+    try {
+      await startJob(job.id);
+      if (selectedJob?.id === job.id) {
+        setSelectedJob({ ...selectedJob, status: 'IN_PROGRESS' });
+      }
+      Alert.alert('Job Started', 'The job status is now In Progress. The client has been notified.');
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Could not start the job.');
+    }
+  };
 
   const handleOpenJobDetails = (job: Job) => {
     setSelectedJob(job);
@@ -201,6 +213,8 @@ export function WorkJobs() {
             const inProgress = !isClosed(job.status) && !isTerminated(job.status);
             const terminated = isTerminated(job.status);
             const agreedAmount = job.agreedPrice || job.visitFee;
+            const isActive = job.status === 'ACTIVE';
+            const isStarted = job.status === 'IN_PROGRESS';
 
             return (
               <Pressable
@@ -248,7 +262,7 @@ export function WorkJobs() {
                         },
                       ]}
                     >
-                      {inProgress ? 'In Progress' : STATUS_LABEL[job.status]}
+                      {isActive ? 'Active' : isStarted ? 'In Progress' : STATUS_LABEL[job.status]}
                     </Text>
                   </View>
                 </View>
@@ -289,6 +303,87 @@ export function WorkJobs() {
                     </Text>
                   </View>
                 </View>
+
+                {/* 3 Action Buttons on the Container */}
+                {inProgress && (
+                  <View style={styles.cardActionsContainer}>
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        void handleStartJob(job);
+                      }}
+                      disabled={isStarted}
+                      style={[
+                        styles.cardActionBtn,
+                        {
+                          backgroundColor: isStarted ? colors.secondary : colors.primary,
+                          borderColor: isStarted ? colors.border : colors.primary,
+                        },
+                      ]}
+                    >
+                      <Feather
+                        name={isStarted ? 'check' : 'play'}
+                        size={12}
+                        color={isStarted ? colors.mutedForeground : colors.primaryForeground}
+                      />
+                      <Text
+                        style={[
+                          styles.cardActionBtnText,
+                          { color: isStarted ? colors.mutedForeground : colors.primaryForeground },
+                        ]}
+                      >
+                        {isStarted ? 'In Progress' : 'Start Job'}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setSelectedJob(job);
+                        setShowCompleteFlow(true);
+                      }}
+                      style={[
+                        styles.cardActionBtn,
+                        { backgroundColor: colors.card, borderColor: colors.border },
+                      ]}
+                    >
+                      <Feather name="check-circle" size={12} color={colors.foreground} />
+                      <Text style={[styles.cardActionBtnText, { color: colors.foreground }]}>
+                        End Job
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setSelectedJob(job);
+                        setShowCancelPrompt(true);
+                      }}
+                      style={[
+                        styles.cardActionBtn,
+                        { backgroundColor: colors.card, borderColor: colors.destructive + '40' },
+                      ]}
+                    >
+                      <Feather name="x-circle" size={12} color={colors.destructive} />
+                      <Text style={[styles.cardActionBtnText, { color: colors.destructive }]}>
+                        Cancel
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleChatClient(job.chatThreadId);
+                      }}
+                      style={[
+                        styles.cardChatBtn,
+                        { backgroundColor: colors.secondary, borderColor: colors.border },
+                      ]}
+                    >
+                      <Ionicons name="chatbubbles-outline" size={14} color={colors.primary} />
+                    </Pressable>
+                  </View>
+                )}
 
                 {/* Card footer CTA */}
                 <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
@@ -371,7 +466,9 @@ export function WorkJobs() {
                         },
                       ]}
                     >
-                      {!isClosed(selectedJob.status) && !isTerminated(selectedJob.status)
+                      {selectedJob.status === 'ACTIVE'
+                        ? 'Active'
+                        : selectedJob.status === 'IN_PROGRESS'
                         ? 'In Progress'
                         : STATUS_LABEL[selectedJob.status]}
                     </Text>
@@ -476,21 +573,30 @@ export function WorkJobs() {
                 {!isClosed(selectedJob.status) && !isTerminated(selectedJob.status) && (
                   <View style={styles.actionsContainer}>
                     {!showCancelPrompt && !showCompleteFlow && (
-                      <View style={styles.twoActionRow}>
-                        <Button
-                          label="Cancel Job"
-                          variant="outline"
-                          icon="close-circle-outline"
-                          onPress={() => setShowCancelPrompt(true)}
-                          style={{ flex: 1, borderColor: colors.destructive }}
-                          textColor={colors.destructive}
-                        />
-                        <Button
-                          label="End Service"
-                          icon="checkmark-done-circle-outline"
-                          onPress={() => setShowCompleteFlow(true)}
-                          style={{ flex: 1.3 }}
-                        />
+                      <View style={{ gap: 10 }}>
+                        {selectedJob.status === 'ACTIVE' && (
+                          <Button
+                            label="Start Job"
+                            icon="play"
+                            onPress={() => void handleStartJob(selectedJob)}
+                          />
+                        )}
+                        <View style={styles.twoActionRow}>
+                          <Button
+                            label="Cancel Job"
+                            variant="outline"
+                            icon="close-circle-outline"
+                            onPress={() => setShowCancelPrompt(true)}
+                            style={{ flex: 1, borderColor: colors.destructive }}
+                            textColor={colors.destructive}
+                          />
+                          <Button
+                            label="End Service"
+                            icon="checkmark-done-circle-outline"
+                            onPress={() => setShowCompleteFlow(true)}
+                            style={{ flex: 1.3 }}
+                          />
+                        </View>
                       </View>
                     )}
 
@@ -642,6 +748,38 @@ const styles = StyleSheet.create({
   infoText: { fontFamily: 'Inter_500Medium', fontSize: 13 },
   infoSubText: { fontFamily: 'Inter_400Regular', fontSize: 12 },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, paddingTop: 10, marginTop: 2 },
+  cardActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: 8,
+    marginTop: 2,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(128,128,128,0.15)',
+  },
+  cardActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 7,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  cardActionBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  cardChatBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   viewDetailsText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   photoAttachedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   // Modal styles

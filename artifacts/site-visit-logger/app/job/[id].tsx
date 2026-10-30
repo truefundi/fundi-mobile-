@@ -179,25 +179,39 @@ export default function JobScreen() {
       );
       break;
 
+    case 'ACTIVE':
+    case 'IN_PROGRESS':
     case 'DISPATCHED':
     case 'VISIT_PAID':
     case 'EN_ROUTE':
       stage = (
         <StageScreen
-          eyebrow="BOOKING CONFIRMED"
-          title="Continue in your technician chat"
-          subtitle="Your booking fee is paid. Your request and attachments are ready for the technician to review."
+          eyebrow={job.status === 'IN_PROGRESS' ? 'SERVICE IN PROGRESS' : 'JOB ACTIVE'}
+          title={job.status === 'IN_PROGRESS' ? 'Technician is working on your service' : 'Technician accepted your request'}
+          subtitle={job.status === 'IN_PROGRESS' ? 'The technician has started work. Coordinate details directly in chat.' : 'Your booking is active. Coordinate the visit and agree on the repair price in chat.'}
           footer={
-            <Button
-              label="Open technician chat"
-              icon="chatbubble-ellipses-outline"
-              onPress={openPaidJobChat}
-              testID="open-paid-job-chat-button"
-            />
+            <>
+              <Button
+                label="Open technician chat"
+                icon="chatbubble-ellipses-outline"
+                onPress={openPaidJobChat}
+                testID="open-paid-job-chat-button"
+              />
+              <Button
+                label="Cancel request"
+                variant="outline"
+                onPress={() => setPending('cancel')}
+                testID="active-job-cancel-button"
+              />
+            </>
           }
         >
-          {job.technician ? <TechnicianCard technician={job.technician} caption="Selected for this request" /> : null}
-          <Notice tone="info" icon="chatbubbles-outline" text="Coordinate the visit and request a repair offer directly in chat. No technician is automatically tracked." />
+          {job.technician ? <TechnicianCard technician={job.technician} caption={job.status === 'IN_PROGRESS' ? 'Working technician' : 'Selected specialist'} /> : null}
+          <Notice
+            tone="info"
+            icon="chatbubbles-outline"
+            text={job.status === 'IN_PROGRESS' ? 'The technician has marked the job in progress. You can chat normally throughout the service.' : 'Technician accepted your service request. You can now chat to negotiate and settle the job price.'}
+          />
         </StageScreen>
       );
       break;

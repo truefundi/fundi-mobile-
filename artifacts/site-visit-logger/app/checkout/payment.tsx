@@ -178,7 +178,7 @@ export default function CheckoutPaymentScreen() {
             photos: updatedJob?.photoUris ?? (updatedJob?.photoUri ? [updatedJob.photoUri] : []),
             videos: updatedJob?.videoUris ?? (updatedJob?.videoUri ? [updatedJob.videoUri] : []),
             createdAt: updatedJob?.createdAt ?? new Date().toISOString(),
-            status: 'ACCEPTED',
+            status: 'REQUEST_RECEIVED',
             type: updatedJob?.type ?? 'STANDARD',
             bookingFee: updatedJob?.bookingFee,
           },
