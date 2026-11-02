@@ -107,6 +107,15 @@ const ChatContext = createContext<ChatContextValue | undefined>(undefined);
 
 const CHAT_STORAGE_KEY = '@fundi/chats';
 
+function phonesMatch(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const digitsA = a.replace(/\D/g, '');
+  const digitsB = b.replace(/\D/g, '');
+  if (!digitsA || !digitsB) return false;
+  return digitsA.slice(-9) === digitsB.slice(-9);
+}
+
 function recipientPhones(thread: ChatThread): string[] {
   return [thread.clientPhone, thread.technicianPhone].filter((phone): phone is string => !!phone);
 }
@@ -139,9 +148,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const owned = stored
           .filter(
             (thread) =>
-              thread.clientPhone === account?.phone ||
-              thread.technicianPhone === account?.phone ||
-              thread.ownerPhone === account?.phone,
+              phonesMatch(thread.clientPhone, account?.phone) ||
+              phonesMatch(thread.technicianPhone, account?.phone) ||
+              phonesMatch(thread.ownerPhone, account?.phone) ||
+              (Boolean(thread.jobId) && Boolean(getJob(thread.jobId!))),
           )
           .map((thread) => {
             const messages = thread.messages.map((message) => {
@@ -159,7 +169,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             const hadCompletedRequest = thread.messages.some(
               (message) => (message.serviceRequest?.status as string | undefined) === 'COMPLETED',
             );
-            if (thread.clientPhone === account?.phone) {
+            if (phonesMatch(thread.clientPhone, account?.phone) || (!phonesMatch(thread.technicianPhone, account?.phone) && account?.role !== 'TECHNICIAN')) {
               return {
                 ...thread,
                 messages,
@@ -168,7 +178,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 otherParticipantRole: 'technician' as const,
               };
             }
-            if (thread.technicianPhone === account?.phone) {
+            if (phonesMatch(thread.technicianPhone, account?.phone) || account?.role === 'TECHNICIAN') {
               return {
                 ...thread,
                 messages,
@@ -530,6 +540,38 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       await persistThreads(updated);
+
+      // Propagate proposedPrice to job records so Activity tab and Jobs tab show the proposal immediately
+      if (sourceThread.jobId) {
+        updateJob(sourceThread.jobId, { proposedPrice: amount }, recipientPhones(sourceThread));
+      }
+      if (sourceThread.clientPhone) {
+        const clientKey = jobsKey(sourceThread.clientPhone);
+        void AsyncStorage.getItem(clientKey).then((raw) => {
+          if (!raw) return;
+          try {
+            const list: any[] = JSON.parse(raw);
+            const updatedClientList = list.map((j) =>
+              j.id === sourceThread.jobId ? { ...j, proposedPrice: amount } : j,
+            );
+            void AsyncStorage.setItem(clientKey, JSON.stringify(updatedClientList));
+          } catch {}
+        });
+      }
+      if (sourceThread.technicianPhone) {
+        const techKey = `@fundi/technician-jobs/${sourceThread.technicianPhone}`;
+        void AsyncStorage.getItem(techKey).then((raw) => {
+          if (!raw) return;
+          try {
+            const list: any[] = JSON.parse(raw);
+            const updatedTechList = list.map((j) =>
+              j.id === sourceThread.jobId ? { ...j, proposedPrice: amount } : j,
+            );
+            void AsyncStorage.setItem(techKey, JSON.stringify(updatedTechList));
+          } catch {}
+        });
+      }
+
       const request = sourceThread.messages.find((message) => message.serviceRequest)?.serviceRequest;
       addNotification({
         id: `request-${threadId}-${Date.now()}`,

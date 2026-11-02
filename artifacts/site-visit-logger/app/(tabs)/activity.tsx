@@ -377,10 +377,14 @@ function JobCard({
         {/* Agreed Amount Box */}
         <View style={[styles.agreedAmountRow, { backgroundColor: colors.secondary }]}>
           <Text style={[styles.agreedAmountLabel, { color: colors.secondaryForeground }]}>
-            {job.agreedPrice ? 'Agreed Fee:' : 'Service Fee:'}
+            {job.agreedPrice ? 'Agreed Fee:' : job.proposedPrice ? 'Offered Fee:' : 'Service Fee:'}
           </Text>
-          <Text style={[styles.agreedAmountValue, { color: job.agreedPrice ? colors.primary : colors.mutedForeground }]}>
-            {job.agreedPrice ? `RWF ${job.agreedPrice.toLocaleString()}` : 'Negotiating in chat…'}
+          <Text style={[styles.agreedAmountValue, { color: job.agreedPrice ? colors.primary : job.proposedPrice ? colors.warning : colors.mutedForeground }]}>
+            {job.agreedPrice
+              ? `RWF ${job.agreedPrice.toLocaleString()}`
+              : job.proposedPrice
+              ? `RWF ${job.proposedPrice.toLocaleString()} (Pending)`
+              : 'Negotiating in chat…'}
           </Text>
         </View>
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -207,18 +208,22 @@ export default function StandaloneChatScreen() {
   };
 
   const handleSendOffer = async () => {
-    if (!thread || !offerAmount || !isBookingFeePaid || isThreadTerminated) return;
+    if (!thread || !offerAmount || isThreadTerminated) return;
     const amountNum = parseFloat(offerAmount);
     if (isNaN(amountNum) || amountNum <= 0) return;
-    await sendPriceOffer(
-      thread.id,
-      amountNum,
-      offerNotes,
-      account?.role === 'TECHNICIAN' ? 'technician' : 'client',
-    );
-    setShowOfferModal(false);
-    setOfferAmount('');
-    setOfferNotes('');
+    try {
+      await sendPriceOffer(
+        thread.id,
+        amountNum,
+        offerNotes,
+        account?.role === 'TECHNICIAN' ? 'technician' : 'client',
+      );
+      setShowOfferModal(false);
+      setOfferAmount('');
+      setOfferNotes('');
+    } catch (err) {
+      Alert.alert('Offer Error', err instanceof Error ? err.message : 'Could not send price proposal.');
+    }
   };
 
   const handleDeclineRequestSubmit = async () => {
