@@ -373,16 +373,24 @@ export function WorkJobs() {
                     <Pressable
                       onPress={(e) => {
                         e.stopPropagation();
+                        if (!isStarted) {
+                          Alert.alert('Start Job First', 'Please start the job before ending and uploading proof.');
+                          return;
+                        }
                         setSelectedJob(job);
                         setShowCompleteFlow(true);
                       }}
                       style={[
                         styles.cardActionBtn,
-                        { backgroundColor: colors.card, borderColor: colors.border },
+                        {
+                          backgroundColor: !isStarted ? colors.secondary : colors.card,
+                          borderColor: colors.border,
+                          opacity: !isStarted ? 0.7 : 1,
+                        },
                       ]}
                     >
-                      <Feather name="check-circle" size={12} color={colors.foreground} />
-                      <Text style={[styles.cardActionBtnText, { color: colors.foreground }]}>
+                      <Feather name="check-circle" size={12} color={!isStarted ? colors.mutedForeground : colors.foreground} />
+                      <Text style={[styles.cardActionBtnText, { color: !isStarted ? colors.mutedForeground : colors.foreground }]}>
                         End Job
                       </Text>
                     </Pressable>

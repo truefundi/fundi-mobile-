@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { workKey } from '@/constants/storage';
+import { workKey, jobsKey } from '@/constants/storage';
 import { getServiceBookingFee } from '@/constants/services';
 import {
   type TechnicianApplication,
@@ -485,6 +485,18 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         fundi.updateJob(jobId, { status: 'IN_PROGRESS' });
       }
       if (targetJob?.clientPhone) {
+        const clientKey = jobsKey(targetJob.clientPhone);
+        void AsyncStorage.getItem(clientKey).then((raw) => {
+          if (!raw) return;
+          try {
+            const list: Job[] = JSON.parse(raw);
+            const updatedClientList = list.map((j) =>
+              j.id === jobId ? { ...j, status: 'IN_PROGRESS' as JobStatus, statusSince: now } : j,
+            );
+            void AsyncStorage.setItem(clientKey, JSON.stringify(updatedClientList));
+          } catch {}
+        });
+
         addNotification({
           id: `start-${jobId}-${Date.now()}`,
           jobId,
@@ -535,6 +547,25 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         fundi.cancelJob(jobId, reason, [targetJob?.clientPhone].filter(Boolean) as string[]);
       }
       if (targetJob?.clientPhone) {
+        const clientKey = jobsKey(targetJob.clientPhone);
+        void AsyncStorage.getItem(clientKey).then((raw) => {
+          if (!raw) return;
+          try {
+            const list: Job[] = JSON.parse(raw);
+            const updatedClientList = list.map((j) =>
+              j.id === jobId
+                ? {
+                    ...j,
+                    status: 'CANCELLED' as JobStatus,
+                    statusSince: now,
+                    cancellationReason: reason,
+                  }
+                : j,
+            );
+            void AsyncStorage.setItem(clientKey, JSON.stringify(updatedClientList));
+          } catch {}
+        });
+
         addNotification({
           id: `cancel-${jobId}-${Date.now()}`,
           jobId,
@@ -586,6 +617,26 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         fundi.updateJob(jobId, { status: 'COMPLETED', completedPhotoUri, completedAt: now });
       }
       if (targetJob?.clientPhone) {
+        const clientKey = jobsKey(targetJob.clientPhone);
+        void AsyncStorage.getItem(clientKey).then((raw) => {
+          if (!raw) return;
+          try {
+            const list: Job[] = JSON.parse(raw);
+            const updatedClientList = list.map((j) =>
+              j.id === jobId
+                ? {
+                    ...j,
+                    status: 'COMPLETED' as JobStatus,
+                    statusSince: now,
+                    completedAt: now,
+                    completedPhotoUri,
+                  }
+                : j,
+            );
+            void AsyncStorage.setItem(clientKey, JSON.stringify(updatedClientList));
+          } catch {}
+        });
+
         addNotification({
           id: `complete-${jobId}-${Date.now()}`,
           jobId,

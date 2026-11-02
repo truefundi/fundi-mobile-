@@ -329,7 +329,7 @@ function JobCard({
   // Before a quote exists the only committed cost is the visit fee.
   const amount = job.agreedPrice || (total > 0 ? total : job.visitFee);
   const terminated = isTerminated(job.status);
-  const isActiveOrProgress = job.status === 'ACTIVE' || job.status === 'IN_PROGRESS';
+  const isActiveOrProgress = job.status === 'ACTIVE' || job.status === 'IN_PROGRESS' || job.status === 'ACCEPTED';
 
   if (isActiveOrProgress) {
     const isStarted = job.status === 'IN_PROGRESS';

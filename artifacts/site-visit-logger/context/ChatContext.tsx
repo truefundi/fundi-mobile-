@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useFundi } from '@/context/FundiContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { useWork } from '@/context/WorkContext';
+import { jobsKey } from '@/constants/storage';
 import type { BookingFee, JobStatus, RequestLifecycleStatus, RequestType, ServiceRequest } from '@/constants/jobs';
 import type { Coordinates } from '@/lib/location';
 
@@ -112,7 +113,7 @@ function recipientPhones(thread: ChatThread): string[] {
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
-  const { getJob, acceptOffer, cancelJob, findAnotherTechnician } = useFundi();
+  const { getJob, acceptOffer, cancelJob, findAnotherTechnician, updateJob } = useFundi();
   const { addNotification } = useNotifications();
   const { addOrUpdateJob } = useWork();
   const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -359,16 +360,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       const jobId = sourceThread.jobId;
       const relatedJob = jobId ? getJob(jobId) : undefined;
-      const updatesJob = !!relatedJob && relatedJob.status === 'OFFERED' &&
+      const updatesJob = !!relatedJob && (relatedJob.status === 'OFFERED' || relatedJob.status === 'VISIT_PAID' || relatedJob.status === 'PAYMENT_PENDING') &&
         (status === 'ACCEPTED' || status === 'DECLINED');
-      const cancelsJob = !!relatedJob && ['REQUESTED', 'MATCHING', 'OFFERED'].includes(relatedJob.status) &&
+      const cancelsJob = !!relatedJob && ['REQUESTED', 'MATCHING', 'OFFERED', 'ACTIVE', 'IN_PROGRESS', 'VISIT_PAID'].includes(relatedJob.status) &&
         status === 'CANCELLED';
       if ((updatesJob || cancelsJob) && jobId) {
-        if (status === 'ACCEPTED') acceptOffer(jobId);
+        if (status === 'ACCEPTED') {
+          updateJob(jobId, { status: 'ACTIVE' }, recipientPhones(sourceThread));
+        }
         else if (status === 'DECLINED') findAnotherTechnician(jobId);
         else if (cancelsJob) {
           const job = getJob(jobId);
-          if (job && job.status !== 'CANCELLED') cancelJob(jobId, undefined, recipientPhones(sourceThread));
+          if (job && job.status !== 'CANCELLED') cancelJob(jobId, reasonText, recipientPhones(sourceThread));
         }
       }
 
@@ -409,6 +412,35 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             },
           ],
         }, sourceThread.technicianPhone);
+
+        // Also sync client's persistent job store so the client immediately sees ACTIVE in Activity tab
+        if (sourceThread.clientPhone) {
+          const clientKey = jobsKey(sourceThread.clientPhone);
+          void AsyncStorage.getItem(clientKey).then((raw) => {
+            if (!raw) return;
+            try {
+              const list: any[] = JSON.parse(raw);
+              const updatedList = list.map((j) =>
+                j.id === refId
+                  ? {
+                      ...j,
+                      status: 'ACTIVE',
+                      statusSince: now,
+                      technician: j.technician ?? {
+                        id: account?.id ?? 'tech-assigned',
+                        name: account?.name ?? sourceThread.technicianName ?? 'Technician',
+                        phone: sourceThread.technicianPhone ?? account?.phone ?? '',
+                        service: sourceRequest.serviceName,
+                        rating: 4.9,
+                        completedJobs: 18,
+                      },
+                    }
+                  : j,
+              );
+              void AsyncStorage.setItem(clientKey, JSON.stringify(updatedList));
+            } catch {}
+          });
+        }
       }
 
       const title =
@@ -572,6 +604,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         // Update the agreed price on the technician's job and client's job
         const refId = sourceThread.jobId ?? `JOB-${Date.now()}`;
         const existingServiceName = request?.serviceName ?? (sourceThread.jobId ? getJob(sourceThread.jobId)?.service : undefined) ?? 'Service';
+        updateJob(refId, { agreedPrice: sourceOffer.amount }, recipientPhones(sourceThread));
         void addOrUpdateJob({
           id: refId,
           reference: `FND-${refId.slice(-4).toUpperCase()}`,
@@ -605,6 +638,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             },
           ],
         }, sourceThread.technicianPhone);
+
+        if (sourceThread.clientPhone) {
+          const clientKey = jobsKey(sourceThread.clientPhone);
+          void AsyncStorage.getItem(clientKey).then((raw) => {
+            if (!raw) return;
+            try {
+              const list: any[] = JSON.parse(raw);
+              const updatedList = list.map((j) =>
+                j.id === refId ? { ...j, agreedPrice: sourceOffer.amount } : j,
+              );
+              void AsyncStorage.setItem(clientKey, JSON.stringify(updatedList));
+            } catch {}
+          });
+        }
       }
     },
     [addNotification, addOrUpdateJob, getJob, threads],
@@ -652,6 +699,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const initiatorRole: 'technician' | 'client' = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
       const initiatorName = account?.name ?? (initiatorRole === 'technician' ? 'Technician' : 'Client');
       const initiatorId = account?.id;
+      const endText = initiatorRole === 'technician' ? 'The technician ended this service request.' : 'The client ended this service request.';
       const updated: ChatThread[] = threads.map((item) =>
         item.id === threadId
           ? {
@@ -660,7 +708,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               cancelledByRole: initiatorRole,
               cancelledByName: initiatorName,
               cancelledById: initiatorId,
-              lastMessage: 'The client ended this service request.',
+              lastMessage: endText,
               lastMessageTime: now,
               messages: [
                 ...item.messages,
@@ -672,7 +720,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   cancelledByRole: initiatorRole,
                   cancelledByName: initiatorName,
                   cancelledById: initiatorId,
-                  text: 'The client ended this service request.',
+                  text: endText,
                   timestamp: now,
                 },
               ],

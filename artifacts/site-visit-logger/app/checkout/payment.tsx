@@ -162,7 +162,7 @@ export default function CheckoutPaymentScreen() {
         // 2. Prepare technician chat thread
         const updatedJob = getJob(targetRequestId);
         const techName = technician?.name ?? updatedJob?.technician?.name ?? 'Assigned Technician';
-        const techPhone = technician?.phoneNumber ?? updatedJob?.technician?.phone;
+        const techPhone = technician?.phoneNumber ?? (technician as any)?.phone ?? updatedJob?.technician?.phone ?? (updatedJob?.technician as any)?.phoneNumber;
         const techLocation = technician?.location ?? updatedJob?.technician?.location;
 
         const threadId = createOrGetThread(
