@@ -368,7 +368,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         else if (status === 'DECLINED') findAnotherTechnician(jobId);
         else if (cancelsJob) {
           const job = getJob(jobId);
-          if (job && job.status !== 'CANCELLED') cancelJob(jobId, recipientPhones(sourceThread));
+          if (job && job.status !== 'CANCELLED') cancelJob(jobId, undefined, recipientPhones(sourceThread));
         }
       }
 

@@ -675,8 +675,12 @@ export default function StandaloneChatScreen() {
                       </Text>
                     </View>
 
-                    {/* Accept / Decline actions if client and offer is pending */}
-                    {item.priceOffer.status === 'PENDING' && account?.role !== 'TECHNICIAN' && !isThreadTerminated && (
+                    {/* Accept / Decline actions if recipient and offer is pending */}
+                    {item.priceOffer.status === 'PENDING' &&
+                      !isThreadTerminated &&
+                      (item.priceOffer.senderRole
+                        ? (item.priceOffer.senderRole === 'technician' ? account?.role !== 'TECHNICIAN' : account?.role === 'TECHNICIAN')
+                        : account?.role !== 'TECHNICIAN') && (
                       <View style={styles.offerActionRow}>
                         <Button
                           label="Accept Price"
