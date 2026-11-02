@@ -285,7 +285,8 @@ type WorkContextValue = {
   done: Job[];
   cancelled: Job[];
   earnings: number;
-  addOrUpdateJob: (job: Job) => Promise<void>;
+  addOrUpdateJob: (job: Job, targetTechnicianPhone?: string) => Promise<void>;
+  startJob: (jobId: string) => Promise<void>;
   cancelJob: (jobId: string, reason: string) => Promise<void>;
   completeJob: (jobId: string, completedPhotoUri?: string) => Promise<void>;
   createDraftRequest: (data: Partial<ServiceRequest>) => string;
@@ -428,15 +429,76 @@ export function WorkProvider({ children }: { children: ReactNode }) {
   }, [account?.phone]);
 
   const addOrUpdateJob = useCallback(
-    async (job: Job) => {
-      const updated = [job, ...techJobsRef.current.filter((j) => j.id !== job.id)];
+    async (job: Job, targetTechnicianPhone?: string) => {
+      const targetPhone = targetTechnicianPhone || account?.phone;
+      if (!account?.phone || account.phone === targetPhone) {
+        const updated = [job, ...techJobsRef.current.filter((j) => j.id !== job.id)];
+        techJobsRef.current = updated;
+        setTechJobs(updated);
+      }
+      if (targetPhone) {
+        const key = `${TECH_JOBS_KEY}/${targetPhone}`;
+        try {
+          const raw = await AsyncStorage.getItem(key);
+          const currentList: Job[] = raw ? JSON.parse(raw) : [];
+          const updatedList = [job, ...currentList.filter((j) => j.id !== job.id)];
+          await AsyncStorage.setItem(key, JSON.stringify(updatedList));
+        } catch {}
+      }
+      if (fundi) {
+        fundi.updateJob(job.id, job);
+      }
+    },
+    [account?.phone, fundi],
+  );
+
+  const startJob = useCallback(
+    async (jobId: string) => {
+      const now = new Date().toISOString();
+      const targetJob = techJobsRef.current.find((j) => j.id === jobId);
+      const updated = techJobsRef.current.map((j) => {
+        if (j.id === jobId) {
+          return {
+            ...j,
+            status: 'IN_PROGRESS' as JobStatus,
+            statusSince: now,
+            events: [
+              ...j.events,
+              {
+                id: `evt-${Date.now()}`,
+                status: 'IN_PROGRESS' as JobStatus,
+                title: 'Job in progress',
+                text: 'Technician has started work on this job.',
+                at: now,
+              },
+            ],
+          };
+        }
+        return j;
+      });
       techJobsRef.current = updated;
       setTechJobs(updated);
       if (account?.phone) {
         await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
       }
+      if (fundi) {
+        fundi.updateJob(jobId, { status: 'IN_PROGRESS' });
+      }
+      if (targetJob?.clientPhone) {
+        addNotification({
+          id: `start-${jobId}-${Date.now()}`,
+          jobId,
+          threadId: targetJob.chatThreadId,
+          status: 'IN_PROGRESS',
+          service: targetJob.service,
+          title: 'Technician started your job',
+          text: `The technician has started work on ${targetJob.service}.`,
+          at: now,
+          recipientPhones: [targetJob.clientPhone],
+        });
+      }
     },
-    [account?.phone],
+    [account?.phone, addNotification, fundi],
   );
 
   const cancelJob = useCallback(
@@ -469,6 +531,9 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       if (account?.phone) {
         await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
       }
+      if (fundi) {
+        fundi.cancelJob(jobId, reason, [targetJob?.clientPhone].filter(Boolean) as string[]);
+      }
       if (targetJob?.clientPhone) {
         addNotification({
           id: `cancel-${jobId}-${Date.now()}`,
@@ -483,7 +548,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         });
       }
     },
-    [account?.phone, addNotification],
+    [account?.phone, addNotification, fundi],
   );
 
   const completeJob = useCallback(
@@ -517,6 +582,9 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       if (account?.phone) {
         await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
       }
+      if (fundi) {
+        fundi.updateJob(jobId, { status: 'COMPLETED', completedPhotoUri, completedAt: now });
+      }
       if (targetJob?.clientPhone) {
         addNotification({
           id: `complete-${jobId}-${Date.now()}`,
@@ -531,7 +599,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         });
       }
     },
-    [account?.phone, addNotification],
+    [account?.phone, addNotification, fundi],
   );
 
   const update = useCallback(
@@ -830,13 +898,14 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         .filter((j) => j.status === 'COMPLETED' || j.status === 'REPAIR_COMPLETED')
         .reduce((sum, j) => sum + (j.agreedPrice || j.visitFee * (1 - COMMISSION_RATE)), 0),
       addOrUpdateJob,
+      startJob,
       cancelJob,
       completeJob,
       createDraftRequest: fundi ? fundi.createDraftRequest : localCreateDraftRequest,
       markBookingFeePaid: fundi ? fundi.markBookingFeePaid : localMarkBookingFeePaid,
       initializeChatId: fundi ? fundi.initializeChatId : localInitializeChatId,
     };
-  }, [account, addOrUpdateJob, cancelJob, completeJob, fundi, localCreateDraftRequest, localInitializeChatId, localMarkBookingFeePaid, refreshApplication, state, storageKey, techJobs, update]);
+  }, [account, addOrUpdateJob, cancelJob, completeJob, fundi, localCreateDraftRequest, localInitializeChatId, localMarkBookingFeePaid, refreshApplication, startJob, state, storageKey, techJobs, update]);
 
   return <WorkContext.Provider value={value}>{children}</WorkContext.Provider>;
 }

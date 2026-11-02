@@ -3,6 +3,7 @@ import React, { createContext, type ReactNode, useCallback, useContext, useEffec
 import { useAuth } from '@/context/AuthContext';
 import { useFundi } from '@/context/FundiContext';
 import { useNotifications } from '@/context/NotificationContext';
+import { useWork } from '@/context/WorkContext';
 import type { BookingFee, JobStatus, RequestLifecycleStatus, RequestType, ServiceRequest } from '@/constants/jobs';
 import type { Coordinates } from '@/lib/location';
 
@@ -113,6 +114,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
   const { getJob, acceptOffer, cancelJob, findAnotherTechnician } = useFundi();
   const { addNotification } = useNotifications();
+  const { addOrUpdateJob } = useWork();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
@@ -302,7 +304,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         ACCEPTED: ['CANCELLED', 'DISPATCHED', 'ACTIVE'],
         PAYMENT_PENDING: ['CANCELLED', 'DISPATCHED', 'ACTIVE'],
         DISPATCHED: ['CANCELLED', 'ACTIVE'],
-        ACTIVE: ['CANCELLED'],
+        ACTIVE: ['CANCELLED', 'IN_PROGRESS'],
+        IN_PROGRESS: ['CANCELLED', 'ACTIVE'],
         DECLINED: [],
         CANCELLED: [],
       };
@@ -369,6 +372,45 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // When the technician ACCEPTS a request, add an Active job to the technician's Jobs tab
+      if (status === 'ACCEPTED') {
+        const refId = sourceThread.jobId ?? `JOB-${Date.now()}`;
+        const fee = sourceRequest.bookingFee?.amount ?? 75;
+        void addOrUpdateJob({
+          id: refId,
+          reference: `FND-${refId.slice(-4).toUpperCase()}`,
+          service: sourceRequest.serviceName,
+          problem: sourceRequest.problem,
+          urgency: 'Today',
+          locationLabel: sourceRequest.address ?? 'Location not specified',
+          locationLatitude: sourceRequest.latitude,
+          locationLongitude: sourceRequest.longitude,
+          status: 'ACTIVE',
+          statusSince: now,
+          createdAt: now,
+          clientName: sourceThread.clientName ?? sourceThread.otherParticipantName,
+          clientPhone: sourceThread.clientPhone,
+          visitFee: fee,
+          agreedPrice: sourceThread.agreedPrice,
+          chatThreadId: threadId,
+          type: sourceRequest.type ?? 'STANDARD',
+          bookingFee: sourceRequest.bookingFee ?? {
+            amount: fee,
+            currency: 'RWF',
+            status: 'PAID',
+          },
+          events: [
+            {
+              id: `evt-accepted-${Date.now()}`,
+              status: 'ACTIVE',
+              title: 'Request accepted',
+              text: 'Technician accepted the service request.',
+              at: now,
+            },
+          ],
+        }, sourceThread.technicianPhone);
+      }
+
       const title =
         status === 'ACCEPTED' ? 'Technician accepted your request' :
         status === 'DECLINED' ? 'Technician declined your request' :
@@ -389,7 +431,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         });
       }
     },
-    [acceptOffer, account?.role, addNotification, cancelJob, findAnotherTechnician, getJob, threads],
+    [acceptOffer, account?.role, addNotification, addOrUpdateJob, cancelJob, findAnotherTechnician, getJob, threads],
   );
 
   const sendPriceOffer = useCallback(
@@ -526,9 +568,46 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           at: now,
           recipientPhones: recipientPhones(sourceThread),
         });
+
+        // Update the agreed price on the technician's job and client's job
+        const refId = sourceThread.jobId ?? `JOB-${Date.now()}`;
+        const existingServiceName = request?.serviceName ?? (sourceThread.jobId ? getJob(sourceThread.jobId)?.service : undefined) ?? 'Service';
+        void addOrUpdateJob({
+          id: refId,
+          reference: `FND-${refId.slice(-4).toUpperCase()}`,
+          service: existingServiceName,
+          problem: request?.problem ?? '',
+          urgency: 'Today',
+          locationLabel: request?.address ?? 'Location not specified',
+          locationLatitude: request?.latitude,
+          locationLongitude: request?.longitude,
+          status: 'ACTIVE',
+          statusSince: now,
+          createdAt: now,
+          clientName: sourceThread.clientName ?? sourceThread.otherParticipantName,
+          clientPhone: sourceThread.clientPhone,
+          visitFee: request?.bookingFee?.amount ?? 75,
+          agreedPrice: sourceOffer.amount,
+          chatThreadId: threadId,
+          type: request?.type ?? 'STANDARD',
+          bookingFee: request?.bookingFee ?? {
+            amount: 75,
+            currency: 'RWF',
+            status: 'PAID',
+          },
+          events: [
+            {
+              id: `evt-offer-accepted-${Date.now()}`,
+              status: 'ACTIVE',
+              title: 'Price agreed',
+              text: `Service offer of RWF ${sourceOffer.amount.toLocaleString()} was accepted.`,
+              at: now,
+            },
+          ],
+        }, sourceThread.technicianPhone);
       }
     },
-    [addNotification, getJob, threads],
+    [addNotification, addOrUpdateJob, getJob, threads],
   );
 
   const acceptRequestThread = useCallback(
@@ -660,6 +739,42 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       void persistThreads([...threads, newThread]).catch((error: unknown) => {
         console.error('Unable to persist the new chat thread.', error);
       });
+      if (requestDetails?.status === 'ACCEPTED') {
+        const refId = jobId ?? `JOB-${Date.now()}`;
+        const fee = requestDetails.bookingFee?.amount ?? 75;
+        void addOrUpdateJob({
+          id: refId,
+          reference: `FND-${refId.slice(-4).toUpperCase()}`,
+          service: requestDetails.serviceName,
+          problem: requestDetails.problem,
+          urgency: requestDetails.type === 'SOS' ? 'Emergency' : 'Today',
+          locationLabel: requestDetails.address ?? 'Location not specified',
+          locationLatitude: requestDetails.latitude,
+          locationLongitude: requestDetails.longitude,
+          status: 'ACTIVE',
+          statusSince: now,
+          createdAt: now,
+          clientName: account?.role === 'TECHNICIAN' ? otherName : account?.name,
+          clientPhone: account?.role === 'TECHNICIAN' ? otherPhone : account?.phone,
+          visitFee: fee,
+          chatThreadId: newThreadId,
+          type: requestDetails.type ?? 'STANDARD',
+          bookingFee: requestDetails.bookingFee ?? {
+            amount: fee,
+            currency: 'RWF',
+            status: 'PAID',
+          },
+          events: [
+            {
+              id: `evt-accepted-${Date.now()}`,
+              status: 'ACTIVE',
+              title: 'Request accepted',
+              text: 'Technician accepted the service request.',
+              at: now,
+            },
+          ],
+        }, account?.role === 'TECHNICIAN' ? account.phone : otherPhone);
+      }
       if (requestDetails?.status === 'REQUEST_RECEIVED' || requestDetails?.status === 'PENDING_RESPONSE') {
         addNotification({
           id: `request-${newThreadId}-pending`,
