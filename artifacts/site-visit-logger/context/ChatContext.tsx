@@ -744,7 +744,35 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const existing = jobId
         ? threads.find((thread) => thread.jobId === jobId && !thread.isEnded)
         : threads.find((thread) => thread.otherParticipantName === otherName);
-      if (existing) return existing.id;
+      if (existing) {
+        if (requestDetails?.bookingFee?.status === 'PAID') {
+          const updated = threads.map((t) => {
+            if (t.id === existing.id) {
+              return {
+                ...t,
+                messages: t.messages.map((m) =>
+                  m.serviceRequest
+                    ? {
+                        ...m,
+                        serviceRequest: {
+                          ...m.serviceRequest,
+                          bookingFee: requestDetails.bookingFee,
+                          status:
+                            m.serviceRequest.status === 'PENDING_RESPONSE'
+                              ? 'REQUEST_RECEIVED'
+                              : m.serviceRequest.status,
+                        },
+                      }
+                    : m,
+                ),
+              };
+            }
+            return t;
+          });
+          void persistThreads(updated);
+        }
+        return existing.id;
+      }
 
       const newThreadId = 'thread-' + Date.now();
       const now = new Date().toISOString();
