@@ -329,7 +329,7 @@ function JobCard({
   // Before a quote exists the only committed cost is the visit fee.
   const amount = job.agreedPrice || (total > 0 ? total : job.visitFee);
   const terminated = isTerminated(job.status);
-  const isActiveOrProgress = job.status === 'ACTIVE' || job.status === 'IN_PROGRESS';
+  const isActiveOrProgress = job.status === 'ACTIVE' || job.status === 'IN_PROGRESS' || job.status === 'ACCEPTED';
 
   if (isActiveOrProgress) {
     const isStarted = job.status === 'IN_PROGRESS';
@@ -377,10 +377,14 @@ function JobCard({
         {/* Agreed Amount Box */}
         <View style={[styles.agreedAmountRow, { backgroundColor: colors.secondary }]}>
           <Text style={[styles.agreedAmountLabel, { color: colors.secondaryForeground }]}>
-            {job.agreedPrice ? 'Agreed Fee:' : 'Visit / Booking Fee:'}
+            {job.agreedPrice ? 'Agreed Fee:' : job.proposedPrice ? 'Offered Fee:' : 'Service Fee:'}
           </Text>
-          <Text style={[styles.agreedAmountValue, { color: colors.primary }]}>
-            RWF {amount.toLocaleString()}
+          <Text style={[styles.agreedAmountValue, { color: job.agreedPrice ? colors.primary : job.proposedPrice ? colors.warning : colors.mutedForeground }]}>
+            {job.agreedPrice
+              ? `RWF ${job.agreedPrice.toLocaleString()}`
+              : job.proposedPrice
+              ? `RWF ${job.proposedPrice.toLocaleString()} (Pending)`
+              : 'Negotiating in chat…'}
           </Text>
         </View>
 
@@ -541,25 +545,25 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: 'row', borderRadius: 23, padding: 4, marginTop: 18, marginBottom: 16 },
   tab: { flex: 1, minHeight: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   tabText: { fontSize: 13 },
-  containerCard: { borderRadius: 16, borderWidth: 1.5, padding: 16, gap: 10, marginBottom: 12 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 16, flex: 1 },
-  statusPill: { borderRadius: 12, paddingHorizontal: 9, paddingVertical: 4 },
+  containerCard: { borderRadius: 14, borderWidth: 1.5, padding: 12, gap: 8, marginBottom: 11 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },
+  statusPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   statusPillText: { fontFamily: 'Inter_700Bold', fontSize: 11 },
-  agreedAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
-  agreedAmountLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  agreedAmountValue: { fontFamily: 'Inter_700Bold', fontSize: 16 },
-  jobProblem: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19 },
-  clientAndLocationRow: { gap: 6 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  infoText: { fontFamily: 'Inter_500Medium', fontSize: 13 },
-  infoSubText: { fontFamily: 'Inter_400Regular', fontSize: 12 },
+  agreedAmountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  agreedAmountLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  agreedAmountValue: { fontFamily: 'Inter_700Bold', fontSize: 14 },
+  jobProblem: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
+  clientAndLocationRow: { gap: 4 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  infoText: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+  infoSubText: { fontFamily: 'Inter_400Regular', fontSize: 11 },
   cardActionsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingTop: 8,
-    marginTop: 2,
+    gap: 6,
+    paddingTop: 6,
+    marginTop: 1,
     borderTopWidth: 1,
     borderTopColor: 'rgba(128,128,128,0.15)',
   },

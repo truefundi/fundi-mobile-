@@ -49,6 +49,20 @@ export function WorkJobs() {
   const visibleJobs: Job[] = tab === 'In Progress' ? mine : tab === 'Completed' ? done : cancelled;
 
   const handleStartJob = async (job: Job) => {
+    if (!job.agreedPrice || job.agreedPrice <= 0) {
+      Alert.alert(
+        'Price Agreement Required',
+        'Please negotiate and agree on the service price with the client in chat before starting the job.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Open Chat',
+            onPress: () => handleChatClient(job.chatThreadId),
+          },
+        ],
+      );
+      return;
+    }
     try {
       await startJob(job.id);
       if (selectedJob?.id === job.id) {
@@ -270,10 +284,14 @@ export function WorkJobs() {
                 {/* Agreed Amount Box */}
                 <View style={[styles.agreedAmountRow, { backgroundColor: colors.secondary }]}>
                   <Text style={[styles.agreedAmountLabel, { color: colors.secondaryForeground }]}>
-                    Agreed Fee:
+                    {job.agreedPrice ? 'Agreed Fee:' : job.proposedPrice ? 'Proposed Fee:' : 'Service Fee:'}
                   </Text>
-                  <Text style={[styles.agreedAmountValue, { color: colors.primary }]}>
-                    RWF {agreedAmount.toLocaleString()}
+                  <Text style={[styles.agreedAmountValue, { color: job.agreedPrice ? colors.primary : job.proposedPrice ? colors.warning : colors.mutedForeground }]}>
+                    {job.agreedPrice
+                      ? `RWF ${job.agreedPrice.toLocaleString()}`
+                      : job.proposedPrice
+                      ? `RWF ${job.proposedPrice.toLocaleString()} (Sent)`
+                      : 'Negotiating in chat…'}
                   </Text>
                 </View>
 
@@ -316,39 +334,67 @@ export function WorkJobs() {
                       style={[
                         styles.cardActionBtn,
                         {
-                          backgroundColor: isStarted ? colors.secondary : colors.primary,
-                          borderColor: isStarted ? colors.border : colors.primary,
+                          backgroundColor: isStarted
+                            ? colors.secondary
+                            : !job.agreedPrice
+                            ? colors.muted
+                            : colors.primary,
+                          borderColor: isStarted
+                            ? colors.border
+                            : !job.agreedPrice
+                            ? colors.border
+                            : colors.primary,
                         },
                       ]}
                     >
                       <Feather
-                        name={isStarted ? 'check' : 'play'}
+                        name={isStarted ? 'check' : !job.agreedPrice ? 'message-circle' : 'play'}
                         size={12}
-                        color={isStarted ? colors.mutedForeground : colors.primaryForeground}
+                        color={
+                          isStarted
+                            ? colors.mutedForeground
+                            : !job.agreedPrice
+                            ? colors.mutedForeground
+                            : colors.primaryForeground
+                        }
                       />
                       <Text
                         style={[
                           styles.cardActionBtnText,
-                          { color: isStarted ? colors.mutedForeground : colors.primaryForeground },
+                          {
+                            color: isStarted
+                              ? colors.mutedForeground
+                              : !job.agreedPrice
+                              ? colors.mutedForeground
+                              : colors.primaryForeground,
+                          },
                         ]}
                       >
-                        {isStarted ? 'In Progress' : 'Start Job'}
+                        {isStarted ? 'In Progress' : !job.agreedPrice ? 'Agree Price' : 'Start Job'}
                       </Text>
                     </Pressable>
 
                     <Pressable
                       onPress={(e) => {
                         e.stopPropagation();
+                        if (!isStarted) {
+                          Alert.alert('Start Job First', 'Please start the job before ending and uploading proof.');
+                          return;
+                        }
                         setSelectedJob(job);
                         setShowCompleteFlow(true);
                       }}
                       style={[
                         styles.cardActionBtn,
-                        { backgroundColor: colors.card, borderColor: colors.border },
+                        {
+                          backgroundColor: !isStarted ? colors.secondary : colors.card,
+                          borderColor: colors.border,
+                          opacity: !isStarted ? 0.7 : 1,
+                        },
                       ]}
                     >
-                      <Feather name="check-circle" size={12} color={colors.foreground} />
-                      <Text style={[styles.cardActionBtnText, { color: colors.foreground }]}>
+                      <Feather name="check-circle" size={12} color={!isStarted ? colors.mutedForeground : colors.foreground} />
+                      <Text style={[styles.cardActionBtnText, { color: !isStarted ? colors.mutedForeground : colors.foreground }]}>
                         End Job
                       </Text>
                     </Pressable>
@@ -576,9 +622,15 @@ export function WorkJobs() {
                       <View style={{ gap: 10 }}>
                         {selectedJob.status === 'ACTIVE' && (
                           <Button
-                            label="Start Job"
-                            icon="play"
-                            onPress={() => void handleStartJob(selectedJob)}
+                            label={selectedJob.agreedPrice ? 'Start Job' : 'Agree Price in Chat'}
+                            icon={selectedJob.agreedPrice ? 'play' : 'chatbubbles-outline'}
+                            onPress={() => {
+                              if (!selectedJob.agreedPrice) {
+                                handleChatClient(selectedJob.chatThreadId);
+                              } else {
+                                void handleStartJob(selectedJob);
+                              }
+                            }}
                           />
                         )}
                         <View style={styles.twoActionRow}>
@@ -734,26 +786,26 @@ const styles = StyleSheet.create({
   tabButton: { flex: 1, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },
   tabButtonText: { fontSize: 13 },
   list: { gap: 12 },
-  card: { borderRadius: 16, borderWidth: 1.5, padding: 16, gap: 10 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 16, flex: 1 },
-  statusPill: { borderRadius: 12, paddingHorizontal: 9, paddingVertical: 4 },
+  card: { borderRadius: 14, borderWidth: 1.5, padding: 12, gap: 8 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },
+  statusPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   statusPillText: { fontFamily: 'Inter_700Bold', fontSize: 11 },
-  agreedAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
-  agreedAmountLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  agreedAmountValue: { fontFamily: 'Inter_700Bold', fontSize: 16 },
-  jobProblem: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19 },
-  clientAndLocationRow: { gap: 6 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  infoText: { fontFamily: 'Inter_500Medium', fontSize: 13 },
-  infoSubText: { fontFamily: 'Inter_400Regular', fontSize: 12 },
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, paddingTop: 10, marginTop: 2 },
+  agreedAmountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  agreedAmountLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  agreedAmountValue: { fontFamily: 'Inter_700Bold', fontSize: 14 },
+  jobProblem: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
+  clientAndLocationRow: { gap: 4 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  infoText: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+  infoSubText: { fontFamily: 'Inter_400Regular', fontSize: 11 },
+  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, paddingTop: 8, marginTop: 1 },
   cardActionsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingTop: 8,
-    marginTop: 2,
+    paddingTop: 6,
+    marginTop: 1,
     borderTopWidth: 1,
     borderTopColor: 'rgba(128,128,128,0.15)',
   },

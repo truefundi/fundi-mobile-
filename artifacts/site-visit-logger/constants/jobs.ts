@@ -219,6 +219,7 @@ export interface ServiceRequest {
   clientName?: string;
   clientPhone?: string;
   agreedPrice?: number;
+  proposedPrice?: number;
   completedPhotoUri?: string;
   cancellationReason?: string;
   events: JobEvent[];

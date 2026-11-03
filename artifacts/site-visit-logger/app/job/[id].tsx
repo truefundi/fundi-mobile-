@@ -152,33 +152,35 @@ export default function JobScreen() {
       break;
 
     case 'ACCEPTED':
-      stage = (
-        <StageScreen
-          eyebrow="SERVICE BOOKING FEE"
-          title="Confirm your technician booking"
-          subtitle="Pay the flat Service Booking Fee to unlock direct real-time chat with your technician."
-          footer={
-            <>
-              <Button
-                label="Review & Pay Booking Fee"
-                icon="arrow-forward"
-                onPress={() => router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service } })}
-                testID="review-booking-fee-button"
-              />
-              <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} testID="visit-fee-cancel-button" />
-            </>
-          }
-        >
-          {job.technician ? <TechnicianCard technician={job.technician} compact caption="Selected specialist" /> : null}
-          <Notice
-            tone="info"
-            icon="information-circle-outline"
-            text="This booking fee secures your request and unlocks direct chat with your technician. The final cost of the repair/service will be agreed upon and settled directly between you and the technician."
-          />
-        </StageScreen>
-      );
-      break;
-
+      if (job.bookingFee?.status !== 'PAID') {
+        stage = (
+          <StageScreen
+            eyebrow="SERVICE BOOKING FEE"
+            title="Confirm your technician booking"
+            subtitle="Pay the flat Service Booking Fee to unlock direct real-time chat with your technician."
+            footer={
+              <>
+                <Button
+                  label="Review & Pay Booking Fee"
+                  icon="arrow-forward"
+                  onPress={() => router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service } })}
+                  testID="review-booking-fee-button"
+                />
+                <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} testID="visit-fee-cancel-button" />
+              </>
+            }
+          >
+            {job.technician ? <TechnicianCard technician={job.technician} compact caption="Selected specialist" /> : null}
+            <Notice
+              tone="info"
+              icon="information-circle-outline"
+              text="This booking fee secures your request and unlocks direct chat with your technician. The final cost of the repair/service will be agreed upon and settled directly between you and the technician."
+            />
+          </StageScreen>
+        );
+        break;
+      }
+      // If booking fee is paid, fall through to ACTIVE stage
     case 'ACTIVE':
     case 'IN_PROGRESS':
     case 'DISPATCHED':
@@ -269,7 +271,7 @@ export default function JobScreen() {
       break;
 
     case 'PAYMENT_PENDING':
-      if (!job.quote) {
+      if (!job.quote && job.bookingFee?.status !== 'PAID') {
         stage = (
           <StageScreen
             eyebrow="SERVICE BOOKING FEE"

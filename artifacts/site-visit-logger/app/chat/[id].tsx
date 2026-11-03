@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -121,16 +122,19 @@ export default function StandaloneChatScreen() {
   }, [thread?.messages]);
 
   const isSos = typeParam === 'SOS' || job?.type === 'SOS' || threadServiceRequest?.type === 'SOS';
+  const isTechnician = account?.role === 'TECHNICIAN';
 
-  // Check booking fee gatekeeping status
+  // Check booking fee gatekeeping status - technicians NEVER pay booking fee
   const hasAssociatedBooking = Boolean(job || threadServiceRequest?.bookingFee || thread?.jobId);
-  const isBookingFeePaid = hasAssociatedBooking
-    ? job
-      ? job.bookingFee?.status === 'PAID'
-      : threadServiceRequest?.bookingFee
-        ? threadServiceRequest.bookingFee.status === 'PAID'
-        : false
-    : true;
+  const isBookingFeePaid =
+    isTechnician ||
+    (hasAssociatedBooking
+      ? job
+        ? job.bookingFee?.status === 'PAID'
+        : threadServiceRequest?.bookingFee
+          ? threadServiceRequest.bookingFee.status === 'PAID'
+          : false
+      : true);
 
   const isThreadTerminated =
     Boolean(thread?.isEnded) ||
@@ -204,18 +208,22 @@ export default function StandaloneChatScreen() {
   };
 
   const handleSendOffer = async () => {
-    if (!thread || !offerAmount || !isBookingFeePaid || isThreadTerminated) return;
+    if (!thread || !offerAmount || isThreadTerminated) return;
     const amountNum = parseFloat(offerAmount);
     if (isNaN(amountNum) || amountNum <= 0) return;
-    await sendPriceOffer(
-      thread.id,
-      amountNum,
-      offerNotes,
-      account?.role === 'TECHNICIAN' ? 'technician' : 'client',
-    );
-    setShowOfferModal(false);
-    setOfferAmount('');
-    setOfferNotes('');
+    try {
+      await sendPriceOffer(
+        thread.id,
+        amountNum,
+        offerNotes,
+        account?.role === 'TECHNICIAN' ? 'technician' : 'client',
+      );
+      setShowOfferModal(false);
+      setOfferAmount('');
+      setOfferNotes('');
+    } catch (err) {
+      Alert.alert('Offer Error', err instanceof Error ? err.message : 'Could not send price proposal.');
+    }
   };
 
   const handleDeclineRequestSubmit = async () => {
@@ -281,11 +289,11 @@ export default function StandaloneChatScreen() {
     if (thread?.agreedPrice) {
       return `Agreed: RWF ${thread.agreedPrice.toLocaleString()}`;
     }
-    if (isBookingFeePaid) {
+    if (isBookingFeePaid || isTechnician) {
       return 'Chat Active';
     }
     return 'Booking Fee Pending';
-  }, [isThreadTerminated, job?.status, threadServiceRequest?.status, thread?.agreedPrice, isBookingFeePaid]);
+  }, [isThreadTerminated, job?.status, threadServiceRequest?.status, thread?.agreedPrice, isBookingFeePaid, isTechnician]);
 
   return (
     <KeyboardAvoidingView
@@ -427,7 +435,11 @@ export default function StandaloneChatScreen() {
           <Notice
             tone="success"
             icon="checkmark-circle-outline"
-            text="Service Booking Fee paid successfully! You now have direct messaging with your technician to coordinate the visit and negotiate repair pricing."
+            text={
+              isTechnician
+                ? "The client has paid the service booking fee. Review the request details below and accept the offer to coordinate the work."
+                : "Service Booking Fee paid successfully! You now have direct messaging with your technician to coordinate the visit and negotiate repair pricing."
+            }
           />
         </View>
       )}
@@ -675,8 +687,12 @@ export default function StandaloneChatScreen() {
                       </Text>
                     </View>
 
-                    {/* Accept / Decline actions if client and offer is pending */}
-                    {item.priceOffer.status === 'PENDING' && account?.role !== 'TECHNICIAN' && !isThreadTerminated && (
+                    {/* Accept / Decline actions if recipient and offer is pending */}
+                    {item.priceOffer.status === 'PENDING' &&
+                      !isThreadTerminated &&
+                      (item.priceOffer.senderRole
+                        ? (item.priceOffer.senderRole === 'technician' ? account?.role !== 'TECHNICIAN' : account?.role === 'TECHNICIAN')
+                        : account?.role !== 'TECHNICIAN') && (
                       <View style={styles.offerActionRow}>
                         <Button
                           label="Accept Price"
@@ -765,12 +781,14 @@ export default function StandaloneChatScreen() {
       <View style={[styles.settlementBar, { backgroundColor: colors.secondary }]}>
         <Ionicons name="information-circle-outline" size={14} color={colors.primary} />
         <Text style={[styles.settlementText, { color: colors.secondaryForeground }]}>
-          Final repair and labor price is negotiated and settled directly with your technician.
+          {isTechnician
+            ? "Negotiate and agree on the final repair and labor price directly with the client."
+            : "Final repair and labor price is negotiated and settled directly with your technician."}
         </Text>
       </View>
 
-      {/* GATEKEEPING: Locked overlay banner if booking fee is unpaid */}
-      {!isBookingFeePaid && !isThreadTerminated && (
+      {/* GATEKEEPING: Locked overlay banner if booking fee is unpaid (Clients only - technicians NEVER pay booking fee) */}
+      {!isTechnician && !isBookingFeePaid && !isThreadTerminated && (
         <View
           style={[
             styles.lockedBanner,
