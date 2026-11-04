@@ -13,6 +13,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  type TextInputInstance,
   View,
 } from 'react-native';
 import { TRADES } from '@/constants/work';
@@ -115,7 +116,7 @@ export function WorkApplication() {
   const [otpSending, setOtpSending] = useState(false);
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpError, setOtpError] = useState('');
-  const otpInputRef = useRef<TextInput>(null);
+  const otpInputRef = useRef<TextInputInstance>(null);
 
   // ── General ───────────────────────────────────────────────────────────────
   const [error, setError] = useState('');

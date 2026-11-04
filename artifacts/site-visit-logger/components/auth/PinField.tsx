@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, type TextInputInstance, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { PIN_LENGTH } from '@/constants/auth';
 import { useColors } from '@/hooks/useColors';
@@ -24,7 +24,7 @@ export function PinField({
   allowToggleVisibility = true,
 }: PinFieldProps) {
   const colors = useColors();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const [isSecure, setIsSecure] = useState(true);
   const [isFocused, setIsFocused] = useState(false);
 

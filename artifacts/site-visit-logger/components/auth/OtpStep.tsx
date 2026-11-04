@@ -1,6 +1,6 @@
 import { notify } from '@/lib/haptics';
 import React, { useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, type TextInputInstance, View } from 'react-native';
 import { formatPhone, OTP_LENGTH, RESEND_AFTER_MS } from '@/constants/auth';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
@@ -13,7 +13,7 @@ import { useCountdown } from '@/hooks/useCountdown';
 export function OtpStep({ verification }: { verification: Verification }) {
   const colors = useColors();
   const { verifyCode, resendCode, cancelVerification } = useAuth();
-  const input = useRef<TextInput>(null);
+  const input = useRef<TextInputInstance>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);

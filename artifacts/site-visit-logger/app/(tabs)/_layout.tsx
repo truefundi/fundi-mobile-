@@ -103,7 +103,7 @@ function ClassicTabLayout() {
             isIOS ? (
               <SymbolView name="house" tintColor={color} size={24} />
             ) : (
-              <Feather name="home" size={22} color={color} />
+              <Feather name="home" size={22} color={color as string} />
             ),
         }}
       />
@@ -115,7 +115,7 @@ function ClassicTabLayout() {
             isIOS ? (
               <SymbolView name={working ? 'slider.horizontal.3' : 'wrench.and.screwdriver'} tintColor={color} size={24} />
             ) : (
-              <Feather name={working ? 'sliders' : 'tool'} size={22} color={color} />
+              <Feather name={working ? 'sliders' : 'tool'} size={22} color={color as string} />
             ),
         }}
       />
@@ -123,21 +123,21 @@ function ClassicTabLayout() {
         name="chat"
         options={{
           title: 'Chats',
-          tabBarIcon: ({ color }) => <Feather name="message-square" size={21} color={color} />,
+          tabBarIcon: ({ color }) => <Feather name="message-square" size={21} color={color as string} />,
         }}
       />
       <Tabs.Screen
         name="activity"
         options={{
           title: working ? 'Jobs' : 'Activity',
-          tabBarIcon: ({ color }) => <Feather name={working ? 'briefcase' : 'clock'} size={21} color={color} />,
+          tabBarIcon: ({ color }) => <Feather name={working ? 'briefcase' : 'clock'} size={21} color={color as string} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color }) => <Feather name="user" size={21} color={color} />,
+          tabBarIcon: ({ color }) => <Feather name="user" size={21} color={color as string} />,
         }}
       />
     </Tabs>
