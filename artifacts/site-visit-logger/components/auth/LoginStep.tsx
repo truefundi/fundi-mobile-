@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { PIN_LENGTH } from '@/constants/auth';
 import { DEFAULT_COUNTRY, type Country } from '@/constants/countries';
 import { PhoneField } from '@/components/auth/PhoneField';
-import { PinField } from '@/components/auth/PinField';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { PageHeading } from '@/components/ui/PageHeading';
@@ -16,7 +14,7 @@ type Props = {
 };
 
 /**
- * Login step: Enter registered phone number and 5-digit PIN.
+ * Login step: Enter registered phone number to receive a 6-digit OTP code from the backend.
  */
 export function LoginStep({ onBack, onRegister }: Props) {
   const colors = useColors();
@@ -24,14 +22,12 @@ export function LoginStep({ onBack, onRegister }: Props) {
 
   const [digits, setDigits] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<Country>(DEFAULT_COUNTRY);
-  const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const minPhoneDigits = selectedCountry.nationalDigits ? selectedCountry.nationalDigits - 1 : 7;
   const phoneValid = digits.length >= minPhoneDigits;
-  const pinValid = pin.length === PIN_LENGTH;
-  const ready = phoneValid && pinValid;
+  const ready = phoneValid;
 
   const submit = async () => {
     if (!ready || isLoggingIn) return;
@@ -40,9 +36,9 @@ export function LoginStep({ onBack, onRegister }: Props) {
 
     try {
       const fullPhoneNumber = `${selectedCountry.dialCode}${digits.replace(/^0+/, '')}`;
-      await login(fullPhoneNumber, pin);
+      await login(fullPhoneNumber);
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : 'Login failed. Please check your credentials.');
+      setError(problem instanceof Error ? problem.message : 'Login failed. Please check your phone number.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -54,8 +50,8 @@ export function LoginStep({ onBack, onRegister }: Props) {
 
       <PageHeading
         eyebrow="Welcome back"
-        title="Login"
-        subtitle="Enter your phone number and 5-digit PIN to sign in."
+        title="Sign in"
+        subtitle="Enter your phone number to receive a 6-digit verification code."
         style={styles.heading}
       />
 
@@ -77,19 +73,6 @@ export function LoginStep({ onBack, onRegister }: Props) {
         autoFocus
       />
 
-      {/* 5-Digit PIN Input */}
-      <View style={styles.pinSection}>
-        <PinField
-          value={pin}
-          onChange={(val) => {
-            setPin(val);
-            setError('');
-          }}
-          label="Enter your 5-digit PIN"
-          testID="login-pin-input"
-        />
-      </View>
-
       {/* Error Output */}
       {error ? (
         <Text testID="login-error" style={[styles.error, { color: colors.destructive }]}>
@@ -99,7 +82,7 @@ export function LoginStep({ onBack, onRegister }: Props) {
 
       {/* Submit Button */}
       <Button
-        label="Login"
+        label="Send code"
         onPress={submit}
         disabled={!ready}
         loading={isLoggingIn}
@@ -126,10 +109,9 @@ const styles = StyleSheet.create({
   step: { flex: 1 },
   heading: { marginTop: 14, marginBottom: 8 },
   label: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 20, marginBottom: 8 },
-  pinSection: { marginTop: 16 },
-  error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 12 },
-  primaryButton: { marginTop: 20 },
-  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20, paddingVertical: 10 },
+  error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 14 },
+  primaryButton: { marginTop: 24 },
+  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 24, paddingVertical: 10 },
   switchText: { fontFamily: 'Inter_400Regular', fontSize: 14 },
   switchAction: { fontFamily: 'Inter_700Bold', fontSize: 14 },
 });

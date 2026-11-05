@@ -2,14 +2,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { normaliseName, PHONE_RULE } from '@/constants/auth';
 import { DEFAULT_LOCATION } from '@/constants/profile';
-import { ACCOUNTS_KEY, jobsKey, PENDING_KEY, SESSION_KEY, workKey } from '@/constants/storage';
+import { jobsKey, PENDING_KEY, workKey } from '@/constants/storage';
 import {
+  cleanAndNormalizePhone,
   deleteCurrentAccount,
-  loginWithPin,
   logout as logoutApi,
-  registerWithPin,
+  refreshTokens,
+  register as registerApi,
+  requestLoginOtp,
+  resendOtp,
   restoreSession,
   updateUserRole,
+  verifyOtp,
   type ApiUser,
 } from '@/lib/auth-api';
 
@@ -32,23 +36,30 @@ export type Verification = {
 type AuthContextValue = {
   /** The signed-in account, or null when nobody is signed in. */
   account: Account | null;
-  /** Verification state (legacy compatibility). */
+  /** Verification state for 6-digit OTP confirmation. */
   verification: Verification | null;
   /** False until stored session has been checked. */
   isHydrated: boolean;
-  /** Creates an account with Full Name, Phone, and 5-digit PIN. */
-  register: (name: string, phone: string, pin: string, role?: 'CUSTOMER' | 'TECHNICIAN') => Promise<void>;
-  /** Signs in with Phone and 5-digit PIN. */
-  login: (phone: string, pin: string) => Promise<void>;
+  /** Creates an account with Full Name, Phone, and optional role/email, then dispatches verification OTP. */
+  register: (
+    name: string,
+    phone: string,
+    emailOrPin?: string,
+    role?: 'CUSTOMER' | 'TECHNICIAN',
+  ) => Promise<void>;
+  /** Requests a 6-digit login OTP for the registered phone number. */
+  login: (phone: string, optionalPin?: string) => Promise<void>;
   /** Updates the active account role (e.g. promoting to TECHNICIAN). */
   updateRole: (role: 'CUSTOMER' | 'TECHNICIAN') => Promise<void>;
-  /** Optional legacy helpers for compatibility */
+  /** Resends the pending 6-digit OTP code. */
   resendCode: () => Promise<void>;
+  /** Verifies the 6-digit code with the backend. */
   verifyCode: (entered: string) => Promise<void>;
+  /** Cancels the ongoing verification and returns to the initial auth screen. */
   cancelVerification: () => Promise<void>;
-  /** Ends the session. */
+  /** Ends the session by revoking the refresh token and clearing local tokens. */
   signOut: () => Promise<void>;
-  /** Removes the account. */
+  /** Permanently deletes the account on the backend. */
   deleteAccount: () => Promise<void>;
 };
 
@@ -74,12 +85,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
     const hydrate = async () => {
       try {
-        await AsyncStorage.multiRemove([PENDING_KEY, ACCOUNTS_KEY, SESSION_KEY]);
-      } catch {}
+        const rawPending = await AsyncStorage.getItem(PENDING_KEY);
+        if (rawPending) {
+          try {
+            const parsed = JSON.parse(rawPending) as Verification;
+            if (parsed?.phone && parsed?.sentAt) {
+              if (mounted) setVerification(parsed);
+            }
+          } catch {}
+        }
 
-      try {
         const user = await restoreSession();
-        if (mounted) setAccount(user ? accountFromApi(user) : null);
+        if (mounted) {
+          setAccount(user ? accountFromApi(user) : null);
+          if (user) {
+            setVerification(null);
+            await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
+          }
+        }
       } catch {
         if (mounted) setAccount(null);
       } finally {
@@ -93,34 +116,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (nameInput: string, phoneInput: string, pinInput: string, role: 'CUSTOMER' | 'TECHNICIAN' = 'CUSTOMER') => {
+    async (
+      nameInput: string,
+      phoneInput: string,
+      emailOrPin?: string,
+      role: 'CUSTOMER' | 'TECHNICIAN' = 'CUSTOMER',
+    ) => {
       const name = normaliseName(nameInput);
       if (!name) throw new Error('Enter your full name (first and last name).');
       const cleanPhone = phoneInput.trim();
       if (!cleanPhone || cleanPhone.length < 7) throw new Error(PHONE_RULE);
-      const cleanPin = pinInput.trim();
-      if (cleanPin.length !== 5 || !/^\d{5}$/.test(cleanPin)) {
-        throw new Error('PIN must be exactly 5 digits.');
-      }
 
-      const session = await registerWithPin(name, cleanPhone, cleanPin, role);
-      setAccount(accountFromApi(session.user));
-      setVerification(null);
+      const email = emailOrPin && emailOrPin.includes('@') ? emailOrPin : undefined;
+
+      const res = await registerApi(name, cleanPhone, email, role);
+      const pending: Verification = {
+        phone: res.phoneNumber,
+        intent: 'register',
+        sentAt: new Date().toISOString(),
+      };
+      setVerification(pending);
+      await AsyncStorage.setItem(PENDING_KEY, JSON.stringify(pending)).catch(() => undefined);
     },
     [],
   );
 
-  const login = useCallback(async (phoneInput: string, pinInput: string) => {
+  const login = useCallback(async (phoneInput: string, _optionalPin?: string) => {
     const cleanPhone = phoneInput.trim();
     if (!cleanPhone || cleanPhone.length < 7) throw new Error(PHONE_RULE);
-    const cleanPin = pinInput.trim();
-    if (cleanPin.length !== 5 || !/^\d{5}$/.test(cleanPin)) {
-      throw new Error('Please enter your 5-digit PIN.');
-    }
 
-    const session = await loginWithPin(cleanPhone, cleanPin);
-    setAccount(accountFromApi(session.user));
-    setVerification(null);
+    await requestLoginOtp(cleanPhone);
+    const normalized = cleanAndNormalizePhone(cleanPhone);
+    const pending: Verification = {
+      phone: normalized,
+      intent: 'login',
+      sentAt: new Date().toISOString(),
+    };
+    setVerification(pending);
+    await AsyncStorage.setItem(PENDING_KEY, JSON.stringify(pending)).catch(() => undefined);
   }, []);
 
   const updateRole = useCallback(
@@ -133,15 +166,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const resendCode = useCallback(async () => {
-    // No-op for PIN auth
-  }, []);
+    if (!verification) throw new Error('No pending verification found.');
+    await resendOtp(verification.phone);
+    const updated: Verification = {
+      ...verification,
+      sentAt: new Date().toISOString(),
+    };
+    setVerification(updated);
+    await AsyncStorage.setItem(PENDING_KEY, JSON.stringify(updated)).catch(() => undefined);
+  }, [verification]);
 
-  const verifyCode = useCallback(async (_entered: string) => {
-    // No-op for PIN auth
-  }, []);
+  const verifyCode = useCallback(
+    async (entered: string) => {
+      if (!verification) {
+        throw new Error('No verification is pending. Please request a new code.');
+      }
+      const cleanCode = entered.trim();
+      if (cleanCode.length !== 6) {
+        throw new Error('Please enter the full 6-digit verification code.');
+      }
+
+      const session = await verifyOtp(verification.phone, cleanCode);
+      setAccount(accountFromApi(session.user));
+      setVerification(null);
+      await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
+    },
+    [verification],
+  );
 
   const cancelVerification = useCallback(async () => {
     setVerification(null);
+    await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
   }, []);
 
   const signOut = useCallback(async () => {
@@ -150,15 +205,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setAccount(null);
       setVerification(null);
+      await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
     }
   }, []);
 
   const deleteAccount = useCallback(async () => {
     if (!account) return;
-    await deleteCurrentAccount();
-    setAccount(null);
-    setVerification(null);
-    await AsyncStorage.multiRemove([jobsKey(account.phone), workKey(account.phone)]);
+    try {
+      await deleteCurrentAccount();
+    } finally {
+      const phone = account.phone;
+      setAccount(null);
+      setVerification(null);
+      await AsyncStorage.multiRemove([PENDING_KEY, jobsKey(phone), workKey(phone)]).catch(() => undefined);
+    }
   }, [account]);
 
   const value = useMemo<AuthContextValue>(
@@ -175,7 +235,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       deleteAccount,
     }),
-    [account, cancelVerification, deleteAccount, isHydrated, login, register, resendCode, signOut, updateRole, verification, verifyCode],
+    [
+      account,
+      cancelVerification,
+      deleteAccount,
+      isHydrated,
+      login,
+      register,
+      resendCode,
+      signOut,
+      updateRole,
+      verification,
+      verifyCode,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

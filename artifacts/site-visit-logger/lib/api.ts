@@ -169,9 +169,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     }
   }
 
-  if (path.includes('/api/v1/health')) {
-    return { services: { api: 'up' } } as unknown as T;
-  }
   // ----------------------------------------
 
   configureApi();
@@ -313,6 +310,10 @@ export async function apiUpload<T>(path: string, body: FormData, method = 'POST'
 
 /** Lightweight connectivity probe used during app startup and diagnostics. */
 export async function checkApiHealth(): Promise<boolean> {
-  const health = await apiRequest<{ services?: { api?: string } }>('/api/v1/health');
-  return health.services?.api === 'up';
+  try {
+    const health = await apiRequest<{ services?: { api?: string } }>('/api/v1/health');
+    return health.services?.api === 'up';
+  } catch {
+    return false;
+  }
 }

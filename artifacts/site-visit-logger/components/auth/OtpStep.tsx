@@ -134,6 +134,14 @@ export function OtpStep({ verification }: { verification: Verification }) {
         <Text style={[styles.changeText, { color: colors.mutedForeground }]}>Wrong number? </Text>
         <Text style={[styles.changeAction, { color: colors.primary }]}>Use another one</Text>
       </Pressable>
+
+      {__DEV__ && (
+        <View style={styles.devBox}>
+          <Text style={[styles.devText, { color: colors.mutedForeground }]}>
+            DEV MODE: Check your backend terminal for the 6-digit OTP code (SMS mode: console).
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -156,4 +164,6 @@ const styles = StyleSheet.create({
   changeRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 14, paddingVertical: 6 },
   changeText: { fontFamily: 'Inter_400Regular', fontSize: 14 },
   changeAction: { fontFamily: 'Inter_700Bold', fontSize: 14 },
+  devBox: { marginTop: 24, padding: 12, borderRadius: 10, backgroundColor: 'rgba(249, 115, 22, 0.08)', alignItems: 'center' },
+  devText: { fontFamily: 'Inter_500Medium', fontSize: 12, textAlign: 'center', lineHeight: 16 },
 });
