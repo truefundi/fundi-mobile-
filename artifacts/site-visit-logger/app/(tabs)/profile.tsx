@@ -10,6 +10,7 @@ import { PageHeading } from '@/components/ui/PageHeading';
 import { formatPhone } from '@/constants/auth';
 import { formatMoney, isClosed } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
+import { useTheme } from '@/context/ThemeContext';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { profileKey } from '@/constants/storage';
@@ -41,6 +42,7 @@ type PendingAction = 'signOut' | 'delete';
 /** Spec 21 — the customer account hub. */
 export default function ProfileScreen() {
   const colors = useColors();
+  const { isDark, toggleTheme } = useTheme();
   const bottomPadding = useTabScreenPadding();
   const router = useRouter();
   const { jobs } = useFundi();
@@ -268,6 +270,27 @@ export default function ProfileScreen() {
         </>
       ) : null}
 
+      <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Appearance</Text>
+      <View style={[styles.linkCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          testID="profile-theme-toggle"
+          onPress={() => void toggleTheme()}
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.65 : 1 }]}
+        >
+          <Ionicons name={isDark ? 'moon' : 'sunny'} size={20} color={colors.primary} />
+          <Text style={[styles.linkText, { color: colors.foreground }]}>
+            {isDark ? 'Dark mode' : 'Light mode'}
+          </Text>
+          <View style={{ backgroundColor: colors.secondary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: colors.secondaryForeground }}>
+              {isDark ? 'Dark' : 'Light'}
+            </Text>
+          </View>
+        </Pressable>
+      </View>
+
       <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Account</Text>
       <View style={[styles.linkCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         {LINKS.map((link, index) => {
@@ -367,6 +390,7 @@ export default function ProfileScreen() {
 
 function Stat({ value, label }: { value: string; label: string }) {
   const colors = useColors();
+  const { isDark, toggleTheme } = useTheme();
   return (
     <View style={[styles.stat, { backgroundColor: colors.card, borderColor: colors.border }]}>
       <Text style={[styles.statValue, { color: colors.foreground }]}>{value}</Text>
