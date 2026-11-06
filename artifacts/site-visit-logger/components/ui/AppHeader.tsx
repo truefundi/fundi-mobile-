@@ -9,6 +9,7 @@ import { isClosed } from '@/constants/jobs';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { useColors } from '@/hooks/useColors';
+import { useTheme } from '@/context/ThemeContext';
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -18,7 +19,7 @@ function greeting(): string {
 }
 
 /**
- * The one header every tab carries: role switch, who you are, notifications.
+ * The one header every tab carries: role switch, who you are, notifications, theme toggle.
  *
  * It lives outside each screen's scroll view so it never scrolls away, and it
  * is one component rather than four copies — the flank widths have to match
@@ -27,6 +28,7 @@ function greeting(): string {
  */
 export function AppHeader() {
   const colors = useColors();
+  const { isDark, toggleTheme } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -58,14 +60,31 @@ export function AppHeader() {
         </View>
 
         <View style={[styles.right, narrow && styles.rightNarrow]}>
+          {!narrow && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              testID="home-theme-toggle"
+              onPress={() => void toggleTheme()}
+              style={({ pressed }) => [
+                styles.iconButton,
+                { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+              ]}
+            >
+              <Feather name={isDark ? 'sun' : 'moon'} size={17} color={isDark ? '#facc15' : colors.foreground} />
+            </Pressable>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open notifications"
             testID="home-notifications-button"
             onPress={() => router.navigate('/notifications')}
-            style={({ pressed }) => [styles.bellButton, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+            style={({ pressed }) => [
+              styles.iconButton,
+              { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+            ]}
           >
-            <Feather name="bell" size={20} color={colors.foreground} />
+            <Feather name="bell" size={18} color={colors.foreground} />
             {hasActiveJob ? <View style={[styles.dot, { backgroundColor: colors.primary }]} /> : null}
           </Pressable>
         </View>
@@ -78,12 +97,20 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingBottom: 2 },
   row: { flexDirection: 'row', alignItems: 'center' },
   center: { flex: 1, alignItems: 'center', paddingHorizontal: 6 },
-  right: { width: 104, alignItems: 'flex-end' },
-  rightNarrow: { width: 44 },
+  right: { width: 104, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
+  rightNarrow: { width: 44, gap: 0 },
   greetingLabel: { fontFamily: 'Inter_500Medium', fontSize: 13 },
   userName: { fontFamily: 'Inter_700Bold', fontSize: 18, letterSpacing: -0.4, marginTop: 1, maxWidth: '100%' },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
   location: { fontFamily: 'Inter_400Regular', fontSize: 12, flexShrink: 1 },
-  bellButton: { width: 43, height: 43, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  dot: { width: 7, height: 7, borderRadius: 4, position: 'absolute', top: 9, right: 10 },
+  iconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  dot: { width: 7, height: 7, borderRadius: 4, position: 'absolute', top: 8, right: 8 },
 });

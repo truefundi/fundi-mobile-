@@ -10,10 +10,18 @@ import { formatPhone } from '@/constants/auth';
 import { PLACE_ICON } from '@/constants/places';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors } from '@/hooks/useColors';
+import { useTheme, type ThemePreference } from '@/context/ThemeContext';
+
+const THEME_OPTIONS: Array<{ id: ThemePreference; label: string; hint: string; icon: 'sun' | 'moon' | 'smartphone' }> = [
+  { id: 'light', label: 'Light', hint: 'Bright and clear for daytime use', icon: 'sun' },
+  { id: 'dark', label: 'Dark', hint: 'Easy on the eyes in low light', icon: 'moon' },
+  { id: 'system', label: 'System default', hint: 'Matches your device settings', icon: 'smartphone' },
+];
 
 /** Reached from Profile: the few things a customer sets once and forgets. */
 export default function SettingsScreen() {
   const colors = useColors();
+  const { theme, setTheme } = useTheme();
   const router = useRouter();
   const { profile: account, savedPlaces, preferences, updatePreferences } = useProfile();
   const [error, setError] = useState('');
@@ -87,6 +95,44 @@ export default function SettingsScreen() {
             })}
           </View>
         )}
+      </View>
+
+      <View>
+        <Text style={[styles.section, { color: colors.foreground }]}>Appearance</Text>
+        <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+          Choose how Fundi looks on your device.
+        </Text>
+        <View accessibilityRole="radiogroup" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          {THEME_OPTIONS.map((opt, index) => {
+            const selected = theme === opt.id;
+            return (
+              <Pressable
+                key={opt.id}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+                accessibilityLabel={opt.label}
+                testID={`settings-theme-${opt.id}`}
+                onPress={() => void setTheme(opt.id)}
+                style={({ pressed }) => [
+                  styles.placeRow,
+                  index < THEME_OPTIONS.length - 1 ? { borderBottomColor: colors.border, borderBottomWidth: 1 } : null,
+                  { opacity: pressed ? 0.7 : 1 },
+                ]}
+              >
+                <View style={[styles.placeIcon, { backgroundColor: selected ? colors.primary : colors.secondary }]}>
+                  <Feather name={opt.icon} size={18} color={selected ? colors.primaryForeground : colors.primary} />
+                </View>
+                <View style={styles.placeCopy}>
+                  <Text numberOfLines={1} style={[styles.placeLabel, { color: colors.foreground }]}>{opt.label}</Text>
+                  <Text numberOfLines={1} style={[styles.placeAddress, { color: colors.mutedForeground }]}>{opt.hint}</Text>
+                </View>
+                <View style={[styles.radio, { borderColor: selected ? colors.primary : colors.border }]}>
+                  {selected ? <View style={[styles.radioFill, { backgroundColor: colors.primary }]} /> : null}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
       <View>

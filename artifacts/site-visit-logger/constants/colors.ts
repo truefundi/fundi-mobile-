@@ -4,12 +4,10 @@
  * These tokens mirror the naming conventions used in web artifacts (index.css)
  * so that multi-artifact projects share a cohesive visual identity.
  *
- * Replace the placeholder values below with values that match the project's
- * brand. If a sibling web artifact exists, read its index.css and convert the
- * HSL values to hex so both artifacts use the same palette.
- *
- * To add dark mode, add a `dark` key with the same token names.
- * The useColors() hook will automatically pick it up.
+ * Both light and dark palettes provide high-contrast, accessible token sets
+ * tuned for both client (Hiring) and technician (Working) workflows.
+ * The dark palette uses true AMOLED pitch-black (#000000) for deepest contrast,
+ * zero backlight glow on OLED displays, and ultra-sleek appearance.
  */
 
 const colors = {
@@ -59,9 +57,58 @@ const colors = {
     input: '#d1d5db',
   },
 
+  dark: {
+    // Pure high-contrast crisp text
+    text: '#ffffff',
+    tint: '#f97316',
+
+    // True AMOLED Pitch Black: zero glow, complete pixel shutoff on OLED
+    background: '#000000',
+    foreground: '#ffffff',
+
+    // Deepest dark surface elevation (true pitch dark cards)
+    card: '#0c0c0e',
+    cardForeground: '#ffffff',
+
+    // Fundi brand primary orange
+    primary: '#f97316',
+    primaryForeground: '#ffffff',
+
+    secondary: '#181008',
+    secondaryForeground: '#fb923c',
+
+    // Deep dark neutral layer
+    muted: '#121214',
+    mutedForeground: '#7a7a85',
+
+    accent: '#221307',
+    accentForeground: '#fdba74',
+
+    destructive: '#ef4444',
+    destructiveForeground: '#ffffff',
+
+    success: '#22c55e',
+    successForeground: '#ffffff',
+    successMuted: '#05180c',
+
+    warning: '#f59e0b',
+    warningMuted: '#1a1002',
+    warningForeground: '#fcd34d',
+
+    destructiveMuted: '#1c0507',
+
+    info: '#3b82f6',
+    infoMuted: '#06101e',
+
+    // Ultra-subtle dark borders that don't wash out or lighten the screen
+    border: '#1c1c1f',
+    input: '#161618',
+  },
+
   // Border radius (in px). Sync from the sibling web artifact's --radius
   // CSS variable. This value applies to cards, buttons, inputs, and modals.
   radius: 14,
 };
 
+export type ColorTheme = typeof colors.light;
 export default colors;
