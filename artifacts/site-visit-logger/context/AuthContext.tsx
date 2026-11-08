@@ -6,9 +6,11 @@ import { jobsKey, PENDING_KEY, workKey } from '@/constants/storage';
 import {
   cleanAndNormalizePhone,
   deleteCurrentAccount,
+  loginWithPin,
   logout as logoutApi,
   refreshTokens,
   register as registerApi,
+  registerWithPin,
   requestLoginOtp,
   resendOtp,
   restoreSession,
@@ -49,6 +51,8 @@ type AuthContextValue = {
   ) => Promise<void>;
   /** Requests a 6-digit login OTP for the registered phone number. */
   login: (phone: string, optionalPin?: string) => Promise<void>;
+  /** Explicitly sends a 6-digit login SMS OTP code. */
+  loginWithOtp: (phone: string) => Promise<void>;
   /** Updates the active account role (e.g. promoting to TECHNICIAN). */
   updateRole: (role: 'CUSTOMER' | 'TECHNICIAN') => Promise<void>;
   /** Resends the pending 6-digit OTP code. */
@@ -127,6 +131,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const cleanPhone = phoneInput.trim();
       if (!cleanPhone || cleanPhone.length < 7) throw new Error(PHONE_RULE);
 
+      const isPin = emailOrPin && /^\d{4,6}$/.test(emailOrPin.trim());
+      if (isPin && role === 'CUSTOMER') {
+        const session = await registerWithPin(name, cleanPhone, emailOrPin.trim());
+        setAccount(accountFromApi(session.user));
+        setVerification(null);
+        await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
+        return;
+      }
+
       const email = emailOrPin && emailOrPin.includes('@') ? emailOrPin : undefined;
 
       const res = await registerApi(name, cleanPhone, email, role);
@@ -141,7 +154,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const login = useCallback(async (phoneInput: string, _optionalPin?: string) => {
+  const login = useCallback(async (phoneInput: string, optionalPin?: string) => {
+    const cleanPhone = phoneInput.trim();
+    if (!cleanPhone || cleanPhone.length < 7) throw new Error(PHONE_RULE);
+
+    if (optionalPin && /^\d{4,6}$/.test(optionalPin.trim())) {
+      const session = await loginWithPin(cleanPhone, optionalPin.trim());
+      setAccount(accountFromApi(session.user));
+      setVerification(null);
+      await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
+      return;
+    }
+
+    await requestLoginOtp(cleanPhone);
+    const normalized = cleanAndNormalizePhone(cleanPhone);
+    const pending: Verification = {
+      phone: normalized,
+      intent: 'login',
+      sentAt: new Date().toISOString(),
+    };
+    setVerification(pending);
+    await AsyncStorage.setItem(PENDING_KEY, JSON.stringify(pending)).catch(() => undefined);
+  }, []);
+
+  const loginWithOtp = useCallback(async (phoneInput: string) => {
     const cleanPhone = phoneInput.trim();
     if (!cleanPhone || cleanPhone.length < 7) throw new Error(PHONE_RULE);
 
@@ -228,6 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isHydrated,
       register,
       login,
+      loginWithOtp,
       updateRole,
       resendCode,
       verifyCode,
@@ -241,6 +278,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       deleteAccount,
       isHydrated,
       login,
+      loginWithOtp,
       register,
       resendCode,
       signOut,

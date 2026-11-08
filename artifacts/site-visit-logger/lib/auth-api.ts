@@ -294,17 +294,74 @@ export async function findUserByPhone(phone: string): Promise<ApiUser | null> {
   return null;
 }
 
-export const loginWithPin = async (phone: string, _pin?: string) => {
-  await requestLoginOtp(phone);
-  throw new Error('Please enter the 6-digit verification code sent to your phone.');
-};
+/**
+ * Signs in a customer or verified technician using their phone number and PIN.
+ * Calls backend POST /api/v1/auth/login/pin.
+ */
+export async function loginWithPin(phoneNumber: string, pin: string): Promise<AuthTokensResponse> {
+  const normalizedPhone = cleanAndNormalizePhone(phoneNumber);
+  const cleanPin = pin.trim();
 
-export const registerWithPin = async (
-  name: string,
-  phone: string,
-  _pin?: string,
-  role: 'CUSTOMER' | 'TECHNICIAN' = 'CUSTOMER',
-) => {
-  await register(name, phone, undefined, role);
-  throw new Error('Please enter the 6-digit verification code sent to your phone.');
-};
+  const response = await apiRequest<AuthTokensResponse>('/api/v1/auth/login/pin', {
+    method: 'POST',
+    body: {
+      phoneNumber: normalizedPhone,
+      pin: cleanPin,
+    },
+  });
+
+  if (response.accessToken && response.refreshToken) {
+    await storeTokens(response.accessToken, response.refreshToken);
+    await setCachedUser(response.user);
+  }
+
+  return response;
+}
+
+/**
+ * Registers a new customer account using their phone number and a PIN.
+ * Calls backend POST /api/v1/auth/register/pin, then immediately logs them in.
+ */
+export async function registerWithPin(
+  fullName: string,
+  phoneNumber: string,
+  pin: string,
+): Promise<AuthTokensResponse> {
+  const normalizedPhone = cleanAndNormalizePhone(phoneNumber);
+  const trimmedName = fullName.trim();
+  const cleanPin = pin.trim();
+
+  await apiRequest<{ message: string; user: ApiUser }>('/api/v1/auth/register/pin', {
+    method: 'POST',
+    body: {
+      fullName: trimmedName,
+      phoneNumber: normalizedPhone,
+      pin: cleanPin,
+    },
+  });
+
+  return loginWithPin(normalizedPhone, cleanPin);
+}
+
+/**
+ * Signs in an account using a password.
+ * Calls backend POST /api/v1/auth/login/password.
+ */
+export async function loginWithPassword(phoneNumber: string, password: string): Promise<AuthTokensResponse> {
+  const normalizedPhone = cleanAndNormalizePhone(phoneNumber);
+
+  const response = await apiRequest<AuthTokensResponse>('/api/v1/auth/login/password', {
+    method: 'POST',
+    body: {
+      phoneNumber: normalizedPhone,
+      password,
+    },
+  });
+
+  if (response.accessToken && response.refreshToken) {
+    await storeTokens(response.accessToken, response.refreshToken);
+    await setCachedUser(response.user);
+  }
+
+  return response;
+}

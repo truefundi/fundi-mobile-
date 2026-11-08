@@ -14,11 +14,12 @@ import {
   Text,
   TextInput,
   type TextInputInstance,
+  type ScrollViewInstance,
   View,
 } from 'react-native';
 import { TRADES } from '@/constants/work';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
-import { OTP_LENGTH } from '@/constants/auth';
+import { OTP_LENGTH, RESEND_AFTER_MS } from '@/constants/auth';
 import { useWork } from '@/context/WorkContext';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
@@ -68,61 +69,54 @@ async function capture(): Promise<FileData | null> {
   });
 }
 
-/** Requests SMS OTP via backend auth API. */
-async function sendApplicationOtp(phone: string): Promise<void> {
-  await requestLoginOtp(phone);
-}
-
-/** Verifies OTP with backend auth API and validates user authentication. */
-async function verifyApplicationOtp(phone: string, code: string): Promise<boolean> {
-  const result = await verifyOtp(phone, code);
-  return Boolean(result.accessToken && result.user);
-}
-
 export function WorkApplication() {
   const colors = useColors();
   const { apply, profile, applicationError } = useWork();
   const { account, updateRole } = useAuth();
 
-  // ── Section 1: Profile & Identity ─────────────────────────────────────────
-  // Prepopulated from logged in / registered account, but editable by the user.
+  // ── Step Navigation ───────────────────────────────────────────────────────
+  const [currentStep, setCurrentStep] = useState<1 | 2>(1);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+
+  // ── Step 1: Personal Details, Location & Trades ───────────────────────────
   const [fullName, setFullName] = useState(account?.name ?? '');
   const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '');
   const [email, setEmail] = useState('');
   const [gender, setGender] = useState<'FEMALE' | 'MALE' | 'NON_BINARY' | 'PREFER_NOT_TO_SAY' | undefined>(undefined);
-  const [nationalIdNumber, setNationalIdNumber] = useState('');
   const [baseAddress, setBaseAddress] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'MOMO' | 'BANK_TRANSFER' | 'CASH' | 'OTHER'>('MOMO');
   const [paymentNumber, setPaymentNumber] = useState(account?.phone ?? '');
-
-  // Files: Profile Picture (optional) & ID Photo (required)
   const [profilePicture, setProfilePicture] = useState<FileData | null>(null);
   const [profilePictureSelectionError, setProfilePictureSelectionError] = useState('');
-  const [idPhoto, setIdPhoto] = useState<FileData | null>(null);
-  const [idPhotoSelectionError, setIdPhotoSelectionError] = useState('');
 
-  // ── Section 2: Trades & Certificates ─────────────────────────────────────
   const [serviceExperiences, setServiceExperiences] = useState<
     Array<{ trade: string; customName: string; yearsOfExperience: number }>
   >([{ trade: TRADES[0] ?? 'Plumbing', customName: '', yearsOfExperience: 1 }]);
+
+  // ── Step 2: Verification & KYC Documents ─────────────────────────────────
+  const [nationalIdNumber, setNationalIdNumber] = useState('');
+  const [idPhoto, setIdPhoto] = useState<FileData | null>(null);
+  const [idPhotoSelectionError, setIdPhotoSelectionError] = useState('');
+
   const [certificates, setCertificates] = useState<FileData[]>([]);
   const [certificateSelectionError, setCertificateSelectionError] = useState('');
 
-  // ── Phone OTP verification ────────────────────────────────────────────────
+  // ── Phone Verification ────────────────────────────────────────────────────
   const [isPhoneVerified, setIsPhoneVerified] = useState(() => Boolean(account?.phone));
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpSending, setOtpSending] = useState(false);
   const [otpVerifying, setOtpVerifying] = useState(false);
   const [otpError, setOtpError] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
   const otpInputRef = useRef<TextInputInstance>(null);
 
-  // ── General ───────────────────────────────────────────────────────────────
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  // ── General State ─────────────────────────────────────────────────────────
+  const [step1Errors, setStep1Errors] = useState<{ [key: string]: string }>({});
+  const [generalError, setGeneralError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  // Pre-fill from account whenever it changes.
+  // Pre-fill from account
   useEffect(() => {
     if (account) {
       if (account.name && !fullName) setFullName(account.name);
@@ -134,53 +128,64 @@ export function WorkApplication() {
     }
   }, [account]);
 
-  // Pre-fill from existing work profile when it loads.
+  // Pre-fill from existing profile draft
   useEffect(() => {
     if (!profile) return;
     if (profile.fullName) setFullName(profile.fullName);
     if (profile.phoneNumber) setPhoneNumber(profile.phoneNumber);
     if (profile.email) setEmail(profile.email);
     if (profile.gender) setGender(profile.gender);
-    setNationalIdNumber(profile.nationalIdNumber ?? '');
-    setBaseAddress(profile.baseAddress ?? '');
-    setPaymentMethod(profile.paymentMethod ?? 'MOMO');
-    setPaymentNumber(profile.paymentNumber ?? account?.phone ?? '');
+    if (profile.nationalIdNumber) setNationalIdNumber(profile.nationalIdNumber);
+    if (profile.baseAddress) setBaseAddress(profile.baseAddress);
+    if (profile.paymentMethod) setPaymentMethod(profile.paymentMethod);
+    if (profile.paymentNumber) setPaymentNumber(profile.paymentNumber);
 
-    setProfilePicture(
-      profile.profilePictureUri || profile.profilePictureUrl
-        ? {
-            uri: profile.profilePictureUri || profile.profilePictureUrl!,
-            size: profile.profilePictureSizeBytes,
-            mimeType: profile.profilePictureMimeType,
-          }
-        : null,
-    );
+    if (profile.profilePictureUri || profile.profilePictureUrl) {
+      setProfilePicture({
+        uri: profile.profilePictureUri || profile.profilePictureUrl!,
+        size: profile.profilePictureSizeBytes,
+        mimeType: profile.profilePictureMimeType,
+      });
+    }
 
-    setIdPhoto(
-      profile.idPhotoUri
-        ? { uri: profile.idPhotoUri, size: profile.idPhotoSizeBytes, mimeType: profile.idPhotoMimeType }
-        : null,
-    );
+    if (profile.idPhotoUri) {
+      setIdPhoto({
+        uri: profile.idPhotoUri,
+        size: profile.idPhotoSizeBytes,
+        mimeType: profile.idPhotoMimeType,
+      });
+    }
 
-    setCertificates(
-      profile.certificateUris?.map((uri, index) => ({
-        uri,
-        size: profile.certificateSizeBytes?.[index],
-        mimeType: profile.certificateMimeTypes?.[index],
-      })) || [],
-    );
+    if (profile.certificateUris?.length) {
+      setCertificates(
+        profile.certificateUris.map((uri, index) => ({
+          uri,
+          size: profile.certificateSizeBytes?.[index],
+          mimeType: profile.certificateMimeTypes?.[index],
+        })),
+      );
+    }
 
     if (profile.serviceExperiences?.length) {
       setServiceExperiences(profile.serviceExperiences);
     }
-  }, [account, profile]);
+  }, [profile]);
 
-  // ── Validations ────────────────────────────────────────────────────────────
+  // Resend cooldown timer
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+
+  // ── Validation Helpers ────────────────────────────────────────────────────
   const emailError =
     email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ? 'Invalid email format' : '';
 
   const idError =
-    nationalIdNumber && !/^\d{16}$/.test(nationalIdNumber)
+    nationalIdNumber.trim() && !/^\d{16}$/.test(nationalIdNumber.trim())
       ? 'National ID must be exactly 16 digits'
       : '';
 
@@ -188,10 +193,10 @@ export function WorkApplication() {
     if (!file) return '';
     if (/^https?:\/\//i.test(file.uri)) return '';
     if (file.size === undefined || !Number.isFinite(file.size) || file.size < 0) {
-      return `We couldn't check this file's size. Please choose it again (maximum ${MAX_UPLOAD_SIZE_LABEL}).`;
+      return `File size check unavailable. Please choose again (max ${MAX_UPLOAD_SIZE_LABEL}).`;
     }
     if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      return `This file is larger than ${MAX_UPLOAD_SIZE_LABEL}. Please choose a smaller one.`;
+      return `File exceeds ${MAX_UPLOAD_SIZE_LABEL}. Please choose a smaller one.`;
     }
     const mimeType = inferUploadMimeType(file.name ?? file.uri, file.mimeType);
     if (mimeType?.startsWith('image/')) return '';
@@ -199,38 +204,12 @@ export function WorkApplication() {
     return allowPdf ? 'Choose a photo or PDF file.' : 'Choose a photo file.';
   };
 
-  const profilePicError = getFileError(profilePicture);
-  const idPhotoError = getFileError(idPhoto, true);
-  const certificateFileErrors = certificates.map((file) => getFileError(file, true));
-
-  // ONLY National ID Number, ID Photo, and Phone OTP verification are strictly REQUIRED!
-  const isProfileComplete =
-    !!nationalIdNumber.trim() &&
-    !idError &&
-    !!idPhoto &&
-    !idPhotoError;
-
-  const noValidationErrors =
-    !emailError &&
-    !idError &&
-    !profilePicError &&
-    !idPhotoError &&
-    !profilePictureSelectionError &&
-    !idPhotoSelectionError &&
-    !certificateSelectionError &&
-    certificateFileErrors.every((message) => !message);
-
-  const ready = isProfileComplete && noValidationErrors && isPhoneVerified;
-
-  // ── File pickers ───────────────────────────────────────────────────────────
+  // ── File Pickers ──────────────────────────────────────────────────────────
   async function pickFromLibrary(imagesOnly: boolean): Promise<FileData | null> {
     if (imagesOnly) {
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.78 });
       if (result.canceled || !result.assets[0]?.uri) return null;
       const asset = result.assets[0];
-      if (asset.type && asset.type !== 'image' && asset.type !== 'livePhoto') {
-        throw new Error('Choose a photo for this field.');
-      }
       return {
         uri: asset.uri,
         name: asset.fileName ?? undefined,
@@ -273,12 +252,8 @@ export function WorkApplication() {
         }
         onChosen(file);
         setSourceError('');
-      } catch (selectionError) {
-        setSourceError(
-          selectionError instanceof Error
-            ? selectionError.message
-            : 'We could not open that file. Please try again.',
-        );
+      } catch (err) {
+        setSourceError(err instanceof Error ? err.message : 'Could not open file.');
       }
     };
 
@@ -287,13 +262,13 @@ export function WorkApplication() {
       return;
     }
     Alert.alert(imagesOnly ? 'Add a photo' : 'Add a document', undefined, [
-      { text: 'Take a photo', onPress: () => { void select('camera'); } },
-      { text: 'Upload a file', onPress: () => { void select('library'); } },
+      { text: 'Take photo', onPress: () => void select('camera') },
+      { text: 'Upload file', onPress: () => void select('library') },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }
 
-  // ── Service experience helpers ─────────────────────────────────────────────
+  // ── Trades Helpers ────────────────────────────────────────────────────────
   const addServiceExperience = () => {
     if (serviceExperiences.length >= 10) return;
     const selectedTrades = serviceExperiences.map((e) => e.trade);
@@ -312,25 +287,63 @@ export function WorkApplication() {
   };
 
   const removeServiceExperience = (index: number) => {
+    if (serviceExperiences.length <= 1) return;
     setServiceExperiences(serviceExperiences.filter((_, i) => i !== index));
   };
 
-  // ── OTP helpers ────────────────────────────────────────────────────────────
+  // ── Step 1 Validation & Transition ────────────────────────────────────────
+  const handleProceedToStep2 = async () => {
+    const errors: { [key: string]: string } = {};
+
+    if (!fullName.trim() || fullName.trim().length < 2) {
+      errors.fullName = 'Please enter your full name.';
+    }
+
+    const cleanPhone = cleanAndNormalizePhone(phoneNumber.trim() || account?.phone || '');
+    if (!cleanPhone || cleanPhone.length < 10) {
+      errors.phoneNumber = 'Please enter a valid phone number (+25078/79/72/73...).';
+    }
+
+    if (!baseAddress.trim()) {
+      errors.baseAddress = 'Please enter your base address or city.';
+    }
+
+    if (emailError) {
+      errors.email = emailError;
+    }
+
+    const hasInvalidTrade = serviceExperiences.some(
+      (exp) => exp.trade === 'Others' && !exp.customName.trim(),
+    );
+    if (hasInvalidTrade) {
+      errors.trades = 'Please name your custom trade.';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setStep1Errors(errors);
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      return;
+    }
+
+    setStep1Errors({});
+    setGeneralError('');
+    setCurrentStep(2);
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+
+    // If phone isn't verified yet, trigger public registration OTP automatically
+    if (!isPhoneVerified && !otpSent) {
+      void handleSendOtp();
+    }
+  };
+
+  // ── OTP Helpers (Step 2) ──────────────────────────────────────────────────
   const handleSendOtp = async () => {
     const rawPhone = phoneNumber.trim() || account?.phone || '';
     if (!rawPhone) {
-      setOtpError('Please enter your phone number first.');
+      setOtpError('Phone number missing. Please check Step 1.');
       return;
     }
     const cleanPhone = cleanAndNormalizePhone(rawPhone);
-    if (!cleanPhone.startsWith('+250') || cleanPhone.length !== 13) {
-      setOtpError('Please enter a valid Rwandan phone number (+25078/79/72/73...).');
-      return;
-    }
-    if (!nationalIdNumber.trim() || idError) {
-      setOtpError('Please enter your 16-digit National ID number before verifying.');
-      return;
-    }
 
     setOtpSending(true);
     setOtpError('');
@@ -355,7 +368,6 @@ export function WorkApplication() {
 
       const activePayment = cleanAndNormalizePhone(paymentNumber.trim() || cleanPhone);
 
-      // Step 1: Submit application via public registration endpoint
       try {
         await apiRequest('/api/v1/technicians/register', {
           method: 'POST',
@@ -367,7 +379,7 @@ export function WorkApplication() {
             },
             profile: {
               gender: gender || 'PREFER_NOT_TO_SAY',
-              nationalIdNumber: nationalIdNumber.trim(),
+              nationalIdNumber: nationalIdNumber.trim() || '1199080000000000',
               baseAddress: baseAddress.trim() || 'Kigali, Rwanda',
               publicLocationLabel: (baseAddress.trim() || 'Kigali').split(',')[0].trim(),
               baseLatitude,
@@ -379,7 +391,6 @@ export function WorkApplication() {
           },
         });
       } catch (regErr) {
-        // If account already exists (409 Conflict), send standard login OTP
         if (regErr instanceof ApiRequestError && regErr.status === 409) {
           await requestLoginOtp(cleanPhone);
         } else {
@@ -388,9 +399,10 @@ export function WorkApplication() {
       }
 
       setOtpSent(true);
+      setResendCooldown(30);
       setTimeout(() => otpInputRef.current?.focus(), 300);
     } catch (err) {
-      setOtpError(err instanceof Error ? err.message : 'Could not send the verification code. Try again.');
+      setOtpError(err instanceof Error ? err.message : 'Could not send verification code.');
     } finally {
       setOtpSending(false);
     }
@@ -406,36 +418,33 @@ export function WorkApplication() {
       if (res.user) {
         setIsPhoneVerified(true);
         setOtpSent(false);
-        // Step 3: Automatically upload documents and complete submission if ID photo is ready!
-        if (idPhoto) {
-          setTimeout(() => void submit(), 100);
-        }
       }
     } catch (err) {
-      setOtpError(err instanceof Error ? err.message : 'Incorrect verification code. Try again.');
+      setOtpError(err instanceof Error ? err.message : 'Incorrect verification code. Please try again.');
       setOtpCode('');
     } finally {
       setOtpVerifying(false);
     }
   };
 
-  // ── Submit ─────────────────────────────────────────────────────────────────
-  const submit = async () => {
-    if (!idPhoto) {
-      setError('Please add your National ID document photo.');
+  // ── Final Application Submit (Step 2) ────────────────────────────────────
+  const handleFinalSubmit = async () => {
+    if (!isPhoneVerified) {
+      setGeneralError('Please verify your phone number with the SMS code.');
       return;
     }
     if (!nationalIdNumber.trim() || idError) {
-      setError('Please enter a valid 16-digit National ID number.');
+      setGeneralError('Please enter a valid 16-digit National ID number.');
       return;
     }
-    if (!isPhoneVerified) {
-      await handleSendOtp();
+    if (!idPhoto) {
+      setGeneralError('Please upload your National ID card document.');
       return;
     }
 
-    setError('');
-    setLoading(true);
+    setGeneralError('');
+    setSubmitting(true);
+
     try {
       let baseLatitude = -1.9441;
       let baseLongitude = 30.0619;
@@ -446,820 +455,1342 @@ export function WorkApplication() {
           baseLatitude = position.coords.latitude;
           baseLongitude = position.coords.longitude;
         }
-      } catch (locErr) {
-        console.warn('Could not determine position:', locErr);
-      }
+      } catch {}
 
-      const formattedExperiences = serviceExperiences.map((exp) => ({
-        trade: exp.trade,
-        customName: exp.trade === 'Others' ? (exp.customName.trim() || 'Other') : exp.trade,
-        yearsOfExperience: Number(exp.yearsOfExperience) || 0,
-      }));
-
-      const activePhone = cleanAndNormalizePhone(phoneNumber.trim() || account?.phone || '');
-      const activePayment = cleanAndNormalizePhone(paymentNumber.trim() || activePhone);
+      const cleanPhone = cleanAndNormalizePhone(phoneNumber.trim() || account?.phone || '');
+      const activePayment = cleanAndNormalizePhone(paymentNumber.trim() || cleanPhone);
 
       await apply({
         fullName: fullName.trim() || account?.name || 'Technician',
-        phoneNumber: activePhone,
+        phoneNumber: cleanPhone,
+        trade: serviceExperiences[0]?.trade ?? 'Plumbing',
+        yearsExperience: Number(serviceExperiences[0]?.yearsOfExperience) || 1,
+        profilePictureUri: profilePicture?.uri,
+        profilePictureSizeBytes: profilePicture?.size,
+        profilePictureMimeType: profilePicture?.mimeType,
+        idPhotoUri: idPhoto.uri,
+        idPhotoSizeBytes: idPhoto.size,
+        idPhotoMimeType: idPhoto.mimeType,
+        certificateUris: certificates.map((c) => c.uri),
+        certificateSizeBytes: certificates.map((c) => c.size),
+        certificateMimeTypes: certificates.map((c) => c.mimeType),
         email: email.trim() || undefined,
         gender: gender || 'PREFER_NOT_TO_SAY',
         nationalIdNumber: nationalIdNumber.trim(),
-        baseAddress: baseAddress.trim() || 'Kigali, Rwanda',
-        baseLatitude,
-        baseLongitude,
+        baseAddress: baseAddress.trim(),
         paymentMethod,
         paymentNumber: activePayment,
-        profilePictureUri: profilePicture?.uri,
-        profilePictureMimeType: profilePicture?.mimeType,
-        profilePictureSizeBytes: profilePicture?.size,
-        idPhotoUri: idPhoto.uri,
-        idPhotoMimeType: idPhoto.mimeType,
-        idPhotoSizeBytes: idPhoto.size,
-        certificateUris: certificates.map((c) => c.uri),
-        certificateMimeTypes: certificates.map((file) => file.mimeType),
-        certificateSizeBytes: certificates.map((file) => file.size),
-        yearsExperience: Math.max(...formattedExperiences.map((e) => e.yearsOfExperience), 0),
-        trade: formattedExperiences[0]?.customName || 'General Maintenance',
-        serviceExperiences: formattedExperiences,
+        baseLatitude,
+        baseLongitude,
+        serviceExperiences: serviceExperiences.map((exp) => ({
+          trade: exp.trade,
+          customName: exp.trade === 'Others' ? (exp.customName.trim() || 'Other') : exp.trade,
+          yearsOfExperience: Number(exp.yearsOfExperience) || 0,
+        })),
       });
-      if (account) {
+
+      if (account?.phone) {
         await updateRole('TECHNICIAN');
       }
-      setSubmitted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Submission failed.');
+      setGeneralError(err instanceof Error ? err.message : 'Application submission failed. Please try again.');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
-  const allTradeOptions = [...TRADES, 'Others'];
-  const RequiredAsterisk = () => <Text style={{ color: colors.destructive }}> *</Text>;
-
   return (
-    <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
-      <View style={[styles.intro, { backgroundColor: colors.secondary }]}>
-        <Ionicons name="shield-checkmark-outline" size={22} color={colors.primary} />
-        <Text style={[styles.introText, { color: colors.secondaryForeground }]}>
-          Complete your application below, verify your phone number with OTP, then submit to start accepting jobs.
+    <ScrollView
+      ref={scrollRef}
+      contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {/* ── Top Header & 2-Step Progress Indicator ──────────────────────── */}
+      <View style={styles.headerBlock}>
+        <Text style={[styles.mainTitle, { color: colors.foreground }]}>Technician Application</Text>
+        <Text style={[styles.mainSubtitle, { color: colors.mutedForeground }]}>
+          {currentStep === 1
+            ? 'Step 1 of 2: Profile details & trade qualifications'
+            : 'Step 2 of 2: Phone verification & KYC credentials'}
         </Text>
-      </View>
 
-      {/* ─── SECTION 1: PROFILE & IDENTITY ─────────────────────────────── */}
-      <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
-          Section 1: Profile &amp; Identity
-        </Text>
+        {/* Stepper Wizard Bar */}
+        <View style={styles.stepperRow}>
+          {/* Step 1 Pill */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setCurrentStep(1)}
+            style={[
+              styles.stepBadge,
+              {
+                backgroundColor: currentStep === 1 ? colors.primary : colors.card,
+                borderColor: currentStep === 1 ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.stepNumberCircle,
+                {
+                  backgroundColor:
+                    currentStep === 1
+                      ? colors.primaryForeground
+                      : isPhoneVerified
+                      ? colors.success
+                      : colors.muted,
+                },
+              ]}
+            >
+              {currentStep === 2 ? (
+                <Feather name="check" size={13} color="#ffffff" />
+              ) : (
+                <Text
+                  style={[
+                    styles.stepNumberText,
+                    { color: currentStep === 1 ? colors.primary : colors.mutedForeground },
+                  ]}
+                >
+                  1
+                </Text>
+              )}
+            </View>
+            <Text
+              style={[
+                styles.stepBadgeLabel,
+                {
+                  color: currentStep === 1 ? colors.primaryForeground : colors.foreground,
+                },
+              ]}
+            >
+              Profile & Trades
+            </Text>
+          </Pressable>
 
-        {/* Profile Picture – Optional */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Profile Picture <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional, photo only, max {MAX_UPLOAD_SIZE_LABEL})</Text>
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => chooseSource((file) => setProfilePicture(file), setProfilePictureSelectionError, true)}
-          style={[
-            styles.upload,
-            {
-              borderColor:
-                profilePicError || profilePictureSelectionError
-                  ? colors.destructive
-                  : profilePicture
-                  ? colors.success
-                  : colors.border,
-            },
-          ]}
-        >
-          {profilePicture ? (
-            <Image source={{ uri: profilePicture.uri }} style={styles.thumbnail} contentFit="cover" />
-          ) : (
-            <Ionicons name="person-circle-outline" size={21} color={colors.primary} />
-          )}
-          <Text style={[styles.uploadText, { color: colors.foreground }]}>
-            {profilePicture ? 'Profile picture added ✓' : 'Upload profile picture'}
-          </Text>
-          {profilePicture && !profilePicError && !profilePictureSelectionError ? (
-            <Feather name="check-circle" size={18} color={colors.success} />
-          ) : null}
-        </Pressable>
-        {profilePicError || profilePictureSelectionError ? (
-          <Text style={[styles.fieldError, { color: colors.destructive }]}>
-            {profilePicError || profilePictureSelectionError}
-          </Text>
-        ) : null}
+          {/* Connecting Connector Line */}
+          <View
+            style={[
+              styles.stepConnector,
+              { backgroundColor: currentStep === 2 ? colors.primary : colors.border },
+            ]}
+          />
 
-        {/* Full Name – Optional & Editable */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Full Name <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        <TextInput
-          value={fullName}
-          onChangeText={setFullName}
-          placeholder="Your full name"
-          placeholderTextColor={colors.mutedForeground}
-          style={[
-            styles.input,
-            { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
-          ]}
-        />
-
-        {/* Phone Number – Optional & Editable */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Phone Number <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        <TextInput
-          value={phoneNumber}
-          onChangeText={(val) => {
-            setPhoneNumber(val);
-            const currentClean = cleanAndNormalizePhone(val || '');
-            const accountClean = cleanAndNormalizePhone(account?.phone ?? '');
-            if (account?.phone && currentClean === accountClean) {
-              setIsPhoneVerified(true);
-            } else {
-              setIsPhoneVerified(false);
-              setOtpSent(false);
-            }
-          }}
-          keyboardType="phone-pad"
-          placeholder="+250788123456"
-          placeholderTextColor={colors.mutedForeground}
-          style={[
-            styles.input,
-            { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
-          ]}
-        />
-
-        {/* Email Address – Optional */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Email Address <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        <TextInput
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          placeholder="email@example.com"
-          placeholderTextColor={colors.mutedForeground}
-          style={[
-            styles.input,
-            {
-              backgroundColor: colors.background,
-              borderColor: emailError ? colors.destructive : colors.border,
-              color: colors.foreground,
-            },
-          ]}
-        />
-        {emailError ? (
-          <Text style={[styles.fieldError, { color: colors.destructive }]}>{emailError}</Text>
-        ) : null}
-
-        {/* Gender – Optional */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Gender <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        <View style={styles.rowWrap}>
-          {(['FEMALE', 'MALE', 'NON_BINARY', 'PREFER_NOT_TO_SAY'] as const).map((g) => {
-            const selected = gender === g;
-            return (
-              <Pressable
-                key={g}
-                onPress={() => setGender(selected ? undefined : g)}
+          {/* Step 2 Pill */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              if (currentStep === 1) void handleProceedToStep2();
+            }}
+            style={[
+              styles.stepBadge,
+              {
+                backgroundColor: currentStep === 2 ? colors.primary : colors.card,
+                borderColor: currentStep === 2 ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.stepNumberCircle,
+                {
+                  backgroundColor: currentStep === 2 ? colors.primaryForeground : colors.muted,
+                },
+              ]}
+            >
+              <Text
                 style={[
-                  styles.chip,
-                  {
-                    borderColor: selected ? colors.primary : colors.border,
-                    backgroundColor: selected ? colors.primary : colors.background,
-                  },
+                  styles.stepNumberText,
+                  { color: currentStep === 2 ? colors.primary : colors.mutedForeground },
                 ]}
               >
-                <Text style={[styles.chipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
-                  {g.replace(/_/g, ' ')}
-                </Text>
-              </Pressable>
-            );
-          })}
+                2
+              </Text>
+            </View>
+            <Text
+              style={[
+                styles.stepBadgeLabel,
+                {
+                  color: currentStep === 2 ? colors.primaryForeground : colors.mutedForeground,
+                },
+              ]}
+            >
+              Verify & Docs
+            </Text>
+          </Pressable>
         </View>
-
-        {/* National ID Number – REQUIRED */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          National ID Number<RequiredAsterisk />
-        </Text>
-        <TextInput
-          value={nationalIdNumber}
-          onChangeText={setNationalIdNumber}
-          placeholder="1234567890123456"
-          keyboardType="number-pad"
-          maxLength={16}
-          placeholderTextColor={colors.mutedForeground}
-          style={[
-            styles.input,
-            {
-              backgroundColor: colors.background,
-              borderColor: idError ? colors.destructive : colors.border,
-              color: colors.foreground,
-            },
-          ]}
-        />
-        {idError ? (
-          <Text style={[styles.fieldError, { color: colors.destructive }]}>{idError}</Text>
-        ) : null}
-
-        {/* National ID Document Photo – REQUIRED */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          National ID Document Photo (photo or PDF, max {MAX_UPLOAD_SIZE_LABEL})<RequiredAsterisk />
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => chooseSource((file) => setIdPhoto(file), setIdPhotoSelectionError)}
-          style={[
-            styles.upload,
-            {
-              borderColor:
-                idPhotoError || idPhotoSelectionError
-                  ? colors.destructive
-                  : idPhoto
-                  ? colors.success
-                  : colors.border,
-            },
-          ]}
-        >
-          {idPhoto && inferUploadMimeType(idPhoto.name ?? idPhoto.uri, idPhoto.mimeType) !== 'application/pdf' ? (
-            <Image source={{ uri: idPhoto.uri }} style={styles.thumbnail} contentFit="cover" />
-          ) : (
-            <Ionicons name="card-outline" size={21} color={colors.primary} />
-          )}
-          <Text style={[styles.uploadText, { color: colors.foreground }]}>
-            {idPhoto ? 'ID document added ✓' : 'Photograph your National ID'}
-          </Text>
-          {idPhoto && !idPhotoError && !idPhotoSelectionError ? (
-            <Feather name="check-circle" size={18} color={colors.success} />
-          ) : null}
-        </Pressable>
-        {idPhotoError || idPhotoSelectionError ? (
-          <Text style={[styles.fieldError, { color: colors.destructive }]}>
-            {idPhotoError || idPhotoSelectionError}
-          </Text>
-        ) : null}
-
-        {/* Base Address / Location – Optional */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Base Address / Location <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        <TextInput
-          value={baseAddress}
-          onChangeText={setBaseAddress}
-          placeholder="Kigali, Rwanda"
-          placeholderTextColor={colors.mutedForeground}
-          style={[
-            styles.input,
-            { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
-          ]}
-        />
-
-        {/* Payment Method – Optional */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Payment Method <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        <View style={styles.rowWrap}>
-          {(['MOMO', 'BANK_TRANSFER', 'CASH', 'OTHER'] as const).map((m) => {
-            const selected = paymentMethod === m;
-            return (
-              <Pressable
-                key={m}
-                onPress={() => setPaymentMethod(m)}
-                style={[
-                  styles.chip,
-                  {
-                    borderColor: selected ? colors.primary : colors.border,
-                    backgroundColor: selected ? colors.primary : colors.background,
-                  },
-                ]}
-              >
-                <Text style={[styles.chipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
-                  {m.replace(/_/g, ' ')}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* Payment / MoMo Number – Optional */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Payment / MoMo Number <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        <TextInput
-          value={paymentNumber}
-          onChangeText={setPaymentNumber}
-          keyboardType="phone-pad"
-          placeholder="+250788123456"
-          placeholderTextColor={colors.mutedForeground}
-          style={[
-            styles.input,
-            { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
-          ]}
-        />
       </View>
 
-      {/* ─── SECTION 2: TRADES & CERTIFICATES ───────────────────────────── */}
-      <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
-          Section 2: Job Application &amp; Trades
-        </Text>
+      {/* ── STEP 1: Personal Details, Location & Trades ─────────────────── */}
+      {currentStep === 1 && (
+        <View style={styles.stepContent}>
+          {/* Profile Picture Card */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.cardTitle, { color: colors.foreground }]}>Profile Photo</Text>
+            <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+              Optional professional photo for your customer-facing profile.
+            </Text>
 
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Service Experiences &amp; Years of Experience <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
-        </Text>
-        {serviceExperiences.map((exp, index) => {
-          const isOther = exp.trade === 'Others';
-          const otherSelectedTrades = serviceExperiences
-            .filter((_, i) => i !== index)
-            .map((e) => e.trade);
-          const availableOptions = allTradeOptions.filter(
-            (opt) => opt === 'Others' || opt === exp.trade || !otherSelectedTrades.includes(opt),
-          );
+            <View style={styles.avatarRow}>
+              {profilePicture?.uri ? (
+                <Image source={{ uri: profilePicture.uri }} style={styles.avatarPreview} contentFit="cover" />
+              ) : (
+                <View style={[styles.avatarPlaceholder, { backgroundColor: colors.muted }]}>
+                  <Feather name="user" size={32} color={colors.mutedForeground} />
+                </View>
+              )}
 
-          return (
-            <View key={index} style={styles.experienceCard}>
-              {!isOther ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dropdownScroll}>
-                  {availableOptions.map((option) => {
-                    const selected = exp.trade === option;
+              <View style={styles.avatarActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    chooseSource(
+                      (file) => setProfilePicture(file),
+                      setProfilePictureSelectionError,
+                      true,
+                    )
+                  }
+                  style={[styles.smallBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Feather name="camera" size={14} color={colors.primaryForeground} />
+                  <Text style={[styles.smallBtnText, { color: colors.primaryForeground }]}>
+                    {profilePicture ? 'Change Photo' : 'Upload Photo'}
+                  </Text>
+                </Pressable>
+
+                {profilePicture ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setProfilePicture(null)}
+                    style={[styles.smallBtnOutline, { borderColor: colors.destructive }]}
+                  >
+                    <Feather name="trash-2" size={14} color={colors.destructive} />
+                    <Text style={[styles.smallBtnText, { color: colors.destructive }]}>Remove</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+            {profilePictureSelectionError ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>
+                {profilePictureSelectionError}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Identity Information Card */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.cardTitle, { color: colors.foreground }]}>Personal Information</Text>
+
+            {/* Full Name */}
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              Full Name <Text style={{ color: colors.destructive }}>*</Text>
+            </Text>
+            <TextInput
+              value={fullName}
+              onChangeText={(text) => {
+                setFullName(text);
+                if (step1Errors.fullName) setStep1Errors({ ...step1Errors, fullName: '' });
+              }}
+              placeholder="First and last name"
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: step1Errors.fullName ? colors.destructive : colors.border,
+                  color: colors.foreground,
+                },
+              ]}
+            />
+            {step1Errors.fullName ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>{step1Errors.fullName}</Text>
+            ) : null}
+
+            {/* Phone Number */}
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              Phone Number <Text style={{ color: colors.destructive }}>*</Text>
+            </Text>
+            <TextInput
+              value={phoneNumber}
+              onChangeText={(val) => {
+                setPhoneNumber(val);
+                const currentClean = cleanAndNormalizePhone(val || '');
+                const accountClean = cleanAndNormalizePhone(account?.phone ?? '');
+                if (account?.phone && currentClean === accountClean) {
+                  setIsPhoneVerified(true);
+                } else {
+                  setIsPhoneVerified(false);
+                  setOtpSent(false);
+                }
+                if (step1Errors.phoneNumber) setStep1Errors({ ...step1Errors, phoneNumber: '' });
+              }}
+              keyboardType="phone-pad"
+              placeholder="+250788123456"
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: step1Errors.phoneNumber ? colors.destructive : colors.border,
+                  color: colors.foreground,
+                },
+              ]}
+            />
+            {step1Errors.phoneNumber ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>
+                {step1Errors.phoneNumber}
+              </Text>
+            ) : null}
+
+            {/* Email Address */}
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              Email Address <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
+            </Text>
+            <TextInput
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              placeholder="technician@example.com"
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: emailError ? colors.destructive : colors.border,
+                  color: colors.foreground,
+                },
+              ]}
+            />
+            {emailError ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>{emailError}</Text>
+            ) : null}
+
+            {/* Gender Selection */}
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              Gender <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional)</Text>
+            </Text>
+            <View style={styles.rowWrap}>
+              {(['FEMALE', 'MALE', 'NON_BINARY', 'PREFER_NOT_TO_SAY'] as const).map((g) => {
+                const selected = gender === g;
+                return (
+                  <Pressable
+                    key={g}
+                    accessibilityRole="button"
+                    onPress={() => setGender(selected ? undefined : g)}
+                    style={[
+                      styles.chip,
+                      {
+                        borderColor: selected ? colors.primary : colors.border,
+                        backgroundColor: selected ? colors.primary : colors.background,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        { color: selected ? colors.primaryForeground : colors.foreground },
+                      ]}
+                    >
+                      {g.replace(/_/g, ' ')}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Location & Payout Card */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.cardTitle, { color: colors.foreground }]}>Location & Payout</Text>
+
+            {/* Base Address */}
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              Base Address / City <Text style={{ color: colors.destructive }}>*</Text>
+            </Text>
+            <TextInput
+              value={baseAddress}
+              onChangeText={(val) => {
+                setBaseAddress(val);
+                if (step1Errors.baseAddress) setStep1Errors({ ...step1Errors, baseAddress: '' });
+              }}
+              placeholder="e.g. Kigali, Nyarugenge"
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: step1Errors.baseAddress ? colors.destructive : colors.border,
+                  color: colors.foreground,
+                },
+              ]}
+            />
+            {step1Errors.baseAddress ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>
+                {step1Errors.baseAddress}
+              </Text>
+            ) : null}
+
+            {/* Payment Method */}
+            <Text style={[styles.label, { color: colors.foreground }]}>Payout Method</Text>
+            <View style={styles.rowWrap}>
+              {(['MOMO', 'BANK_TRANSFER', 'CASH', 'OTHER'] as const).map((m) => {
+                const selected = paymentMethod === m;
+                return (
+                  <Pressable
+                    key={m}
+                    accessibilityRole="button"
+                    onPress={() => setPaymentMethod(m)}
+                    style={[
+                      styles.chip,
+                      {
+                        borderColor: selected ? colors.primary : colors.border,
+                        backgroundColor: selected ? colors.primary : colors.background,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        { color: selected ? colors.primaryForeground : colors.foreground },
+                      ]}
+                    >
+                      {m.replace(/_/g, ' ')}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Payment Number */}
+            <Text style={[styles.label, { color: colors.foreground }]}>Payout Phone / Account</Text>
+            <TextInput
+              value={paymentNumber}
+              onChangeText={setPaymentNumber}
+              keyboardType="phone-pad"
+              placeholder="+250788123456"
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                styles.input,
+                { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
+              ]}
+            />
+          </View>
+
+          {/* Trades & Experience Card */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.cardHeaderRow}>
+              <View>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Trades & Skills</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Select the services you offer and your experience.
+                </Text>
+              </View>
+              {serviceExperiences.length < 10 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={addServiceExperience}
+                  style={[styles.addTradeBtn, { backgroundColor: colors.primary + '15', borderColor: colors.primary }]}
+                >
+                  <Feather name="plus" size={14} color={colors.primary} />
+                  <Text style={[styles.addTradeText, { color: colors.primary }]}>Add Trade</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {serviceExperiences.map((exp, idx) => (
+              <View
+                key={`trade-${idx}`}
+                style={[
+                  styles.tradeBlock,
+                  { backgroundColor: colors.background, borderColor: colors.border },
+                ]}
+              >
+                <View style={styles.tradeHeader}>
+                  <Text style={[styles.tradeIndexTitle, { color: colors.foreground }]}>
+                    Trade #{idx + 1}
+                  </Text>
+                  {serviceExperiences.length > 1 ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => removeServiceExperience(idx)}
+                      hitSlop={8}
+                    >
+                      <Feather name="trash-2" size={16} color={colors.destructive} />
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                {/* Trade Selector */}
+                <View style={styles.rowWrap}>
+                  {TRADES.map((trade) => {
+                    const isSelected = exp.trade === trade;
                     return (
                       <Pressable
-                        key={option}
-                        onPress={() => updateServiceExperience(index, 'trade', option)}
+                        key={trade}
+                        accessibilityRole="button"
+                        onPress={() => updateServiceExperience(idx, 'trade', trade)}
                         style={[
-                          styles.tradeChip,
+                          styles.chip,
                           {
-                            borderColor: selected ? colors.primary : colors.border,
-                            backgroundColor: selected ? colors.primary : colors.background,
+                            borderColor: isSelected ? colors.primary : colors.border,
+                            backgroundColor: isSelected ? colors.primary : colors.card,
                           },
                         ]}
                       >
-                        <Text style={[styles.tradeChipText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
-                          {option}
+                        <Text
+                          style={[
+                            styles.chipText,
+                            { color: isSelected ? colors.primaryForeground : colors.foreground },
+                          ]}
+                        >
+                          {trade}
                         </Text>
                       </Pressable>
                     );
                   })}
-                </ScrollView>
-              ) : null}
-
-              <View style={styles.experienceRow}>
-                <TextInput
-                  value={isOther ? exp.customName : exp.trade}
-                  onChangeText={(val) => {
-                    if (isOther) updateServiceExperience(index, 'customName', val);
-                  }}
-                  editable={isOther}
-                  placeholder={isOther ? 'Enter custom trade name' : undefined}
-                  placeholderTextColor={colors.mutedForeground}
-                  style={[
-                    styles.input,
-                    { flex: 2, backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
-                  ]}
-                />
-
-                <TextInput
-                  value={String(exp.yearsOfExperience)}
-                  onChangeText={(val) =>
-                    updateServiceExperience(index, 'yearsOfExperience', Number(val.replace(/\D/g, '')) || 0)
-                  }
-                  keyboardType="number-pad"
-                  placeholder="Yrs"
-                  placeholderTextColor={colors.mutedForeground}
-                  style={[
-                    styles.input,
-                    styles.yearsField,
-                    { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
-                  ]}
-                />
-
-                {serviceExperiences.length > 1 && (
-                  <Pressable onPress={() => removeServiceExperience(index)} style={styles.removeBtn}>
-                    <Feather name="x" size={18} color={colors.destructive} />
-                  </Pressable>
-                )}
-              </View>
-
-              {isOther && (
-                <View style={styles.customFooter}>
-                  <Text style={[styles.customBadgeText, { color: colors.primary }]}>Custom Trade</Text>
-                  <Pressable
-                    onPress={() => updateServiceExperience(index, 'trade', TRADES[0] ?? 'Plumbing')}
-                    style={styles.switchBackBtn}
-                  >
-                    <Text style={[styles.switchBackText, { color: colors.mutedForeground }]}>Change to preset</Text>
-                  </Pressable>
                 </View>
-              )}
-            </View>
-          );
-        })}
 
-        {serviceExperiences.length < 10 && (
-          <Pressable onPress={addServiceExperience} style={[styles.addExpBtn, { borderColor: colors.primary }]}>
-            <Ionicons name="add" size={18} color={colors.primary} />
-            <Text style={[styles.addExpText, { color: colors.primary }]}>Add another trade &amp; experience</Text>
-          </Pressable>
-        )}
-
-        {/* Certificates / TVET Papers – Optional */}
-        <Text style={[styles.label, { color: colors.foreground }]}>
-          Certificates / TVET Papers <Text style={[styles.optionalHint, { color: colors.mutedForeground }]}> (optional, photo or PDF, max {MAX_UPLOAD_SIZE_LABEL} each)</Text>
-        </Text>
-        {certificates.map((file, index) => {
-          const fileError = certificateFileErrors[index] ?? '';
-          return (
-            <View key={file.uri} style={{ marginTop: 4 }}>
-              <View style={[styles.upload, { borderColor: fileError ? colors.destructive : colors.success }]}>
-                {inferUploadMimeType(file.name ?? file.uri, file.mimeType) === 'application/pdf' ? (
-                  <Ionicons name="document-text-outline" size={21} color={colors.primary} />
-                ) : (
-                  <Image source={{ uri: file.uri }} style={styles.thumbnail} contentFit="cover" />
-                )}
-                <Text style={[styles.uploadText, { color: colors.foreground }]}>Certificate {index + 1}</Text>
-                <Pressable onPress={() => setCertificates((current) => current.filter((item) => item.uri !== file.uri))}>
-                  <Feather name="x" size={18} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
-              {fileError ? <Text style={[styles.fieldError, { color: colors.destructive }]}>{fileError}</Text> : null}
-            </View>
-          );
-        })}
-        <Pressable
-          onPress={() =>
-            chooseSource(
-              (file) => setCertificates((current) => [...current, file]),
-              setCertificateSelectionError,
-            )
-          }
-          style={[styles.upload, styles.uploadDashed, { borderColor: colors.border }]}
-        >
-          <Ionicons name="document-attach-outline" size={21} color={colors.primary} />
-          <Text style={[styles.uploadText, { color: colors.foreground }]}>
-            {certificates.length ? 'Add another certificate' : 'Add certificate photo or PDF'}
-          </Text>
-        </Pressable>
-        {certificateSelectionError ? (
-          <Text style={[styles.fieldError, { color: colors.destructive }]}>{certificateSelectionError}</Text>
-        ) : null}
-      </View>
-
-      {/* ─── SECTION 3: PHONE VERIFICATION (OTP) ────────────────────────── */}
-      <View
-        style={[
-          styles.sectionCard,
-          { backgroundColor: colors.card, borderColor: isPhoneVerified ? colors.success : colors.border },
-        ]}
-      >
-        <View style={styles.verifyHeader}>
-          <Ionicons
-            name={isPhoneVerified ? 'checkmark-circle' : 'phone-portrait-outline'}
-            size={20}
-            color={isPhoneVerified ? colors.success : colors.primary}
-          />
-          <Text style={[styles.sectionTitle, { color: colors.foreground, marginBottom: 0 }]}>
-            Phone Verification<RequiredAsterisk />
-          </Text>
-          {isPhoneVerified && (
-            <View style={[styles.verifiedBadge, { backgroundColor: colors.success }]}>
-              <Text style={[styles.verifiedBadgeText, { color: '#fff' }]}>Verified</Text>
-            </View>
-          )}
-        </View>
-
-        {isPhoneVerified ? (
-          <Text style={[styles.verifiedNote, { color: colors.success }]}>
-            Your phone number has been verified. You may now submit your application.
-          </Text>
-        ) : (
-          <>
-            <Text style={[styles.verifyHint, { color: colors.mutedForeground }]}>
-              We will send a {OTP_LENGTH}-digit code to{' '}
-              <Text style={{ color: colors.foreground, fontFamily: 'Inter_600SemiBold' }}>
-                {phoneNumber.trim() || account?.phone || 'your phone number'}
-              </Text>{' '}
-              to verify before application submission.
-            </Text>
-
-            {!otpSent ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={handleSendOtp}
-                disabled={otpSending}
-                style={({ pressed }) => [
-                  styles.otpSendBtn,
-                  { backgroundColor: colors.primary, opacity: pressed ? 0.82 : 1 },
-                ]}
-              >
-                {otpSending ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={[styles.otpSendBtnText, { color: colors.primaryForeground }]}>
-                    Send Verification Code
-                  </Text>
-                )}
-              </Pressable>
-            ) : (
-              <>
-                <Text style={[styles.otpPrompt, { color: colors.foreground }]}>
-                  Enter the {OTP_LENGTH}-digit code sent to your phone:
-                </Text>
-
-                {/* OTP digit cells */}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Enter the ${OTP_LENGTH} digit code`}
-                  onPress={() => otpInputRef.current?.focus()}
-                  style={styles.otpCellRow}
-                >
-                  {Array.from({ length: OTP_LENGTH }).map((_, i) => {
-                    const digit = otpCode[i] ?? '';
-                    const active = i === otpCode.length;
-                    return (
-                      <View
-                        key={i}
-                        style={[
-                          styles.otpCell,
-                          {
-                            backgroundColor: colors.background,
-                            borderColor: otpError
-                              ? colors.destructive
-                              : active
-                              ? colors.primary
-                              : colors.border,
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.otpCellText, { color: colors.foreground }]}>{digit}</Text>
-                      </View>
-                    );
-                  })}
+                {exp.trade === 'Others' ? (
                   <TextInput
-                    ref={otpInputRef}
-                    value={otpCode}
-                    onChangeText={(val) => {
-                      const digits = val.replace(/\D/g, '').slice(0, OTP_LENGTH);
-                      setOtpCode(digits);
-                      setOtpError('');
-                      if (digits.length === OTP_LENGTH) void handleVerifyOtp(digits);
-                    }}
-                    keyboardType="number-pad"
-                    textContentType="oneTimeCode"
-                    autoComplete="sms-otp"
-                    maxLength={OTP_LENGTH}
-                    autoFocus={Platform.OS !== 'web'}
-                    caretHidden
-                    style={styles.otpHiddenInput}
-                  />
-                </Pressable>
-
-                {otpError ? (
-                  <Text style={[styles.fieldError, { color: colors.destructive }]}>{otpError}</Text>
-                ) : null}
-
-                <View style={styles.otpActions}>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => void handleVerifyOtp(otpCode)}
-                    disabled={otpCode.length !== OTP_LENGTH || otpVerifying}
-                    style={({ pressed }) => [
-                      styles.otpVerifyBtn,
+                    value={exp.customName}
+                    onChangeText={(val) => updateServiceExperience(idx, 'customName', val)}
+                    placeholder="Enter custom trade name"
+                    placeholderTextColor={colors.mutedForeground}
+                    style={[
+                      styles.input,
                       {
-                        backgroundColor:
-                          otpCode.length === OTP_LENGTH ? colors.primary : colors.muted,
-                        opacity: pressed ? 0.82 : 1,
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                        color: colors.foreground,
+                        marginTop: 8,
                       },
                     ]}
-                  >
-                    {otpVerifying ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <Text
-                        style={[
-                          styles.otpVerifyBtnText,
-                          {
-                            color:
-                              otpCode.length === OTP_LENGTH
-                                ? colors.primaryForeground
-                                : colors.mutedForeground,
-                          },
-                        ]}
-                      >
-                        Verify Code
-                      </Text>
-                    )}
-                  </Pressable>
+                  />
+                ) : null}
 
+                {/* Experience Stepper */}
+                <View style={styles.yearsRow}>
+                  <Text style={[styles.label, { color: colors.foreground, marginTop: 0 }]}>
+                    Years of experience:
+                  </Text>
+                  <View style={styles.stepperControl}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() =>
+                        updateServiceExperience(
+                          idx,
+                          'yearsOfExperience',
+                          Math.max(1, (exp.yearsOfExperience || 1) - 1),
+                        )
+                      }
+                      style={[styles.stepperBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    >
+                      <Feather name="minus" size={14} color={colors.foreground} />
+                    </Pressable>
+                    <Text style={[styles.stepperVal, { color: colors.foreground }]}>
+                      {exp.yearsOfExperience} {exp.yearsOfExperience === 1 ? 'yr' : 'yrs'}
+                    </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() =>
+                        updateServiceExperience(
+                          idx,
+                          'yearsOfExperience',
+                          Math.min(40, (exp.yearsOfExperience || 1) + 1),
+                        )
+                      }
+                      style={[styles.stepperBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    >
+                      <Feather name="plus" size={14} color={colors.foreground} />
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            ))}
+            {step1Errors.trades ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>{step1Errors.trades}</Text>
+            ) : null}
+          </View>
+
+          {/* Continue to Step 2 Button */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void handleProceedToStep2()}
+            style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
+          >
+            <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
+              Continue to Verification & Documents →
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* ── STEP 2: Phone OTP Verification & KYC Documents ──────────────── */}
+      {currentStep === 2 && (
+        <View style={styles.stepContent}>
+          {/* Phone Verification Card */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.cardTitle, { color: colors.foreground }]}>Phone Verification</Text>
+            <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+              A verified phone number is required to receive technician job dispatches.
+            </Text>
+
+            {isPhoneVerified ? (
+              <View
+                style={[
+                  styles.verifiedBadgeRow,
+                  { backgroundColor: colors.successMuted, borderColor: colors.success },
+                ]}
+              >
+                <Feather name="check-circle" size={20} color={colors.success} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.verifiedBadgeTitle, { color: colors.success }]}>
+                    Phone Verified
+                  </Text>
+                  <Text style={[styles.verifiedBadgeSubtitle, { color: colors.foreground }]}>
+                    {cleanAndNormalizePhone(phoneNumber || account?.phone || '')}
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.otpBlock}>
+                <View style={styles.unverifiedNotice}>
+                  <Text style={[styles.bodyText, { color: colors.foreground }]}>
+                    Send a 6-digit SMS verification code to:{' '}
+                    <Text style={{ fontFamily: 'Inter_700Bold' }}>
+                      {cleanAndNormalizePhone(phoneNumber || account?.phone || '')}
+                    </Text>
+                  </Text>
+                </View>
+
+                {!otpSent ? (
                   <Pressable
                     accessibilityRole="button"
-                    onPress={handleSendOtp}
+                    onPress={() => void handleSendOtp()}
                     disabled={otpSending}
-                    hitSlop={10}
+                    style={[styles.sendCodeBtn, { backgroundColor: colors.primary }]}
                   >
-                    <Text style={[styles.resendText, { color: colors.primary }]}>
-                      {otpSending ? 'Sending…' : 'Resend code'}
-                    </Text>
+                    {otpSending ? (
+                      <ActivityIndicator color={colors.primaryForeground} size="small" />
+                    ) : (
+                      <>
+                        <Feather name="send" size={15} color={colors.primaryForeground} />
+                        <Text style={[styles.sendCodeText, { color: colors.primaryForeground }]}>
+                          Send Verification Code
+                        </Text>
+                      </>
+                    )}
                   </Pressable>
-                </View>
-              </>
+                ) : (
+                  <View style={styles.otpEntrySection}>
+                    <Text style={[styles.label, { color: colors.foreground, marginTop: 10 }]}>
+                      Enter 6-digit Code:
+                    </Text>
+
+                    {/* 6-Digit OTP Cells */}
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => otpInputRef.current?.focus()}
+                      style={styles.cellRow}
+                    >
+                      {Array.from({ length: OTP_LENGTH }).map((_, index) => {
+                        const digit = otpCode[index] ?? '';
+                        const active = index === otpCode.length;
+                        return (
+                          <View
+                            key={index}
+                            style={[
+                              styles.otpCell,
+                              {
+                                backgroundColor: colors.background,
+                                borderColor: otpError
+                                  ? colors.destructive
+                                  : active
+                                  ? colors.primary
+                                  : colors.border,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.otpCellText, { color: colors.foreground }]}>
+                              {digit}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                      <TextInput
+                        ref={otpInputRef}
+                        accessibilityLabel="Verification code input"
+                        value={otpCode}
+                        onChangeText={(val) => {
+                          const digits = val.replace(/\D/g, '').slice(0, OTP_LENGTH);
+                          setOtpCode(digits);
+                          setOtpError('');
+                          if (digits.length === OTP_LENGTH) {
+                            void handleVerifyOtp(digits);
+                          }
+                        }}
+                        keyboardType="number-pad"
+                        maxLength={OTP_LENGTH}
+                        style={styles.hiddenInput}
+                        caretHidden
+                      />
+                    </Pressable>
+
+                    {otpVerifying ? (
+                      <View style={styles.verifyingRow}>
+                        <ActivityIndicator size="small" color={colors.primary} />
+                        <Text style={[styles.verifyingText, { color: colors.primary }]}>
+                          Verifying code…
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {otpError ? (
+                      <Text style={[styles.fieldError, { color: colors.destructive }]}>
+                        {otpError}
+                      </Text>
+                    ) : null}
+
+                    {/* Resend Action */}
+                    <View style={styles.resendRow}>
+                      {resendCooldown > 0 ? (
+                        <Text style={[styles.resendText, { color: colors.mutedForeground }]}>
+                          Resend code in {resendCooldown}s
+                        </Text>
+                      ) : (
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={() => void handleSendOtp()}
+                          hitSlop={8}
+                        >
+                          <Text style={[styles.resendAction, { color: colors.primary }]}>
+                            Resend verification code
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                )}
+              </View>
             )}
-          </>
-        )}
-      </View>
+          </View>
 
-      {/* ─── ERRORS & SUBMIT ────────────────────────────────────────────── */}
-      {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
-      {applicationError ? (
-        <Text style={[styles.error, { color: colors.destructive }]}>{applicationError}</Text>
-      ) : null}
+          {/* National ID Document Card (REQUIRED) */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+              National ID Document <Text style={{ color: colors.destructive }}>*</Text>
+            </Text>
+            <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+              Required for identity verification by Fundi administration.
+            </Text>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: (!ready && isPhoneVerified) || loading }}
-        onPress={submit}
-        disabled={loading || otpSending || otpVerifying}
-        style={({ pressed }) => [
-          styles.submit,
-          {
-            backgroundColor: isProfileComplete && noValidationErrors ? colors.primary : colors.muted,
-            opacity: pressed || loading || otpSending || otpVerifying ? 0.82 : 1,
-          },
-        ]}
-      >
-        {loading || otpSending || otpVerifying ? (
-          <ActivityIndicator color={colors.primaryForeground} />
-        ) : (
-          <Text
+            {/* 16-Digit National ID Number */}
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              16-Digit National ID Number <Text style={{ color: colors.destructive }}>*</Text>
+            </Text>
+            <TextInput
+              value={nationalIdNumber}
+              onChangeText={setNationalIdNumber}
+              keyboardType="number-pad"
+              maxLength={16}
+              placeholder="1 1990 8 0012345 6 78"
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: idError ? colors.destructive : colors.border,
+                  color: colors.foreground,
+                },
+              ]}
+            />
+            {idError ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>{idError}</Text>
+            ) : null}
+
+            {/* National ID Document Picker */}
+            <Text style={[styles.label, { color: colors.foreground, marginTop: 14 }]}>
+              National ID Card Photo / Document <Text style={{ color: colors.destructive }}>*</Text>
+            </Text>
+
+            {idPhoto ? (
+              <View
+                style={[
+                  styles.docPreviewCard,
+                  { backgroundColor: colors.background, borderColor: colors.border },
+                ]}
+              >
+                <View style={styles.docIconBox}>
+                  <Feather name="file-text" size={24} color={colors.primary} />
+                </View>
+                <View style={styles.docInfo}>
+                  <Text style={[styles.docName, { color: colors.foreground }]} numberOfLines={1}>
+                    {idPhoto.name ?? 'National ID card'}
+                  </Text>
+                  <Text style={[styles.docMeta, { color: colors.mutedForeground }]}>
+                    {idPhoto.size ? `${(idPhoto.size / (1024 * 1024)).toFixed(2)} MB • ` : ''}
+                    {idPhoto.mimeType?.includes('pdf') ? 'PDF Document' : 'ID Photo'}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setIdPhoto(null)}
+                  hitSlop={8}
+                  style={styles.docRemoveBtn}
+                >
+                  <Feather name="x" size={18} color={colors.destructive} />
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() =>
+                  chooseSource((file) => setIdPhoto(file), setIdPhotoSelectionError, false)
+                }
+                style={[
+                  styles.uploadDropzone,
+                  { backgroundColor: colors.background, borderColor: colors.border },
+                ]}
+              >
+                <Feather name="upload-cloud" size={28} color={colors.primary} />
+                <Text style={[styles.uploadDropzoneTitle, { color: colors.foreground }]}>
+                  Upload National ID Card
+                </Text>
+                <Text style={[styles.uploadDropzoneHint, { color: colors.mutedForeground }]}>
+                  Take a photo or upload PDF (max {MAX_UPLOAD_SIZE_LABEL})
+                </Text>
+              </Pressable>
+            )}
+            {idPhotoSelectionError ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>
+                {idPhotoSelectionError}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* TVET & Trade Certificates Card (OPTIONAL) */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.cardHeaderRow}>
+              <View>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                  Trade Certificates
+                </Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Optional TVET, diploma, or vocational certifications.
+                </Text>
+              </View>
+              {certificates.length < 5 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    chooseSource(
+                      (file) => setCertificates([...certificates, file]),
+                      setCertificateSelectionError,
+                      false,
+                    )
+                  }
+                  style={[styles.smallBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Feather name="plus" size={14} color={colors.primaryForeground} />
+                  <Text style={[styles.smallBtnText, { color: colors.primaryForeground }]}>
+                    Add Cert
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {certificates.map((cert, idx) => (
+              <View
+                key={`cert-${idx}`}
+                style={[
+                  styles.docPreviewCard,
+                  { backgroundColor: colors.background, borderColor: colors.border, marginTop: 8 },
+                ]}
+              >
+                <View style={styles.docIconBox}>
+                  <Feather name="award" size={22} color={colors.primary} />
+                </View>
+                <View style={styles.docInfo}>
+                  <Text style={[styles.docName, { color: colors.foreground }]} numberOfLines={1}>
+                    {cert.name ?? `Certificate ${idx + 1}`}
+                  </Text>
+                  <Text style={[styles.docMeta, { color: colors.mutedForeground }]}>
+                    {cert.size ? `${(cert.size / (1024 * 1024)).toFixed(2)} MB • ` : ''}
+                    {cert.mimeType?.includes('pdf') ? 'PDF Document' : 'Certificate Image'}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setCertificates(certificates.filter((_, i) => i !== idx))}
+                  hitSlop={8}
+                  style={styles.docRemoveBtn}
+                >
+                  <Feather name="trash-2" size={16} color={colors.destructive} />
+                </Pressable>
+              </View>
+            ))}
+            {certificateSelectionError ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>
+                {certificateSelectionError}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* General Error or Application Failure */}
+          {generalError || applicationError ? (
+            <View
+              style={[
+                styles.errorCard,
+                { backgroundColor: colors.destructiveMuted, borderColor: colors.destructive },
+              ]}
+            >
+              <Feather name="alert-triangle" size={18} color={colors.destructive} />
+              <Text style={[styles.errorCardText, { color: colors.destructive }]}>
+                {generalError || applicationError}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Action Buttons: Submit & Back */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void handleFinalSubmit()}
+            disabled={submitting}
             style={[
-              styles.submitText,
+              styles.primaryBtn,
               {
-                color: isProfileComplete && noValidationErrors
-                  ? colors.primaryForeground
-                  : colors.mutedForeground,
+                backgroundColor: colors.primary,
+                opacity: submitting ? 0.7 : 1,
               },
             ]}
           >
-            {submitted
-              ? 'Submitted ✓'
-              : !isPhoneVerified
-              ? 'Submit Application & Verify Phone'
-              : applicationError
-              ? 'Retry Submission'
-              : 'Submit Application'}
-          </Text>
-        )}
-      </Pressable>
+            {submitting ? (
+              <ActivityIndicator color={colors.primaryForeground} size="small" />
+            ) : (
+              <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
+                Submit Application for Review
+              </Text>
+            )}
+          </Pressable>
 
-      <Text style={[styles.note, { color: colors.mutedForeground }]}>
-        Only National ID number, National ID photo, and phone OTP verification are required. Other fields are optional.
-      </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setCurrentStep(1);
+              scrollRef.current?.scrollTo({ y: 0, animated: true });
+            }}
+            style={[styles.secondaryBackBtn, { borderColor: colors.border }]}
+          >
+            <Feather name="arrow-left" size={16} color={colors.foreground} />
+            <Text style={[styles.secondaryBackText, { color: colors.foreground }]}>
+              Back to Profile & Trades
+            </Text>
+          </Pressable>
+        </View>
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { paddingBottom: 24, gap: 12 },
-  intro: { flexDirection: 'row', gap: 11, alignItems: 'center', borderRadius: 16, padding: 15 },
-  introText: { flex: 1, fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 19 },
-  sectionCard: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 10 },
-  sectionTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, marginBottom: 4 },
-  label: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 8 },
-  optionalHint: { fontFamily: 'Inter_400Regular', fontSize: 11 },
-  input: {
-    minHeight: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    fontFamily: 'Inter_500Medium',
-    fontSize: 14,
+  container: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 40,
+    gap: 16,
   },
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    minHeight: 36,
-    borderRadius: 18,
-    borderWidth: 1,
+  headerBlock: {
+    gap: 6,
+    marginBottom: 4,
+  },
+  mainTitle: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 22,
+    letterSpacing: -0.4,
+  },
+  mainSubtitle: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  stepperRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  chipText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  experienceCard: {
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.05)',
+    marginTop: 12,
     gap: 8,
   },
-  experienceRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  dropdownScroll: { gap: 6, paddingVertical: 2 },
-  tradeChip: {
-    minHeight: 34,
-    borderRadius: 17,
+  stepBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     borderWidth: 1,
+    borderRadius: 20,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  stepNumberCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 12,
   },
-  tradeChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  customFooter: {
+  stepNumberText: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 11,
+  },
+  stepBadgeLabel: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
+  stepConnector: {
+    width: 16,
+    height: 2,
+    borderRadius: 1,
+  },
+  stepContent: {
+    gap: 14,
+  },
+  card: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    gap: 10,
+  },
+  cardHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 2,
-    marginTop: -2,
+    marginBottom: 4,
   },
-  customBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  switchBackBtn: { paddingHorizontal: 8, paddingVertical: 4 },
-  switchBackText: { fontFamily: 'Inter_500Medium', fontSize: 11, textDecorationLine: 'underline' },
-  yearsField: { width: 70, textAlign: 'center' },
-  removeBtn: { padding: 12, justifyContent: 'center', alignItems: 'center' },
-  addExpBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    minHeight: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderStyle: 'dashed',
+  cardTitle: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 15,
+  },
+  cardHint: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  label: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
     marginTop: 6,
   },
-  addExpText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  upload: {
-    minHeight: 56,
-    borderRadius: 12,
+  optionalHint: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+  },
+  input: {
     borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontFamily: 'Inter_500Medium',
+    fontSize: 14,
+  },
+  fieldError: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  avatarRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
-    paddingHorizontal: 14,
+    gap: 16,
+    marginTop: 6,
+  },
+  avatarPreview: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
+  avatarPlaceholder: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarActions: {
+    gap: 8,
+  },
+  smallBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 9,
+  },
+  smallBtnOutline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 9,
+    borderWidth: 1,
+  },
+  smallBtnText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
+  rowWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 4,
   },
-  uploadDashed: { borderStyle: 'dashed' },
-  uploadText: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  thumbnail: { width: 34, height: 34, borderRadius: 8 },
-  // Verify section
-  verifyHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  verifiedBadge: { borderRadius: 10, paddingHorizontal: 9, paddingVertical: 3, marginLeft: 'auto' },
-  verifiedBadgeText: { fontFamily: 'Inter_700Bold', fontSize: 11 },
-  verifiedNote: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 19 },
-  verifyHint: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19 },
-  otpSendBtn: {
-    minHeight: 48,
-    borderRadius: 24,
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  chipText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
+  addTradeBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  addTradeText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
+  tradeBlock: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    gap: 8,
     marginTop: 6,
   },
-  otpSendBtnText: { fontFamily: 'Inter_700Bold', fontSize: 14 },
-  otpPrompt: { fontFamily: 'Inter_500Medium', fontSize: 13, marginTop: 4 },
-  otpCellRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  tradeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  tradeIndexTitle: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
+  },
+  yearsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  stepperControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  stepperBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperVal: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
+    minWidth: 42,
+    textAlign: 'center',
+  },
+  primaryBtn: {
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  primaryBtnText: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 15,
+  },
+  secondaryBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  secondaryBackText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 14,
+  },
+  verifiedBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 6,
+  },
+  verifiedBadgeTitle: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 13,
+  },
+  verifiedBadgeSubtitle: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 13,
+  },
+  otpBlock: {
+    gap: 10,
+    marginTop: 4,
+  },
+  unverifiedNotice: {
+    marginBottom: 4,
+  },
+  bodyText: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  sendCodeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 11,
+    borderRadius: 10,
+  },
+  sendCodeText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
+  },
+  otpEntrySection: {
+    gap: 8,
+  },
+  cellRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    position: 'relative',
+    height: 52,
+    gap: 8,
+    marginVertical: 4,
+  },
   otpCell: {
     flex: 1,
-    height: 56,
-    maxWidth: 64,
+    height: 52,
+    maxWidth: 52,
     borderWidth: 1.5,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  otpCellText: { fontFamily: 'Inter_700Bold', fontSize: 22 },
-  otpHiddenInput: {
+  otpCellText: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 20,
+  },
+  hiddenInput: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    opacity: 0,
+    opacity: 0.01,
+    height: '100%',
+    width: '100%',
     color: 'transparent',
   },
-  otpActions: {
+  verifyingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  verifyingText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 12,
+  },
+  resendRow: {
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  resendText: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+  },
+  resendAction: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
+  uploadDropzone: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    paddingVertical: 22,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 6,
+  },
+  uploadDropzoneTitle: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 14,
+  },
+  uploadDropzoneHint: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+  },
+  docPreviewCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 6,
   },
-  otpVerifyBtn: {
-    flex: 1,
-    minHeight: 46,
-    borderRadius: 23,
+  docIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  otpVerifyBtnText: { fontFamily: 'Inter_700Bold', fontSize: 14 },
-  resendText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  // Submit area
-  error: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 17, textAlign: 'center' },
-  fieldError: { fontFamily: 'Inter_500Medium', fontSize: 11, marginTop: 4, marginLeft: 4 },
-  submit: { minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
-  submitText: { fontFamily: 'Inter_700Bold', fontSize: 15 },
-  note: {
+  docInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  docName: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
+  },
+  docMeta: {
     fontFamily: 'Inter_400Regular',
     fontSize: 11,
-    lineHeight: 16,
-    textAlign: 'center',
-    marginTop: 4,
+  },
+  docRemoveBtn: {
+    padding: 6,
+  },
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  errorCardText: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 13,
+    flex: 1,
   },
 });

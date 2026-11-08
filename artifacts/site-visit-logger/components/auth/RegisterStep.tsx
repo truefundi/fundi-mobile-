@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { PIN_LENGTH } from '@/constants/auth';
 import { DEFAULT_COUNTRY, type Country } from '@/constants/countries';
 import { PhoneField } from '@/components/auth/PhoneField';
+import { PinField } from '@/components/auth/PinField';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { PageHeading } from '@/components/ui/PageHeading';
@@ -15,8 +17,8 @@ type Props = {
 };
 
 /**
- * Registration: full name and phone number with country code.
- * Submitting dispatches a 6-digit OTP code to the phone for verification.
+ * Registration: full name, phone number with country code, 5-digit PIN, and PIN confirmation.
+ * Registers directly through backend PIN authentication API.
  */
 export function RegisterStep({ onBack, onLogin }: Props) {
   const colors = useColors();
@@ -25,6 +27,8 @@ export function RegisterStep({ onBack, onLogin }: Props) {
   const [name, setName] = useState('');
   const [digits, setDigits] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<Country>(DEFAULT_COUNTRY);
+  const [pin, setPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -32,17 +36,28 @@ export function RegisterStep({ onBack, onLogin }: Props) {
   const minPhoneDigits = selectedCountry.nationalDigits ? selectedCountry.nationalDigits - 1 : 7;
   const phoneValid = digits.length >= minPhoneDigits;
 
-  const ready = name.trim().length >= 3 && phoneValid;
+  // PIN validation
+  const pinValid = pin.length === PIN_LENGTH;
+  const confirmPinValid = confirmPin.length === PIN_LENGTH;
+  const pinsMatch = pin === confirmPin;
+  const pinMismatch = confirmPin.length === PIN_LENGTH && !pinsMatch;
+
+  const ready = name.trim().length >= 3 && phoneValid && pinValid && confirmPinValid && pinsMatch;
 
   const submit = async () => {
     if (!ready || isSubmitting) return;
+
+    if (!pinsMatch) {
+      setError('PINs do not match. Please re-enter.');
+      return;
+    }
 
     setIsSubmitting(true);
     setError('');
 
     try {
       const fullPhoneNumber = `${selectedCountry.dialCode}${digits.replace(/^0+/, '')}`;
-      await register(name, fullPhoneNumber, undefined, 'CUSTOMER');
+      await register(name, fullPhoneNumber, pin, 'CUSTOMER');
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'Registration failed. Please try again.');
     } finally {
@@ -57,7 +72,7 @@ export function RegisterStep({ onBack, onLogin }: Props) {
       <PageHeading
         eyebrow="Create your account"
         title="Register"
-        subtitle="Set up your profile and enter your phone number to get started."
+        subtitle="Set up your profile and create a secure 5-digit PIN."
         style={styles.heading}
       />
 
@@ -97,9 +112,36 @@ export function RegisterStep({ onBack, onLogin }: Props) {
           setSelectedCountry(country);
           setError('');
         }}
-        placeholder="7XX XXX XXX"
+        placeholder={selectedCountry.sampleNumber ?? '7XX XXX XXX'}
         testID="register-phone-input"
       />
+
+      {/* 5-Digit Create PIN */}
+      <View style={styles.pinSection}>
+        <PinField
+          value={pin}
+          onChange={(val) => {
+            setPin(val);
+            setError('');
+          }}
+          label="Create a 5-digit PIN"
+          testID="create-pin-input"
+        />
+      </View>
+
+      {/* 5-Digit Confirm PIN */}
+      <View style={styles.pinSection}>
+        <PinField
+          value={confirmPin}
+          onChange={(val) => {
+            setConfirmPin(val);
+            setError('');
+          }}
+          label="Confirm your 5-digit PIN"
+          error={pinMismatch ? 'PINs do not match' : undefined}
+          testID="confirm-pin-input"
+        />
+      </View>
 
       {/* Error Message */}
       {error ? (
@@ -110,7 +152,7 @@ export function RegisterStep({ onBack, onLogin }: Props) {
 
       {/* Submit Button */}
       <Button
-        label="Continue"
+        label="Register"
         onPress={submit}
         disabled={!ready}
         loading={isSubmitting}
@@ -127,7 +169,7 @@ export function RegisterStep({ onBack, onLogin }: Props) {
         style={styles.switchRow}
       >
         <Text style={[styles.switchText, { color: colors.mutedForeground }]}>Already have an account? </Text>
-        <Text style={[styles.switchAction, { color: colors.primary }]}>Login</Text>
+        <Text style={[styles.switchAction, { color: colors.primary }]}>Sign in</Text>
       </Pressable>
     </View>
   );
@@ -147,9 +189,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   nameInput: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 15, height: '100%' },
-  error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 14 },
-  primaryButton: { marginTop: 24 },
-  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 24, paddingVertical: 10 },
+  pinSection: { marginTop: 12 },
+  error: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 18, marginTop: 12 },
+  primaryButton: { marginTop: 22 },
+  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20, paddingVertical: 10 },
   switchText: { fontFamily: 'Inter_400Regular', fontSize: 14 },
   switchAction: { fontFamily: 'Inter_700Bold', fontSize: 14 },
 });
