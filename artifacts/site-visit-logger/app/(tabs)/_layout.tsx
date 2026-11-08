@@ -1,6 +1,7 @@
 import React from 'react';
 import { Platform, StyleSheet, useColorScheme, View } from 'react-native';
 import { useWork } from '@/context/WorkContext';
+import { useTheme } from '@/context/ThemeContext';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -59,8 +60,8 @@ function ClassicTabLayout() {
   const colors = useColors();
   const { mode } = useWork();
   const working = mode === 'working';
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const { isDark } = useTheme();
+
   const isIOS = Platform.OS === 'ios';
   const isWeb = Platform.OS === 'web';
 

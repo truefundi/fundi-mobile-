@@ -17,6 +17,9 @@ export const PENDING_KEY = '@fundi/pending-verification';
 
 export const JOBS_KEY_PREFIX = '@fundi/jobs/';
 
+/** Theme preference storage key ('light' | 'dark' | 'system'). */
+export const THEME_KEY = '@fundi/theme';
+
 /** Where one account's jobs live. */
 export function jobsKey(phone: string): string {
   return `${JOBS_KEY_PREFIX}${phone}`;

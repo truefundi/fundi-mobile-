@@ -14,6 +14,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { FundiProvider } from '@/context/FundiContext';
 import { ProfileProvider } from '@/context/ProfileContext';
@@ -22,6 +23,8 @@ import { configureApi, checkApiHealth } from '@/lib/api';
 import { ChatProvider } from '@/context/ChatContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AdsProvider } from '@/context/AdsContext';
+import { ThemeProvider, useTheme } from '@/context/ThemeContext';
+import { useColors } from '@/hooks/useColors';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -29,6 +32,7 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function StartupLoader() {
+  const colors = useColors();
   const progress = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -54,7 +58,7 @@ function StartupLoader() {
   }, [progress]);
 
   return (
-    <View style={styles.startup} accessibilityLabel="Loading Truefundi" accessibilityRole="progressbar">
+    <View style={[styles.startup, { backgroundColor: colors.background }]} accessibilityLabel="Loading Truefundi" accessibilityRole="progressbar">
       <Image
         source={require('../assets/images/fundilogo-transparent.png')}
         style={styles.logo}
@@ -88,6 +92,8 @@ function StartupLoader() {
  */
 function RootLayoutNav() {
   const { account, isHydrated } = useAuth();
+  const { isDark } = useTheme();
+  const colors = useColors();
 
   useEffect(() => {
     if (isHydrated) SplashScreen.hideAsync();
@@ -97,7 +103,14 @@ function RootLayoutNav() {
   if (!isHydrated) return <StartupLoader />;
 
   return (
-    <Stack screenOptions={{ headerBackTitle: 'Back' }}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <Stack
+        screenOptions={{
+          headerBackTitle: 'Back',
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      >
       <Stack.Protected guard={!account}>
         <Stack.Screen name="sign-in" options={{ headerShown: false, gestureEnabled: false }} />
       </Stack.Protected>
@@ -123,6 +136,7 @@ function RootLayoutNav() {
         <Stack.Screen name="chatbot" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>
+    </View>
   );
 }
 
@@ -171,7 +185,8 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <AuthProvider>
+          <ThemeProvider>
+            <AuthProvider>
             <NotificationProvider>
               <ProfileProvider>
                 <FundiProvider>
@@ -189,7 +204,8 @@ export default function RootLayout() {
                 </FundiProvider>
               </ProfileProvider>
             </NotificationProvider>
-          </AuthProvider>
+            </AuthProvider>
+          </ThemeProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </SafeAreaProvider>
