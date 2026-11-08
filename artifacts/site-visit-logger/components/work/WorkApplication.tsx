@@ -22,6 +22,8 @@ import { OTP_LENGTH } from '@/constants/auth';
 import { useWork } from '@/context/WorkContext';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
+import { requestLoginOtp, verifyOtp, cleanAndNormalizePhone } from '@/lib/auth-api';
+import { apiRequest, ApiRequestError } from '@/lib/api';
 
 type FileData = {
   uri: string;
@@ -66,18 +68,15 @@ async function capture(): Promise<FileData | null> {
   });
 }
 
-/** Simulates sending an OTP to the given phone number. Replace with real API call. */
-async function sendApplicationOtp(_phone: string): Promise<void> {
-  // TODO: wire to real SMS OTP API endpoint
-  await new Promise((r) => setTimeout(r, 900));
+/** Requests SMS OTP via backend auth API. */
+async function sendApplicationOtp(phone: string): Promise<void> {
+  await requestLoginOtp(phone);
 }
 
-/** Simulates verifying an OTP. Replace with real API call. Returns true if correct. */
-async function verifyApplicationOtp(_phone: string, code: string): Promise<boolean> {
-  // TODO: wire to real OTP verify API endpoint
-  // For now, any 6-digit code is accepted so the form can be tested end-to-end.
-  await new Promise((r) => setTimeout(r, 700));
-  return code.length === OTP_LENGTH;
+/** Verifies OTP with backend auth API and validates user authentication. */
+async function verifyApplicationOtp(phone: string, code: string): Promise<boolean> {
+  const result = await verifyOtp(phone, code);
+  return Boolean(result.accessToken && result.user);
 }
 
 export function WorkApplication() {
@@ -110,7 +109,7 @@ export function WorkApplication() {
   const [certificateSelectionError, setCertificateSelectionError] = useState('');
 
   // ── Phone OTP verification ────────────────────────────────────────────────
-  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  const [isPhoneVerified, setIsPhoneVerified] = useState(() => Boolean(account?.phone));
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpSending, setOtpSending] = useState(false);
@@ -130,6 +129,7 @@ export function WorkApplication() {
       if (account.phone) {
         if (!phoneNumber) setPhoneNumber(account.phone);
         if (!paymentNumber) setPaymentNumber(account.phone);
+        setIsPhoneVerified(true);
       }
     }
   }, [account]);
@@ -317,40 +317,103 @@ export function WorkApplication() {
 
   // ── OTP helpers ────────────────────────────────────────────────────────────
   const handleSendOtp = async () => {
-    const phone = phoneNumber.trim() || account?.phone || '';
-    if (!phone) {
-      setOtpError('Please enter a phone number first.');
+    const rawPhone = phoneNumber.trim() || account?.phone || '';
+    if (!rawPhone) {
+      setOtpError('Please enter your phone number first.');
       return;
     }
+    const cleanPhone = cleanAndNormalizePhone(rawPhone);
+    if (!cleanPhone.startsWith('+250') || cleanPhone.length !== 13) {
+      setOtpError('Please enter a valid Rwandan phone number (+25078/79/72/73...).');
+      return;
+    }
+    if (!nationalIdNumber.trim() || idError) {
+      setOtpError('Please enter your 16-digit National ID number before verifying.');
+      return;
+    }
+
     setOtpSending(true);
     setOtpError('');
     setOtpCode('');
+
     try {
-      await sendApplicationOtp(phone);
+      let baseLatitude = -1.9441;
+      let baseLongitude = 30.0619;
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.granted) {
+          const position = await Location.getCurrentPositionAsync({});
+          baseLatitude = position.coords.latitude;
+          baseLongitude = position.coords.longitude;
+        }
+      } catch {}
+
+      const formattedExperiences = serviceExperiences.map((exp) => ({
+        customName: exp.trade === 'Others' ? (exp.customName.trim() || 'Other') : exp.trade,
+        yearsOfExperience: Number(exp.yearsOfExperience) || 0,
+      }));
+
+      const activePayment = cleanAndNormalizePhone(paymentNumber.trim() || cleanPhone);
+
+      // Step 1: Submit application via public registration endpoint
+      try {
+        await apiRequest('/api/v1/technicians/register', {
+          method: 'POST',
+          body: {
+            user: {
+              fullName: fullName.trim() || account?.name || 'Technician',
+              phoneNumber: cleanPhone,
+              ...(email.trim() ? { email: email.trim().toLowerCase() } : {}),
+            },
+            profile: {
+              gender: gender || 'PREFER_NOT_TO_SAY',
+              nationalIdNumber: nationalIdNumber.trim(),
+              baseAddress: baseAddress.trim() || 'Kigali, Rwanda',
+              publicLocationLabel: (baseAddress.trim() || 'Kigali').split(',')[0].trim(),
+              baseLatitude,
+              baseLongitude,
+              paymentMethod,
+              paymentNumber: activePayment,
+              serviceExperiences: formattedExperiences,
+            },
+          },
+        });
+      } catch (regErr) {
+        // If account already exists (409 Conflict), send standard login OTP
+        if (regErr instanceof ApiRequestError && regErr.status === 409) {
+          await requestLoginOtp(cleanPhone);
+        } else {
+          throw regErr;
+        }
+      }
+
       setOtpSent(true);
       setTimeout(() => otpInputRef.current?.focus(), 300);
     } catch (err) {
-      setOtpError(err instanceof Error ? err.message : 'Could not send the code. Try again.');
+      setOtpError(err instanceof Error ? err.message : 'Could not send the verification code. Try again.');
     } finally {
       setOtpSending(false);
     }
   };
 
   const handleVerifyOtp = async (enteredCode: string) => {
-    const phone = phoneNumber.trim() || account?.phone || '';
+    const rawPhone = phoneNumber.trim() || account?.phone || '';
+    const cleanPhone = cleanAndNormalizePhone(rawPhone);
     setOtpVerifying(true);
     setOtpError('');
     try {
-      const ok = await verifyApplicationOtp(phone, enteredCode);
-      if (ok) {
+      const res = await verifyOtp(cleanPhone, enteredCode);
+      if (res.user) {
         setIsPhoneVerified(true);
         setOtpSent(false);
-      } else {
-        setOtpError('Incorrect code. Please try again.');
-        setOtpCode('');
+        // Step 3: Automatically upload documents and complete submission if ID photo is ready!
+        if (idPhoto) {
+          setTimeout(() => void submit(), 100);
+        }
       }
     } catch (err) {
-      setOtpError(err instanceof Error ? err.message : 'Verification failed. Try again.');
+      setOtpError(err instanceof Error ? err.message : 'Incorrect verification code. Try again.');
+      setOtpCode('');
     } finally {
       setOtpVerifying(false);
     }
@@ -358,7 +421,19 @@ export function WorkApplication() {
 
   // ── Submit ─────────────────────────────────────────────────────────────────
   const submit = async () => {
-    if (!ready) return;
+    if (!idPhoto) {
+      setError('Please add your National ID document photo.');
+      return;
+    }
+    if (!nationalIdNumber.trim() || idError) {
+      setError('Please enter a valid 16-digit National ID number.');
+      return;
+    }
+    if (!isPhoneVerified) {
+      await handleSendOtp();
+      return;
+    }
+
     setError('');
     setLoading(true);
     try {
@@ -381,25 +456,26 @@ export function WorkApplication() {
         yearsOfExperience: Number(exp.yearsOfExperience) || 0,
       }));
 
-      const activePhone = phoneNumber.trim() || account?.phone || '';
+      const activePhone = cleanAndNormalizePhone(phoneNumber.trim() || account?.phone || '');
+      const activePayment = cleanAndNormalizePhone(paymentNumber.trim() || activePhone);
 
       await apply({
         fullName: fullName.trim() || account?.name || 'Technician',
         phoneNumber: activePhone,
         email: email.trim() || undefined,
-        gender: gender || undefined,
+        gender: gender || 'PREFER_NOT_TO_SAY',
         nationalIdNumber: nationalIdNumber.trim(),
         baseAddress: baseAddress.trim() || 'Kigali, Rwanda',
         baseLatitude,
         baseLongitude,
         paymentMethod,
-        paymentNumber: paymentNumber.trim() || activePhone,
+        paymentNumber: activePayment,
         profilePictureUri: profilePicture?.uri,
         profilePictureMimeType: profilePicture?.mimeType,
         profilePictureSizeBytes: profilePicture?.size,
-        idPhotoUri: idPhoto?.uri,
-        idPhotoMimeType: idPhoto?.mimeType,
-        idPhotoSizeBytes: idPhoto?.size,
+        idPhotoUri: idPhoto.uri,
+        idPhotoMimeType: idPhoto.mimeType,
+        idPhotoSizeBytes: idPhoto.size,
         certificateUris: certificates.map((c) => c.uri),
         certificateMimeTypes: certificates.map((file) => file.mimeType),
         certificateSizeBytes: certificates.map((file) => file.size),
@@ -407,7 +483,9 @@ export function WorkApplication() {
         trade: formattedExperiences[0]?.customName || 'General Maintenance',
         serviceExperiences: formattedExperiences,
       });
-      await updateRole('TECHNICIAN');
+      if (account) {
+        await updateRole('TECHNICIAN');
+      }
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed.');
@@ -494,7 +572,11 @@ export function WorkApplication() {
           value={phoneNumber}
           onChangeText={(val) => {
             setPhoneNumber(val);
-            if (isPhoneVerified) {
+            const currentClean = cleanAndNormalizePhone(val || '');
+            const accountClean = cleanAndNormalizePhone(account?.phone ?? '');
+            if (account?.phone && currentClean === accountClean) {
+              setIsPhoneVerified(true);
+            } else {
               setIsPhoneVerified(false);
               setOtpSent(false);
             }
@@ -996,24 +1078,37 @@ export function WorkApplication() {
 
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ disabled: !ready || loading }}
+        accessibilityState={{ disabled: (!ready && isPhoneVerified) || loading }}
         onPress={submit}
-        disabled={!ready || loading}
+        disabled={loading || otpSending || otpVerifying}
         style={({ pressed }) => [
           styles.submit,
-          { backgroundColor: ready ? colors.primary : colors.muted, opacity: pressed ? 0.82 : 1 },
+          {
+            backgroundColor: isProfileComplete && noValidationErrors ? colors.primary : colors.muted,
+            opacity: pressed || loading || otpSending || otpVerifying ? 0.82 : 1,
+          },
         ]}
       >
-        {loading ? (
+        {loading || otpSending || otpVerifying ? (
           <ActivityIndicator color={colors.primaryForeground} />
         ) : (
           <Text
             style={[
               styles.submitText,
-              { color: ready ? colors.primaryForeground : colors.mutedForeground },
+              {
+                color: isProfileComplete && noValidationErrors
+                  ? colors.primaryForeground
+                  : colors.mutedForeground,
+              },
             ]}
           >
-            {submitted ? 'Submitted ✓' : applicationError ? 'Retry Submission' : 'Submit Application'}
+            {submitted
+              ? 'Submitted ✓'
+              : !isPhoneVerified
+              ? 'Submit Application & Verify Phone'
+              : applicationError
+              ? 'Retry Submission'
+              : 'Submit Application'}
           </Text>
         )}
       </Pressable>

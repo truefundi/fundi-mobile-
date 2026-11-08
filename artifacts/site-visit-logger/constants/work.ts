@@ -21,7 +21,27 @@ export const TRADES = [
 export type Trade = string;
 
 /** These states come from the backend verification status. */
-export type WorkStatus = 'none' | 'pending' | 'verified' | 'rejected';
+export type WorkStatus =
+  | 'none'
+  | 'pending'
+  | 'verified'
+  | 'rejected'
+  | 'PENDING_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED';
+
+export function isWorkPending(status: WorkStatus): boolean {
+  return status === 'pending' || status === 'PENDING_REVIEW';
+}
+
+export function isWorkVerified(status: WorkStatus): boolean {
+  return status === 'verified' || status === 'APPROVED';
+}
+
+export function isWorkRejected(status: WorkStatus): boolean {
+  return status === 'rejected' || status === 'REJECTED';
+}
+
 export type ServiceExperienceStatus = 'PENDING' | 'APPROVED' | 'DENIED' | 'SUSPENDED';
 
 export type WorkProfile = {
@@ -60,12 +80,13 @@ export type WorkProfile = {
     id: string;
     type: 'NATIONAL_ID' | 'CERTIFICATE';
     title: string;
-    originalFileName: string;
+    originalFileName?: string;
     status: string;
-    createdAt: string;
+    createdAt?: string;
     reviewNote: string | null;
   }>;
   submittedAt: string;
+  rejectionFeedback?: string | null;
 };
 
 export type TechnicianApplication = Omit<WorkProfile, 'submittedAt' | 'documents'>;

@@ -8,6 +8,7 @@ import { restoreSession } from '@/lib/auth-api';
 import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
+import { isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
 
 function WorkPending() {
   const colors = useColors();
@@ -119,6 +120,15 @@ function WorkRejected() {
       <Text style={[styles.body, { color: colors.mutedForeground }]}>
         Review the feedback on your documents or specific trades, update your details, then retry your submission.
       </Text>
+
+      {profile?.rejectionFeedback ? (
+        <View style={[styles.feedbackBox, { backgroundColor: colors.card, borderColor: colors.destructive }]}>
+          <Text style={[styles.feedbackTitle, { color: colors.destructive }]}>Admin Review Feedback:</Text>
+          <Text style={[styles.body, { color: colors.foreground, textAlign: 'left', marginTop: 4 }]}>
+            {profile.rejectionFeedback}
+          </Text>
+        </View>
+      ) : null}
       
       {profile?.serviceExperiences?.filter((exp) => exp.status === 'DENIED' || exp.status === 'SUSPENDED').map((exp, idx) => (
         <Text key={`exp-err-${idx}`} style={[styles.body, { color: colors.destructive, marginTop: 4 }]}>
@@ -137,7 +147,7 @@ function WorkRejected() {
 
 function WorkApproved() {
   const colors = useColors();
-  const { isAvailable, setAvailable, profile, applicationError } = useWork();
+  const { isAvailable, setAvailable, applicationError } = useWork();
 
   return (
     <View style={styles.screen}>
@@ -156,7 +166,7 @@ function WorkApproved() {
         <Feather name="check-circle" size={24} color={colors.primary} />
         <Text style={[styles.title, { color: colors.foreground }]}>Technician verified</Text>
         <Text style={[styles.body, { color: colors.mutedForeground }]}>
-          Your approved trades are live. Job offers and job lifecycle actions will appear here when those backend APIs are available.
+          Your approved trades are live. Working mode is unlocked and incoming job requests can now be accepted.
         </Text>
       </View>
     </View>
@@ -169,9 +179,9 @@ export function WorkHome(_props: { query?: string }) {
 
   if (submissionFailed) return <WorkApplication />;
   
-  if (status === 'pending') return <WorkPending />;
+  if (isWorkPending(status)) return <WorkPending />;
   
-  if (status === 'rejected') {
+  if (isWorkRejected(status)) {
     return (
       <View style={styles.screen}>
         <WorkRejected />
@@ -180,7 +190,7 @@ export function WorkHome(_props: { query?: string }) {
     );
   }
   
-  if (status === 'verified') return <WorkApproved />;
+  if (isWorkVerified(status)) return <WorkApproved />;
   
   return <WorkApplication />;
 }
@@ -195,4 +205,15 @@ const styles = StyleSheet.create({
   retryContainer: { alignItems: 'center', marginTop: 12 },
   retry: { fontFamily: 'Inter_700Bold', padding: 8, marginTop: 4 },
   error: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 17, textAlign: 'center' },
+  feedbackBox: {
+    width: '100%',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  feedbackTitle: {
+    fontFamily: 'Inter_700Bold',
+    fontSize: 13,
+  },
 });

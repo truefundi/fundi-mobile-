@@ -22,6 +22,7 @@ import { useFloatingActionVisibility } from '@/hooks/useFloatingActionVisibility
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
+import { isWorkVerified } from '@/constants/work';
 import { EmergencyServiceCard } from '@/components/home/EmergencyServiceCard';
 import { useAds } from '@/context/AdsContext';
 import { AdsCarousel } from '@/components/home/AdsCarousel';
@@ -65,7 +66,7 @@ export default function HomeScreen({
   const { jobs } = useFundi();
   const { mode, status } = useWork();
   // Only a verified worker has a job list to search.
-  const searchingJobs = mode === 'working' && status === 'verified';
+  const searchingJobs = mode === 'working' && isWorkVerified(status);
   const [jobQuery, setJobQuery] = useState('');
   const [serviceQuery, setServiceQuery] = useState('');
 

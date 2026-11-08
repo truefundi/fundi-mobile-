@@ -17,6 +17,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
+import { isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
 import { pickProfilePhoto } from '@/lib/profilePhoto';
 
 type Link = {
@@ -94,21 +95,21 @@ export default function ProfileScreen() {
 
   const working = mode === 'working';
   const workStatusLabel =
-    status === 'verified' ? 'Verified' :
-      status === 'pending' ? 'Under review' :
-        status === 'rejected' ? 'Action required' : 'Not submitted';
+    isWorkVerified(status) ? 'Verified' :
+      isWorkPending(status) ? 'Under review' :
+        isWorkRejected(status) ? 'Action required' : 'Not submitted';
   const workStatusColor =
-    status === 'verified' ? colors.success :
-      status === 'rejected' ? colors.destructive :
-        status === 'pending' ? colors.warning : colors.mutedForeground;
+    isWorkVerified(status) ? colors.success :
+      isWorkRejected(status) ? colors.destructive :
+        isWorkPending(status) ? colors.warning : colors.mutedForeground;
   
   const modeHint = !working
     ? 'Find and hire a technician'
-    : status === 'verified'
+    : isWorkVerified(status)
       ? `Taking jobs${profile?.serviceExperiences?.length ? ` · ${profile.serviceExperiences.length} trades` : ''}`
-      : status === 'pending'
+      : isWorkPending(status)
         ? 'Documents under review'
-        : status === 'rejected'
+        : isWorkRejected(status)
           ? 'Update your documents to continue'
           : 'Documents needed before you can go online';
 

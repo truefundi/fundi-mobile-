@@ -13,6 +13,7 @@ import { WorkJobs } from '@/components/work/WorkJobs';
 import { WorkLocked } from '@/components/work/WorkLocked';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { useWork, TECH_JOBS_KEY } from '@/context/WorkContext';
+import { isWorkVerified } from '@/constants/work';
 import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useFundi } from '@/context/FundiContext';
@@ -29,9 +30,9 @@ export default function ActivityScreen() {
   const { addNotification } = useNotifications();
   const [tab, setTab] = useState<Tab>('Active');
   const { mode, status } = useWork();
-  const working = mode === 'working' && status === 'verified';
+  const working = mode === 'working' && isWorkVerified(status);
   // In working mode but not cleared yet: say so rather than showing customer screens.
-  const locked = mode === 'working' && status !== 'verified';
+  const locked = mode === 'working' && !isWorkVerified(status);
   const inWork = mode === 'working';
 
   // Client cancellation flow

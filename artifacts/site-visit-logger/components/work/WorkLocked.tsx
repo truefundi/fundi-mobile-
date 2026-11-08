@@ -1,6 +1,7 @@
 import React from 'react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useWork } from '@/context/WorkContext';
+import { isWorkPending, isWorkRejected } from '@/constants/work';
 
 /**
  * What a working-mode tab shows before verification clears.
@@ -11,8 +12,8 @@ import { useWork } from '@/context/WorkContext';
  */
 export function WorkLocked() {
   const { status } = useWork();
-  const pending = status === 'pending';
-  const rejected = status === 'rejected';
+  const pending = isWorkPending(status);
+  const rejected = isWorkRejected(status);
 
   return (
     <EmptyState

@@ -1,12 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { workKey, jobsKey } from '@/constants/storage';
 import { getServiceBookingFee } from '@/constants/services';
 import {
   type TechnicianApplication,
   type WorkProfile,
   type WorkStatus,
+  isWorkPending,
+  isWorkVerified,
+  isWorkRejected,
 } from '@/constants/work';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import {
@@ -26,7 +29,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
-import { updateUserRole } from '@/lib/auth-api';
+import { cleanAndNormalizePhone, updateUserRole } from '@/lib/auth-api';
+import { getAccessToken } from '@/lib/auth-session';
 
 export type {
   BookingFee,
@@ -113,7 +117,7 @@ type ApiTechnicianDocument = NonNullable<WorkProfile['documents']>[number];
 function statusFromApi(status: ApiTechnicianProfile['verificationStatus']): WorkStatus {
   if (status === 'APPROVED') return 'verified';
   if (status === 'REJECTED') return 'rejected';
-  return 'pending';
+  return 'PENDING_REVIEW';
 }
 
 function mapProfile(
@@ -133,6 +137,14 @@ function mapProfile(
     status: service.status ?? 'PENDING',
     reviewNote: service.reviewNote ?? null,
   }));
+
+  // Rejection feedback note extraction from denied documents or denied experiences
+  const deniedDoc = documents.find((d) => d.status === 'DENIED');
+  const deniedExp = experiences.find((e) => e.status === 'DENIED' || e.status === 'SUSPENDED');
+  const rejectionFeedback =
+    deniedDoc?.reviewNote ??
+    deniedExp?.reviewNote ??
+    (profile.verificationStatus === 'REJECTED' ? (local?.rejectionFeedback ?? 'Application was not approved.') : null);
 
   return {
     ...local,
@@ -160,6 +172,7 @@ function mapProfile(
     serviceExperiences: experiences,
     documents,
     submittedAt: profile.createdAt,
+    rejectionFeedback,
   };
 }
 
@@ -670,7 +683,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
   const refreshApplication = useCallback(async () => {
     if (!storageKey) return;
-    if (account?.role !== 'TECHNICIAN') {
+    if (account?.role !== 'TECHNICIAN' && !isWorkPending(state.status)) {
       setState((current) => ({ ...current, status: 'none' }));
       return;
     }
@@ -684,9 +697,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState((current) => {
         const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID' && document.status !== 'DENIED');
         const applicationNeedsFiles = !hasNationalId;
+        const nextStatus = statusFromApi(serverProfile.verificationStatus);
+        const nextMode = isWorkVerified(nextStatus) ? 'working' : current.mode;
         const next: Stored = {
           ...current,
-          status: statusFromApi(serverProfile.verificationStatus),
+          mode: nextMode,
+          status: nextStatus,
           isAvailable: serverProfile.availabilityStatus === 'ONLINE',
           profile: mapProfile(serverProfile, documents, current.profile),
           applicationError: applicationNeedsFiles
@@ -700,7 +716,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         return next;
       });
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status === 404) {
+      if (error instanceof ApiRequestError && (error.status === 404 || error.status === 403)) {
         setState((current) => {
           const next: Stored = {
             ...current,
@@ -718,7 +734,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState((current) => ({ ...current, applicationError: message }));
       throw error;
     }
-  }, [account?.role, storageKey]);
+  }, [account?.role, state.status, storageKey]);
 
   useEffect(() => {
     if (!storageKey) {
@@ -731,7 +747,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         if (!mounted) return;
         const parsed = parseStored(raw);
         // Non-technicians must complete the technician application first
-        if (account?.role !== 'TECHNICIAN') {
+        if (
+          account?.role !== 'TECHNICIAN' &&
+          !isWorkPending(parsed.status) &&
+          !isWorkRejected(parsed.status) &&
+          !isWorkVerified(parsed.status)
+        ) {
           setState({ ...parsed, status: 'none' });
           return;
         }
@@ -747,6 +768,33 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       mounted = false;
     };
   }, [account?.role, storageKey, refreshApplication]);
+
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  // Background status polling: polls refreshApplication every 4 seconds when application is pending review
+  useEffect(() => {
+    if (!account?.phone) return;
+    if (!isWorkPending(state.status)) return;
+
+    const intervalId = setInterval(() => {
+      if (isWorkPending(stateRef.current.status)) {
+        void refreshApplication().catch(() => undefined);
+      }
+    }, 4000);
+
+    return () => clearInterval(intervalId);
+  }, [account?.phone, state.status, refreshApplication]);
+
+  // Listener to immediately refresh application state when app returns to foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && isWorkPending(stateRef.current.status)) {
+        void refreshApplication().catch(() => undefined);
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshApplication]);
 
   const value = useMemo<WorkContextValue>(() => {
     return {
@@ -779,14 +827,24 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       submissionFailed: state.submissionFailed,
       refreshApplication,
       apply: async (application) => {
-        if (!account) throw new Error('Sign in before submitting a technician application.');
+        const token = await getAccessToken();
+        if (!token && !account) throw new Error('Verify your phone with the code sent via SMS before completing submission.');
+        const phone = account?.phone || application.phoneNumber;
+        const targetStorageKey = phone ? workKey(phone) : storageKey;
         const localDraft: WorkProfile = {
           ...application,
           submittedAt: state.profile?.submittedAt ?? new Date().toISOString(),
         };
-        let savedState: Stored = { ...state, profile: localDraft, applicationError: null, submissionFailed: false };
+        let savedState: Stored = {
+          ...state,
+          status: 'PENDING_REVIEW',
+          mode: 'working',
+          profile: localDraft,
+          applicationError: null,
+          submissionFailed: false,
+        };
         setState(savedState);
-        if (storageKey) await AsyncStorage.setItem(storageKey, serializeStored(savedState));
+        if (targetStorageKey) await AsyncStorage.setItem(targetStorageKey, serializeStored(savedState));
 
         try {
           const profilePictureMimeType = application.profilePictureUri && !/^https?:\/\//i.test(application.profilePictureUri)
@@ -821,17 +879,16 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             customName: experience.trade === 'Others' ? experience.customName.trim() : experience.trade,
             yearsOfExperience: experience.yearsOfExperience,
           }));
-          const body = {
-            fullName: application.fullName,
-            phoneNumber: application.phoneNumber,
-            ...(application.email ? { email: application.email } : {}),
-            gender: application.gender,
+          const normalizedPayment = cleanAndNormalizePhone(application.paymentNumber || application.phoneNumber || '');
+          const profileBody = {
+            gender: application.gender || 'PREFER_NOT_TO_SAY',
             nationalIdNumber: application.nationalIdNumber,
-            baseAddress: application.baseAddress,
-            baseLatitude: application.baseLatitude,
-            baseLongitude: application.baseLongitude,
-            paymentMethod: application.paymentMethod,
-            paymentNumber: application.paymentNumber,
+            baseAddress: application.baseAddress || 'Kigali, Rwanda',
+            publicLocationLabel: (application.baseAddress || 'Kigali').split(',')[0].trim(),
+            baseLatitude: application.baseLatitude ?? -1.9441,
+            baseLongitude: application.baseLongitude ?? 30.0619,
+            paymentMethod: application.paymentMethod || 'MOMO',
+            paymentNumber: normalizedPayment,
             serviceExperiences: experiences,
           };
 
@@ -841,20 +898,21 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
               method: 'PUT',
               authenticated: true,
-              body,
+              body: profileBody,
             });
           } catch (error) {
-            if (!(error instanceof ApiRequestError) || error.status !== 404) throw error;
+            if (!(error instanceof ApiRequestError) || (error.status !== 404 && error.status !== 403)) throw error;
             serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
               method: 'POST',
               authenticated: true,
-              body,
+              body: profileBody,
             });
           }
 
           savedState = {
             ...savedState,
-            status: state.status,
+            status: 'PENDING_REVIEW',
+            mode: 'working',
             profile: mapProfile(serverProfile, [], localDraft),
           };
           setState(savedState);
@@ -886,11 +944,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             }
           };
 
-          if (!documentExists('NATIONAL_ID', 'National ID')) {
+          if (!documentExists('NATIONAL_ID', 'National ID card') && !documentExists('NATIONAL_ID', 'National ID')) {
+            await removeDeniedDocument('NATIONAL_ID', 'National ID card');
             await removeDeniedDocument('NATIONAL_ID', 'National ID');
             const form = new FormData();
             form.append('type', 'NATIONAL_ID');
-            form.append('title', 'National ID');
+            form.append('title', 'National ID card');
             await appendLocalFile(form, application.idPhotoUri, 'national-id', idPhotoMimeType);
             await apiUpload('/api/v1/technicians/profile/documents', form);
           }
