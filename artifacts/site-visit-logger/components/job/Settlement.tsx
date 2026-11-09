@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { balanceDue, formatMoney, repairTotal, type Job, type SettlementMethod } from '@/constants/jobs';
+import { balanceDue, formatBookingFee, formatMoney, getServiceBookingFee, repairTotal, type Job, type SettlementMethod } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { Notice } from '@/components/ui/Notice';
@@ -84,14 +84,14 @@ export function Settlement({ job, onRecord, onBack }: { job: Job; onRecord: (met
 
       <SectionCard title="How the balance is worked out">
         <MoneyRow label="Repair total" value={formatMoney(repairTotal(job))} />
-        <MoneyRow label="Visit fee already paid" value={formatMoney(job.visitFee)} credit />
+        <MoneyRow label="Booking fee paid" value={formatBookingFee(job.bookingFee?.amount ?? getServiceBookingFee(job.service))} credit />
       </SectionCard>
 
       {method !== 'Fundi' ? (
         <Notice
           tone="info"
           icon="information-circle-outline"
-          text="Fundi records this settlement but does not process the money. Only the visit fee runs through the platform."
+          text="Fundi records this settlement. The Service Booking Fee was handled through the platform to unlock coordination."
         />
       ) : null}
     </StageScreen>

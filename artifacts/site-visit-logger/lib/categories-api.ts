@@ -13,9 +13,7 @@ export interface DatabaseCategory {
   description: string | null;
   category: string | null;
   keywords: string | null;
-  visitFee: number;
   bookingFee: number;
-  emergencyVisitFee: number;
   sosBookingFee: number | null;
   icon: string | null;
 }
@@ -150,7 +148,7 @@ export function mapDatabaseCategoryToService(dbCategory: DatabaseCategory): Serv
     slug: dbCategory.slug,
     icon: resolveCategoryIcon(dbCategory.slug, dbCategory.name, dbCategory.icon),
     keywords: resolveCategoryKeywords(dbCategory.slug, dbCategory.name, dbCategory.keywords ?? ''),
-    bookingFee: resolveDefaultBookingFee(dbCategory.slug, dbCategory.name, dbCategory.bookingFee ?? dbCategory.visitFee),
+    bookingFee: resolveDefaultBookingFee(dbCategory.slug, dbCategory.name, dbCategory.bookingFee ?? dbCategory.sosBookingFee ?? DEFAULT_BOOKING_FEE),
     description: dbCategory.description || undefined,
     category: dbCategory.category || 'Home Services',
   };

@@ -12,9 +12,7 @@ export interface BackendServiceCategory {
   id: string;
   name: string;
   slug: string;
-  visitFee?: number;
   bookingFee?: number;
-  emergencyVisitFee?: number;
   sosBookingFee?: number | null;
 }
 

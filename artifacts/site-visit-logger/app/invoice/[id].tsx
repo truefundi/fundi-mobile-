@@ -2,7 +2,7 @@ import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Share, StyleSheet, Text, View } from 'react-native';
-import { additionalSubtotal, balanceDue, formatMoney, quoteSubtotal, repairTotal, type Job } from '@/constants/jobs';
+import { additionalSubtotal, balanceDue, formatBookingFee, formatMoney, getServiceBookingFee, quoteSubtotal, repairTotal, type Job } from '@/constants/jobs';
 import { formatPhone } from '@/constants/auth';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -112,7 +112,7 @@ export default function InvoiceScreen() {
 
       <SectionCard title="Payment">
         <MoneyRow label="Repair amount" value={formatMoney(repairTotal(job))} />
-        <MoneyRow label="Visit fee" value={formatMoney(job.visitFee)} hint={`Paid by ${job.visitPaymentMethod ?? 'card'}`} credit />
+        <MoneyRow label="Service Booking Fee" value={formatBookingFee(job.bookingFee?.amount ?? getServiceBookingFee(job.service))} hint="Paid via Fundi" credit />
         <View style={[styles.divider, { backgroundColor: colors.border }]} />
         <MoneyRow label="Balance settled" value={formatMoney(balanceDue(job))} strong />
         <MoneyRow label="Settlement method" value={job.settlementMethod ?? '—'} />
@@ -121,7 +121,7 @@ export default function InvoiceScreen() {
       <SectionCard emphasis>
         <Text style={[styles.totalLabel, { color: colors.primaryForeground }]}>TOTAL PAID</Text>
         <Text style={[styles.total, { color: colors.primaryForeground }]}>
-          {formatMoney(repairTotal(job) > 0 ? repairTotal(job) : job.visitFee)}
+          {formatMoney(repairTotal(job) > 0 ? repairTotal(job) : (job.bookingFee?.amount ?? getServiceBookingFee(job.service)))}
         </Text>
       </SectionCard>
     </StageScreen>
@@ -130,6 +130,7 @@ export default function InvoiceScreen() {
 
 /** Plain-text receipt used by the share sheet. */
 function receiptText(job: Job, customer: string): string {
+  const bookingFeeStr = formatBookingFee(job.bookingFee?.amount ?? getServiceBookingFee(job.service));
   const lines = [
     `FUNDI RECEIPT — ${job.reference}`,
     `Service: ${job.service}`,
@@ -139,7 +140,7 @@ function receiptText(job: Job, customer: string): string {
     '',
     job.quote ? `Diagnosis: ${job.quote.diagnosis}` : '',
     job.quote ? `Repair total: ${formatMoney(quoteSubtotal(job.quote))}` : '',
-    `Visit fee paid: ${formatMoney(job.visitFee)}`,
+    `Service Booking Fee paid: ${bookingFeeStr}`,
     `Balance settled: ${formatMoney(balanceDue(job))} (${job.settlementMethod ?? '—'})`,
     '',
     'Status: PAID',

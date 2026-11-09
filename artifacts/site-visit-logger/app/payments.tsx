@@ -16,7 +16,7 @@ type Entry = {
   label: string;
   detail: string;
   amount: number;
-  /** Visit fees run through Fundi; repair balances may settle outside it. */
+  /** Service Booking Fees run through Fundi; service balances may settle outside it. */
   viaFundi: boolean;
   at: string;
 };
@@ -30,15 +30,15 @@ export default function PaymentsScreen() {
   const entries = useMemo(() => {
     const rows: Entry[] = [];
     for (const job of jobs) {
-      if (job.visitPaymentMethod) {
+      if (job.bookingFee?.status === 'PAID') {
         rows.push({
-          key: `${job.id}-visit`,
+          key: `${job.id}-booking`,
           job,
-          label: 'Visit & diagnostic fee',
-          detail: `${job.service} · ${job.visitPaymentMethod}`,
-          amount: job.visitFee,
+          label: 'Service Booking Fee',
+          detail: `${job.service} · Paid via Fundi`,
+          amount: job.bookingFee.amount,
           viaFundi: true,
-          at: job.createdAt,
+          at: job.bookingFee.paidAt ?? job.createdAt,
         });
       }
       if (job.settlementMethod) {
@@ -63,14 +63,14 @@ export default function PaymentsScreen() {
     <StageScreen
       eyebrow="PAYMENTS"
       title="Payment history"
-      subtitle="Visit fees are handled by Fundi. Repair balances may be settled directly with your technician."
+      subtitle="Service Booking Fees are handled by Fundi. Service and repair balances may be settled directly with your technician."
       onBack={() => (router.canGoBack() ? router.back() : router.replace('/profile'))}
     >
       {entries.length === 0 ? (
         <EmptyState
           icon="credit-card"
           title="No payments yet"
-          text="Visit fees and repair settlements will be listed here once you complete a job."
+          text="Service Booking Fees and service settlements will be listed here once you complete a job."
           action={{ label: 'Browse services', onPress: () => router.navigate('/services'), testID: 'payments-browse-button' }}
         />
       ) : (

@@ -10,7 +10,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { formatMoney, isClosed, repairTotal } from '@/constants/jobs';
+import { formatMoney, getServiceBookingFee, isClosed, repairTotal } from '@/constants/jobs';
 import { searchServices, SERVICES, type Service } from '@/constants/services';
 import { useCategories } from '@/lib/categories-api';
 import { AppHeader } from '@/components/ui/AppHeader';
@@ -269,7 +269,7 @@ export default function HomeScreen({
                         </View>
                         <View style={styles.recentAmount}>
                           <Text style={[styles.amount, { color: colors.foreground }]}>
-                            {formatMoney(repairTotal(job) > 0 ? repairTotal(job) : job.visitFee)}
+                            {formatMoney(repairTotal(job) > 0 ? repairTotal(job) : (job.bookingFee?.amount ?? getServiceBookingFee(job.service)))}
                           </Text>
                           <Text style={[styles.recentMeta, { color: colors.mutedForeground }]}>
                             {new Date(job.completedAt ?? job.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}

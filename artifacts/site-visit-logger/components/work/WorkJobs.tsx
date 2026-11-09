@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { isClosed, isTerminated, STATUS_LABEL, type Job } from '@/constants/jobs';
+import { getServiceBookingFee, isClosed, isTerminated, STATUS_LABEL, type Job } from '@/constants/jobs';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
@@ -306,7 +306,7 @@ export function WorkJobs() {
           {visibleJobs.map((job) => {
             const inProgress = !isClosed(job.status) && !isTerminated(job.status);
             const terminated = isTerminated(job.status);
-            const agreedAmount = job.agreedPrice || job.visitFee;
+            const agreedAmount = job.agreedPrice || (job.bookingFee?.amount ?? getServiceBookingFee(job.service));
             const isActive = job.status === 'ACTIVE';
             const isStarted = job.status === 'IN_PROGRESS';
 
@@ -672,7 +672,7 @@ export function WorkJobs() {
                       Agreed Service Fee
                     </Text>
                     <Text style={[styles.detailHighlightPrice, { color: colors.primary }]}>
-                      RWF {(selectedJob.agreedPrice || selectedJob.visitFee).toLocaleString()}
+                      RWF {(selectedJob.agreedPrice || selectedJob.bookingFee?.amount || getServiceBookingFee(selectedJob.service)).toLocaleString()}
                     </Text>
                   </View>
                   <View

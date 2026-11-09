@@ -1,8 +1,9 @@
 /**
- * The Fundi job lifecycle.
- *
- * REQUEST -> MANUAL TECHNICIAN SELECTION -> ACCEPT -> PAY VISIT FEE -> CHAT
- * -> QUOTE -> APPROVE -> REPAIR -> COMPLETE -> PAYMENT -> RATE
+ * The Fundi job lifecycle:
+ * REQUEST INITIATION -> BOOKING FEE PAYMENT (PAYMENT_PENDING -> PAID)
+ * -> DISPATCH / TECHNICIAN OFFER (DISPATCHED)
+ * -> CONVERSATION & PRICE NEGOTIATION (NEGOTIATING)
+ * -> COOPERATION CONFIRMED -> IN PROGRESS -> COMPLETED / CANCELLED
  */
 import type { Coordinates } from '@/lib/location';
 import { DEFAULT_BOOKING_FEE, getServiceBookingFee } from '@/constants/services';
@@ -27,8 +28,12 @@ export type JobStatus =
   | 'SEARCHING_DISPATCH'
   | 'OFFERED'
   | 'ACCEPTED'
+  | 'PAYMENT_PENDING'
+  | 'PAID'
   | 'VISIT_PAID'
   | 'DISPATCHED'
+  | 'NEGOTIATING'
+  | 'COOPERATION_CONFIRMED'
   | 'ACTIVE' | 'IN_PROGRESS'
   | 'EN_ROUTE'
   | 'ARRIVED'
@@ -39,7 +44,6 @@ export type JobStatus =
   | 'REPAIR_IN_PROGRESS'
   | 'ADDITIONAL_APPROVAL_REQUIRED'
   | 'REPAIR_COMPLETED'
-  | 'PAYMENT_PENDING'
   | 'PAYMENT_REPORTED'
   | 'COMPLETED'
   | 'CANCELLED'
@@ -56,7 +60,10 @@ export type RequestLifecycleStatus =
   | 'DECLINED'
   | 'CANCELLED'
   | 'PAYMENT_PENDING'
+  | 'PAID'
   | 'DISPATCHED'
+  | 'NEGOTIATING'
+  | 'COOPERATION_CONFIRMED'
   | 'ACTIVE' | 'IN_PROGRESS';
 
 /** Customer-facing wording for each status. */
@@ -65,9 +72,13 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   MATCHING: 'Choose a technician',
   SEARCHING_DISPATCH: 'Dispatching technician',
   OFFERED: 'Technician found',
-  ACCEPTED: 'Visit fee due',
-  VISIT_PAID: 'Visit fee paid · chat ready',
+  ACCEPTED: 'Offer accepted',
+  PAYMENT_PENDING: 'Booking fee pending',
+  PAID: 'Booking fee paid · chat ready',
+  VISIT_PAID: 'Booking fee paid · chat ready',
   DISPATCHED: 'Technician dispatched',
+  NEGOTIATING: 'Price negotiation',
+  COOPERATION_CONFIRMED: 'Cooperation confirmed',
   ACTIVE: 'Active', IN_PROGRESS: 'In Progress',
   EN_ROUTE: 'On the way',
   ARRIVED: 'Technician arrived',
@@ -78,7 +89,6 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   REPAIR_IN_PROGRESS: 'Repair in progress',
   ADDITIONAL_APPROVAL_REQUIRED: 'Extra work needs approval',
   REPAIR_COMPLETED: 'Repair completed',
-  PAYMENT_PENDING: 'Payment pending',
   PAYMENT_REPORTED: 'Payment recorded',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
@@ -95,8 +105,12 @@ export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   SEARCHING_DISPATCH: 'progress',
   OFFERED: 'action',
   ACCEPTED: 'action',
+  PAYMENT_PENDING: 'action',
+  PAID: 'progress',
   VISIT_PAID: 'progress',
   DISPATCHED: 'progress',
+  NEGOTIATING: 'progress',
+  COOPERATION_CONFIRMED: 'progress',
   ACTIVE: 'progress', IN_PROGRESS: 'progress',
   EN_ROUTE: 'progress',
   ARRIVED: 'progress',
@@ -107,7 +121,6 @@ export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   REPAIR_IN_PROGRESS: 'progress',
   ADDITIONAL_APPROVAL_REQUIRED: 'action',
   REPAIR_COMPLETED: 'progress',
-  PAYMENT_PENDING: 'action',
   PAYMENT_REPORTED: 'progress',
   COMPLETED: 'success',
   CANCELLED: 'danger',
@@ -210,8 +223,6 @@ export interface ServiceRequest {
   technician?: Technician;
   chatThreadId?: string;
   chatId?: string;
-  visitFee: number;
-  visitPaymentMethod?: PaymentMethod;
   quote?: Quote;
   additionalWork?: AdditionalWork;
   additionalWorkApproved?: boolean;
@@ -256,12 +267,9 @@ export function formatBookingFee(amount: number = FLAT_BOOKING_FEE, currency: st
   return `$${amount.toLocaleString()}`;
 }
 
-/** Emergency visits cost more because the technician drops everything. */
-export const VISIT_FEE = 75;
-export const EMERGENCY_VISIT_FEE = 110;
 export const EMERGENCY_DISPATCH_FEE = 5000;
 
-/** Fundi's cut of the visit fee. The repair itself settles between the two parties. */
+/** Fundi platform commission rate on services. */
 export const COMMISSION_RATE = 0.3;
 
 /** "Tue 8 Oct, 10:00" — the day and time a scheduled visit was booked for. */
@@ -277,10 +285,6 @@ export function urgencyText(job: Pick<Job, 'urgency' | 'scheduledFor'>): string 
   return job.urgency === 'Schedule' && job.scheduledFor ? `Schedule · ${formatSchedule(job.scheduledFor)}` : job.urgency;
 }
 
-export function visitFeeFor(urgency: Job['urgency']): number {
-  return urgency === 'Emergency' ? EMERGENCY_VISIT_FEE : VISIT_FEE;
-}
-
 export function quoteSubtotal(quote: Quote): number {
   const parts = quote.parts.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
   return parts + quote.labour;
@@ -291,16 +295,17 @@ export function additionalSubtotal(work: AdditionalWork): number {
   return parts + work.labour;
 }
 
-/** Repair total including any approved extra work, before the visit fee credit. */
+/** Repair total including any approved extra work. */
 export function repairTotal(job: Job): number {
   const base = job.quote ? quoteSubtotal(job.quote) : 0;
   const extra = job.additionalWork && job.additionalWorkApproved ? additionalSubtotal(job.additionalWork) : 0;
   return base + extra;
 }
 
-/** What the customer still owes: repair total minus the visit fee already paid. */
+/** What the customer still owes: repair total minus the Service Booking Fee already paid. */
 export function balanceDue(job: Job): number {
-  return Math.max(repairTotal(job) - job.visitFee, 0);
+  const paidBookingFee = job.bookingFee?.status === 'PAID' ? job.bookingFee.amount : 0;
+  return Math.max(repairTotal(job) - paidBookingFee, 0);
 }
 
 export function formatMoney(amount: number): string {

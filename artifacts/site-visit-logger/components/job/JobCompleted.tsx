@@ -1,7 +1,7 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { balanceDue, formatMoney, repairTotal, type Job } from '@/constants/jobs';
+import { balanceDue, formatBookingFee, formatMoney, getServiceBookingFee, repairTotal, type Job } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { SectionCard } from '@/components/ui/SectionCard';
@@ -73,7 +73,7 @@ export function JobCompleted({ job, onContinue, onBack }: { job: Job; onContinue
 
       <SectionCard title="Amount">
         <MoneyRow label="Repair total" value={formatMoney(repairTotal(job))} />
-        <MoneyRow label="Visit fee already paid" value={formatMoney(job.visitFee)} credit />
+        <MoneyRow label="Booking fee paid" value={formatBookingFee(job.bookingFee?.amount ?? getServiceBookingFee(job.service))} credit />
         <View style={[styles.divider, { backgroundColor: colors.border }]} />
         <MoneyRow label="Balance to settle" value={formatMoney(balanceDue(job))} strong />
       </SectionCard>

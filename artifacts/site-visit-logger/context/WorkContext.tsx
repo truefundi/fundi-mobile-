@@ -264,7 +264,6 @@ function mapBackendJobToTechnicianJob(backendJob: BackendJob): Job {
     clientName: 'Client',
     clientPhone: '',
     type: backendJob.requestType === 'SOS' ? 'SOS' : 'STANDARD',
-    visitFee: backendJob.offeredAmount || 0,
     agreedPrice: backendJob.offeredAmount || undefined,
     cooperationStatus: backendJob.cooperationStatus,
     customerProgress: backendJob.customerProgress,
@@ -301,7 +300,6 @@ function mapOfferToJob(offer: TechnicianOfferItem): Job {
     status: 'OFFERED',
     statusSince: offer.job.createdAt,
     createdAt: offer.job.createdAt,
-    visitFee: offer.job.offeredAmount || 0,
     agreedPrice: offer.job.offeredAmount || 0,
     type: 'STANDARD',
     bookingFee: {
@@ -371,7 +369,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     const id = data.id ?? `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
     const urgency = data.urgency ?? (data.type === 'SOS' ? 'Emergency' : 'Today');
-    const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? getServiceBookingFee(data.service));
+    const feeAmount = data.bookingFee?.amount ?? getServiceBookingFee(data.service);
     const draft: Job = {
       id,
       reference: data.reference ?? `FND-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -392,8 +390,6 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       technician: data.technician,
       chatThreadId: isPaid ? (data.chatThreadId ?? data.chatId) : undefined,
       chatId: isPaid ? (data.chatId ?? data.chatThreadId) : undefined,
-      visitFee: data.visitFee ?? feeAmount,
-      visitPaymentMethod: data.visitPaymentMethod,
       quote: data.quote,
       additionalWork: data.additionalWork,
       additionalWorkApproved: data.additionalWorkApproved,
@@ -419,7 +415,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     const job = localDraftsRef.current.find((j) => j.id === requestId);
     if (!job) return;
     const now = new Date().toISOString();
-    const nextStatus = job.status === 'PAYMENT_PENDING' ? (job.type === 'SOS' ? 'DISPATCHED' : 'VISIT_PAID') : job.status;
+    const nextStatus = job.status === 'PAYMENT_PENDING' ? (job.type === 'SOS' ? 'DISPATCHED' : 'PAID') : job.status;
     const updated: Job = {
       ...job,
       status: nextStatus,
@@ -756,7 +752,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           status: 'COMPLETED',
           service: targetJob.service,
           title: 'Job completed',
-          text: `Your technician has completed the service (${targetJob.service}). Agreed fee: RWF ${(targetJob.agreedPrice || targetJob.visitFee || 0).toLocaleString()}.`,
+          text: `Your technician has completed the service (${targetJob.service}). Agreed fee: RWF ${(targetJob.agreedPrice || targetJob.bookingFee?.amount || getServiceBookingFee(targetJob.service)).toLocaleString()}.`,
           at: now,
           recipientPhones: [targetJob.clientPhone],
         });
@@ -1106,7 +1102,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       cancelled: techJobs.filter((j) => isTerminated(j.status)),
       earnings: techJobs
         .filter((j) => j.status === 'COMPLETED' || j.status === 'REPAIR_COMPLETED')
-        .reduce((sum, j) => sum + (j.agreedPrice || j.visitFee * (1 - COMMISSION_RATE)), 0),
+        .reduce((sum, j) => sum + (j.agreedPrice || ((j.bookingFee?.amount ?? getServiceBookingFee(j.service)) * (1 - COMMISSION_RATE))), 0),
       refreshJobs,
       acceptOffer,
       rejectOffer,

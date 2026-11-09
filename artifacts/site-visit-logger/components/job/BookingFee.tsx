@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { formatMoney, type Job, type PaymentMethod } from '@/constants/jobs';
+import { formatBookingFee, getServiceBookingFee, type Job, type PaymentMethod } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { Notice } from '@/components/ui/Notice';
@@ -17,10 +17,9 @@ const METHODS: { id: PaymentMethod; icon: keyof typeof Ionicons.glyphMap; detail
 ];
 
 /**
- * Spec 7 and 9 — the visit fee explainer, then the payment sheet.
- * Both live here because the customer moves straight between them.
+ * Service Booking Fee explainer and payment sheet.
  */
-export function VisitFee({
+export function BookingFee({
   job,
   onPay,
   onCancel,
@@ -37,36 +36,37 @@ export function VisitFee({
   const [paying, setPaying] = useState(false);
 
   if (!job.technician) return null;
+  const bookingAmount = job.bookingFee?.amount ?? getServiceBookingFee(job.service);
 
   if (!showPayment) {
     return (
       <StageScreen
-        eyebrow="VISIT FEE"
-        title="Technician visit & diagnostic fee"
+        eyebrow="SERVICE BOOKING FEE"
+        title="Service Booking Fee"
         onBack={onBack}
         footer={
           <>
-            <Button label="Continue to payment" icon="arrow-forward" onPress={() => setShowPayment(true)} testID="visit-fee-continue-button" />
-            <Button label="Cancel request" variant="outline" onPress={onCancel} testID="visit-fee-cancel-button" />
+            <Button label="Continue to payment" icon="arrow-forward" onPress={() => setShowPayment(true)} testID="booking-fee-continue-button" />
+            <Button label="Cancel request" variant="outline" onPress={onCancel} testID="booking-fee-cancel-button" />
           </>
         }
       >
         <SectionCard emphasis>
           <Text style={[styles.priceLabel, { color: colors.primaryForeground }]}>
-            {job.urgency === 'Emergency' ? 'Emergency callout' : 'Standard callout'}
+            {job.urgency === 'Emergency' ? 'Emergency dispatch fee' : 'Standard booking fee'}
           </Text>
-          <Text style={[styles.price, { color: colors.primaryForeground }]}>{formatMoney(job.visitFee)}</Text>
+          <Text style={[styles.price, { color: colors.primaryForeground }]}>{formatBookingFee(bookingAmount)}</Text>
           <Text style={[styles.priceText, { color: colors.secondary }]}>
-            This covers the technician&apos;s travel, inspection and diagnosis.
+            This confirms your request and unlocks direct real-time technician chat.
           </Text>
         </SectionCard>
 
         <TechnicianCard technician={job.technician} compact caption="Available now" />
 
         <SectionCard title="Included">
-          <MoneyRow label="Callout & travel" value="Included" />
-          <MoneyRow label="On-site inspection" value="Included" />
-          <MoneyRow label="Written diagnosis" value="Included" />
+          <MoneyRow label="Direct technician chat" value="Unlocked" />
+          <MoneyRow label="Technician dispatch lock" value="Included" />
+          <MoneyRow label="Price negotiation in chat" value="Included" />
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <MoneyRow label="Estimated arrival" value={`${job.technician.etaMinutes} min`} />
         </SectionCard>
@@ -74,7 +74,7 @@ export function VisitFee({
         <Notice
           tone="neutral"
           icon="shield-checkmark-outline"
-          text="The visit fee is subject to Fundi's cancellation and refund policy. It is credited against your repair total if you approve the quote."
+          text="The Service Booking Fee secures your technician. Service labor and parts are agreed upon directly with the technician in chat."
         />
       </StageScreen>
     );
@@ -83,23 +83,23 @@ export function VisitFee({
   return (
     <StageScreen
       eyebrow="SECURE PAYMENT"
-      title="Pay visit fee"
+      title="Pay Service Booking Fee"
       onBack={() => setShowPayment(false)}
       footer={
         <Button
-          label={`Pay ${formatMoney(job.visitFee)}`}
+          label={`Pay ${formatBookingFee(bookingAmount)}`}
           loading={paying}
           onPress={() => {
             setPaying(true);
             onPay(method);
           }}
-          testID="pay-visit-fee-button"
+          testID="pay-booking-fee-button"
         />
       }
     >
       <SectionCard emphasis>
         <Text style={[styles.priceLabel, { color: colors.primaryForeground }]}>Amount due</Text>
-        <Text style={[styles.price, { color: colors.primaryForeground }]}>{formatMoney(job.visitFee)}</Text>
+        <Text style={[styles.price, { color: colors.primaryForeground }]}>{formatBookingFee(bookingAmount)}</Text>
       </SectionCard>
 
       <SectionCard title="Payment method">

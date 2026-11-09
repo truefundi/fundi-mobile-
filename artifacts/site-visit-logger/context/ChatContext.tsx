@@ -5,6 +5,7 @@ import { useFundi } from '@/context/FundiContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { useWork } from '@/context/WorkContext';
 import { jobsKey } from '@/constants/storage';
+import { getServiceBookingFee } from '@/constants/services';
 import type { BookingFee, JobStatus, RequestLifecycleStatus, RequestType, ServiceRequest } from '@/constants/jobs';
 import type { Coordinates } from '@/lib/location';
 import {
@@ -444,17 +445,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         REQUEST_RECEIVED: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
         PENDING_RESPONSE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
         OFFER_MADE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
-        ACCEPTED: ['CANCELLED', 'DISPATCHED', 'ACTIVE'],
-        PAYMENT_PENDING: ['CANCELLED', 'DISPATCHED', 'ACTIVE'],
-        DISPATCHED: ['CANCELLED', 'ACTIVE'],
+        ACCEPTED: ['PAYMENT_PENDING', 'PAID', 'DISPATCHED', 'NEGOTIATING', 'ACTIVE', 'CANCELLED'],
+        PAYMENT_PENDING: ['PAID', 'DISPATCHED', 'CANCELLED', 'ACTIVE'],
+        PAID: ['DISPATCHED', 'NEGOTIATING', 'COOPERATION_CONFIRMED', 'CANCELLED', 'ACTIVE'],
+        DISPATCHED: ['NEGOTIATING', 'COOPERATION_CONFIRMED', 'CANCELLED', 'ACTIVE'],
+        NEGOTIATING: ['COOPERATION_CONFIRMED', 'CANCELLED', 'ACTIVE', 'IN_PROGRESS'],
+        COOPERATION_CONFIRMED: ['ACTIVE', 'IN_PROGRESS', 'CANCELLED'],
         ACTIVE: ['CANCELLED', 'IN_PROGRESS'],
         IN_PROGRESS: ['CANCELLED', 'ACTIVE'],
         DECLINED: [],
         CANCELLED: [],
       };
-      if (!allowedTransitions[sourceRequest.status].includes(status)) return;
+      if (!allowedTransitions[sourceRequest.status]?.includes(status)) return;
       const statusText =
         status === 'ACCEPTED' ? 'The technician accepted this service request.' :
+        status === 'PAID' ? 'The Service Booking Fee has been paid.' :
+        status === 'DISPATCHED' ? 'A technician has been dispatched.' :
+        status === 'NEGOTIATING' ? 'Price negotiation is now active.' :
+        status === 'COOPERATION_CONFIRMED' ? 'Cooperation has been confirmed by both parties.' :
         status === 'DECLINED' ? `The technician declined this request${reasonText ? `: ${reasonText}` : '.'}` :
         status === 'CANCELLED' ? (initiatorRole === 'client' ? 'The client cancelled this service request.' : 'The technician cancelled this service request.') :
         status === 'OFFER_MADE' ? 'A service offer was made.' :
@@ -502,9 +510,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       const jobId = sourceThread.jobId;
       const relatedJob = jobId ? getJob(jobId) : undefined;
-      const updatesJob = !!relatedJob && (relatedJob.status === 'OFFERED' || relatedJob.status === 'VISIT_PAID' || relatedJob.status === 'PAYMENT_PENDING') &&
+      const updatesJob = !!relatedJob && (relatedJob.status === 'OFFERED' || relatedJob.status === 'PAID' || relatedJob.status === 'VISIT_PAID' || relatedJob.status === 'PAYMENT_PENDING') &&
         (status === 'ACCEPTED' || status === 'DECLINED');
-      const cancelsJob = !!relatedJob && ['REQUESTED', 'MATCHING', 'OFFERED', 'ACTIVE', 'IN_PROGRESS', 'VISIT_PAID'].includes(relatedJob.status) &&
+      const cancelsJob = !!relatedJob && ['REQUESTED', 'MATCHING', 'OFFERED', 'ACTIVE', 'IN_PROGRESS', 'PAID', 'VISIT_PAID'].includes(relatedJob.status) &&
         status === 'CANCELLED';
       if ((updatesJob || cancelsJob) && jobId) {
         if (status === 'ACCEPTED') {
@@ -520,7 +528,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // When the technician ACCEPTS a request, add an Active job to the technician's Jobs tab
       if (status === 'ACCEPTED') {
         const refId = sourceThread.jobId ?? `JOB-${Date.now()}`;
-        const fee = sourceRequest.bookingFee?.amount ?? 75;
+        const fee = sourceRequest.bookingFee?.amount ?? getServiceBookingFee(sourceRequest.serviceName);
         void addOrUpdateJob({
           id: refId,
           reference: `FND-${refId.slice(-4).toUpperCase()}`,
@@ -535,7 +543,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           createdAt: now,
           clientName: sourceThread.clientName ?? sourceThread.otherParticipantName,
           clientPhone: sourceThread.clientPhone,
-          visitFee: fee,
           agreedPrice: sourceThread.agreedPrice,
           chatThreadId: threadId,
           type: sourceRequest.type ?? 'STANDARD',
@@ -809,12 +816,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           createdAt: now,
           clientName: sourceThread.clientName ?? sourceThread.otherParticipantName,
           clientPhone: sourceThread.clientPhone,
-          visitFee: request?.bookingFee?.amount ?? 75,
           agreedPrice: sourceOffer.amount,
           chatThreadId: threadId,
           type: request?.type ?? 'STANDARD',
           bookingFee: request?.bookingFee ?? {
-            amount: 75,
+            amount: getServiceBookingFee(request?.serviceName),
             currency: 'RWF',
             status: 'PAID',
           },
@@ -1034,7 +1040,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           createdAt: now,
           clientName: account?.role === 'TECHNICIAN' ? otherName : account?.name,
           clientPhone: account?.role === 'TECHNICIAN' ? otherPhone : account?.phone,
-          visitFee: fee,
           chatThreadId: newThreadId,
           type: requestDetails.type ?? 'STANDARD',
           bookingFee: requestDetails.bookingFee ?? {

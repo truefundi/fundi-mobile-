@@ -37,7 +37,7 @@ const CONFIRM: Record<Pending, { title: string; message: string; confirmLabel: s
   },
   declineQuote: {
     title: 'Decline the repair quote?',
-    message: 'No repair will be carried out. The visit fee you already paid covers the inspection and diagnosis.',
+    message: 'No repair will be carried out. The Service Booking Fee you already paid covers request confirmation and technician dispatch.',
     confirmLabel: 'Decline quote',
     cancelLabel: 'Go back',
   },
@@ -58,7 +58,7 @@ export default function JobScreen() {
     getJob,
     isHydrated,
     acceptOffer,
-    payVisitFee,
+    payBookingFee,
     linkChatThread,
     approveQuote,
     declineQuote,
@@ -171,6 +171,7 @@ export default function JobScreen() {
       break;
 
     case 'ACCEPTED':
+    case 'PAYMENT_PENDING':
       if (job.bookingFee?.status !== 'PAID') {
         stage = (
           <StageScreen
@@ -196,7 +197,7 @@ export default function JobScreen() {
                   }}
                   testID="review-booking-fee-button"
                 />
-                <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} testID="visit-fee-cancel-button" />
+                <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} testID="booking-fee-cancel-button" />
               </>
             }
           >
@@ -211,9 +212,12 @@ export default function JobScreen() {
         break;
       }
       // If booking fee is paid, fall through to ACTIVE stage
+    case 'PAID':
+    case 'DISPATCHED':
+    case 'NEGOTIATING':
+    case 'COOPERATION_CONFIRMED':
     case 'ACTIVE':
     case 'IN_PROGRESS':
-    case 'DISPATCHED':
     case 'VISIT_PAID':
     case 'EN_ROUTE':
       stage = (

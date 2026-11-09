@@ -33,7 +33,7 @@ const INITIAL_MESSAGES: Message[] = [
 ];
 
 const SUGGESTIONS = [
-  'How much is a visit fee?',
+  'How much is the Service Booking Fee?',
   'I need an emergency electrician',
   'How do I track my repair?',
   'What services do you offer?',

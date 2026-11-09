@@ -2,7 +2,7 @@ import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { balanceDue, formatMoney, repairTotal, type Job } from '@/constants/jobs';
+import { balanceDue, formatBookingFee, formatMoney, getServiceBookingFee, repairTotal, type Job } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { SectionCard } from '@/components/ui/SectionCard';
@@ -73,7 +73,7 @@ export function JobClosed({ job, hideBack = false, onRebook }: { job: Job; hideB
         {!cancelled && (
           <>
             <MoneyRow label="Repair total" value={formatMoney(repairTotal(job))} />
-            <MoneyRow label="Visit fee" value={formatMoney(job.visitFee)} />
+            <MoneyRow label="Booking fee" value={formatBookingFee(job.bookingFee?.amount ?? getServiceBookingFee(job.service))} />
             <MoneyRow label="Settled by" value={job.settlementMethod ?? '—'} />
             <MoneyRow label="Balance" value={formatMoney(balanceDue(job))} strong />
           </>

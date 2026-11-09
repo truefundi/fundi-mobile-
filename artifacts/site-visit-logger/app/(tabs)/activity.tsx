@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { balanceDue, formatMoney, isClosed, isTerminated, repairTotal, type Job } from '@/constants/jobs';
+import { balanceDue, formatMoney, getServiceBookingFee, isClosed, isTerminated, repairTotal, type Job } from '@/constants/jobs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeading } from '@/components/ui/PageHeading';
@@ -364,8 +364,8 @@ function JobCard({
   const colors = useColors();
   const created = new Date(job.createdAt);
   const total = repairTotal(job);
-  // Before a quote exists the only committed cost is the visit fee.
-  const amount = job.agreedPrice || (total > 0 ? total : job.visitFee);
+  // Before an agreed price exists, the booking fee is shown.
+  const amount = job.agreedPrice || (total > 0 ? total : (job.bookingFee?.amount ?? getServiceBookingFee(job.service)));
   const terminated = isTerminated(job.status);
   const isActiveOrProgress = job.status === 'ACTIVE' || job.status === 'IN_PROGRESS' || job.status === 'ACCEPTED';
 

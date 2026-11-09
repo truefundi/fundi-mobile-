@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { COMMISSION_RATE, formatMoney, STATUS_LABEL } from '@/constants/jobs';
+import { COMMISSION_RATE, getServiceBookingFee, STATUS_LABEL } from '@/constants/jobs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
@@ -39,7 +39,7 @@ export function WorkAlerts() {
           <View style={styles.copy}>
             <Text style={[styles.title, { color: colors.foreground }]}>New {job.service.toLowerCase()} job</Text>
             <Text style={[styles.text, { color: colors.mutedForeground }]} numberOfLines={1}>
-              {job.locationLabel} · {formatMoney(job.visitFee * (1 - COMMISSION_RATE))}
+              {job.locationLabel} · RWF {Math.round((job.bookingFee?.amount ?? getServiceBookingFee(job.service)) * (1 - COMMISSION_RATE)).toLocaleString()}
             </Text>
           </View>
         </View>

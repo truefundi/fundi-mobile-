@@ -23,7 +23,6 @@ import {
 } from '@/lib/jobs-api';
 import {
   isClosed,
-  visitFeeFor,
   type BookingFee,
   type Job,
   type JobEvent,
@@ -139,7 +138,6 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
     cancellationReason: backendJob.cancellationReason ?? undefined,
     technician: tech,
     type: backendJob.requestType === 'SOS' ? 'SOS' : 'STANDARD',
-    visitFee: feeAmount,
     agreedPrice: backendJob.offeredAmount || undefined,
     cooperationStatus: backendJob.cooperationStatus,
     customerProgress: backendJob.customerProgress,
@@ -169,7 +167,7 @@ type FundiContextValue = {
   initializeChatId: (requestId: string, chatId?: string) => string;
   /** Customer saw the matched technician and wants to continue. */
   acceptOffer: (id: string) => void;
-  payVisitFee: (id: string, method: PaymentMethod) => void;
+  payBookingFee: (id: string, method?: PaymentMethod) => void;
   approveQuote: (id: string) => void;
   declineQuote: (id: string) => void;
   approveAdditionalWork: (id: string) => void;
@@ -203,12 +201,16 @@ export const FundiContext = createContext<FundiContextValue | undefined>(undefin
 /** Customer-facing copy for the notification feed, one entry per status change. */
 const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = {
   REQUESTED: { title: 'Request sent', text: 'Choose an available technician for your request.' },
-  MATCHING: { title: 'Choose a technician', text: 'Browse the available local mock technicians.' },
+  MATCHING: { title: 'Choose a technician', text: 'Browse the available technicians.' },
   SEARCHING_DISPATCH: { title: 'Emergency Dispatch Active', text: 'Alerting nearby verified emergency technicians...' },
   OFFERED: { title: 'Technician selected', text: 'Review the technician you selected before continuing.' },
-  ACCEPTED: { title: 'Technician accepted your request', text: 'Pay the visit fee to confirm the callout.' },
-  VISIT_PAID: { title: 'Payment successful', text: 'Your visit fee has been received.' },
-  DISPATCHED: { title: 'Technician dispatched', text: 'A technician has been dispatched to your location.' },
+  ACCEPTED: { title: 'Offer accepted', text: 'Confirm the Service Booking Fee to unlock technician dispatch and chat.' },
+  PAYMENT_PENDING: { title: 'Booking fee pending', text: 'Confirm the Service Booking Fee to unlock technician dispatch and chat.' },
+  PAID: { title: 'Booking fee confirmed', text: 'Service Booking Fee received. Your technician is dispatched and chat is ready.' },
+  VISIT_PAID: { title: 'Booking fee confirmed', text: 'Service Booking Fee received. Your technician is dispatched and chat is ready.' },
+  DISPATCHED: { title: 'Technician dispatched', text: 'A technician has been dispatched to your service location.' },
+  NEGOTIATING: { title: 'Price negotiation active', text: 'Review and agree upon service pricing with your technician in chat.' },
+  COOPERATION_CONFIRMED: { title: 'Cooperation confirmed', text: 'Both parties agreed on terms and confirmed cooperation.' },
   ACTIVE: { title: 'Technician accepted request', text: 'Technician accepted the job. Coordinate details in chat.' },
   IN_PROGRESS: { title: 'Job in progress', text: 'Technician has started work on your job.' },
   EN_ROUTE: { title: 'Your technician is on the way', text: 'Follow the arrival time on the tracking screen.' },
@@ -220,7 +222,6 @@ const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = 
   REPAIR_IN_PROGRESS: { title: 'Repair in progress', text: 'We will let you know as soon as the work is done.' },
   ADDITIONAL_APPROVAL_REQUIRED: { title: 'Extra work needs your approval', text: 'Nothing is charged until you approve it.' },
   REPAIR_COMPLETED: { title: 'Repair completed', text: 'Review the summary and settle the balance.' },
-  PAYMENT_PENDING: { title: 'Payment pending', text: 'Payment is required to continue.' },
   PAYMENT_REPORTED: { title: 'Payment recorded', text: 'Your invoice is ready to view.' },
   COMPLETED: { title: 'Job completed', text: 'Thanks for using Fundi. Rate your technician to help others.' },
   CANCELLED: { title: 'Request cancelled', text: 'This job was cancelled.' },
@@ -281,10 +282,10 @@ async function loadJobs(key: string): Promise<Job[]> {
       ...item,
       type: item.type ?? 'STANDARD',
       bookingFee: item.bookingFee ?? {
-        amount: item.visitFee ?? visitFeeFor(item.urgency ?? 'Today'),
+        amount: getServiceBookingFee(item.service),
         currency: 'RWF',
-        status: item.status === 'VISIT_PAID' || item.visitPaymentMethod ? 'PAID' : 'PENDING',
-        paidAt: item.status === 'VISIT_PAID' ? item.statusSince : undefined,
+        status: item.status === 'PAID' || item.status === 'VISIT_PAID' ? 'PAID' : 'PENDING',
+        paidAt: item.status === 'PAID' || item.status === 'VISIT_PAID' ? item.statusSince : undefined,
       },
     })) as Job[];
   } catch {
@@ -470,7 +471,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       const id = data.id ?? makeId('job');
       const urgency = data.urgency ?? (data.type === 'SOS' ? 'Emergency' : 'Today');
       const initialStatus: JobStatus = data.status ?? 'PAYMENT_PENDING';
-      const feeAmount = data.bookingFee?.amount ?? (data.visitFee ?? getServiceBookingFee(data.service));
+      const feeAmount = data.bookingFee?.amount ?? getServiceBookingFee(data.service);
 
       const draft: Job = {
         id,
@@ -492,8 +493,6 @@ export function FundiProvider({ children }: { children: ReactNode }) {
         technician: data.technician,
         chatThreadId: isPaid ? (data.chatThreadId ?? data.chatId) : undefined,
         chatId: isPaid ? (data.chatId ?? data.chatThreadId) : undefined,
-        visitFee: data.visitFee ?? feeAmount,
-        visitPaymentMethod: data.visitPaymentMethod,
         quote: data.quote,
         additionalWork: data.additionalWork,
         additionalWorkApproved: data.additionalWorkApproved,
@@ -543,7 +542,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
         const now = new Date().toISOString();
         const updatedBookingFee: BookingFee = {
           ...job.bookingFee,
-          amount: job.bookingFee?.amount ?? job.visitFee ?? visitFeeFor(job.urgency),
+          amount: job.bookingFee?.amount ?? getServiceBookingFee(job.service),
           currency: job.bookingFee?.currency ?? 'RWF',
           status: 'PAID',
           paidAt: now,
@@ -552,8 +551,8 @@ export function FundiProvider({ children }: { children: ReactNode }) {
         const nextStatus: JobStatus =
           job.type === 'SOS'
             ? 'SEARCHING_DISPATCH'
-            : job.status === 'PAYMENT_PENDING'
-              ? 'VISIT_PAID'
+            : job.status === 'PAYMENT_PENDING' || job.status === 'ACCEPTED' || job.status === 'VISIT_PAID'
+              ? 'PAID'
               : job.status;
 
         const updatedJob: Job = {
@@ -656,7 +655,6 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       status: 'REQUESTED',
       statusSince: now,
       createdAt: now,
-      visitFee: fee,
       type: request.type ?? (request.urgency === 'Emergency' ? 'SOS' : 'STANDARD'),
       bookingFee: request.bookingFee ?? {
         amount: fee,
@@ -786,22 +784,21 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       markBookingFeePaid,
       initializeChatId,
       acceptOffer: (id) => advance(id, 'ACCEPTED'),
-      payVisitFee: (id, method) =>
+      payBookingFee: (id, _method) =>
         update(id, (job) =>
           transition(
             {
               ...job,
-              visitPaymentMethod: method,
               bookingFee: {
                 ...job.bookingFee,
-                amount: job.bookingFee?.amount ?? job.visitFee,
+                amount: job.bookingFee?.amount ?? getServiceBookingFee(job.service),
                 currency: job.bookingFee?.currency ?? 'RWF',
                 status: 'PAID',
                 paidAt: new Date().toISOString(),
                 transactionId: job.bookingFee?.transactionId ?? makeId('tx'),
               },
             },
-            'VISIT_PAID',
+            'PAID',
           ),
         ),
       approveQuote: (id) => advance(id, 'QUOTE_APPROVED'),

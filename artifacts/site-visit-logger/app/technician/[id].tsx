@@ -387,7 +387,7 @@ export default function TechnicianProfileScreen() {
             to secure {tech.name} and unlock direct chat coordination.
           </Text>
           <Text style={[styles.pricingBody, { color: colors.mutedForeground, marginTop: 6 }]}>
-            There are zero consultation fees or platform markups. Repair labor and parts are discussed,
+            There are zero hidden platform markups. Service labor and parts are discussed,
             agreed upon, and settled directly between you and your specialist.
           </Text>
         </View>

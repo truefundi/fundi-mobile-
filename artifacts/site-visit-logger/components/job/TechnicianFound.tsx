@@ -1,7 +1,7 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
-import { formatMoney, type Job } from '@/constants/jobs';
+import { formatBookingFee, getServiceBookingFee, type Job } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
 import { SectionCard } from '@/components/ui/SectionCard';
@@ -22,6 +22,7 @@ export function TechnicianFound({
   onBack?: () => void;
 }) {
   if (!job.technician) return null;
+  const bookingAmount = job.bookingFee?.amount ?? getServiceBookingFee(job.service);
 
   return (
     <StageScreen
@@ -31,7 +32,7 @@ export function TechnicianFound({
       onBack={onBack}
       footer={
         <>
-          <Button label="Continue to visit fee" onPress={onContinue} testID="offer-continue-button" />
+          <Button label="Continue to booking fee" onPress={onContinue} testID="offer-continue-button" />
           <Button label="Cancel request" variant="outline" onPress={onCancel} testID="offer-cancel-button" />
         </>
       }
@@ -39,8 +40,12 @@ export function TechnicianFound({
       <TechnicianCard technician={job.technician} caption="Selected for this request" />
 
       <SectionCard title="What happens next">
-        <Step icon="card-outline" title="Pay the visit fee" text={`${formatMoney(job.visitFee)} covers travel, inspection and diagnosis.`} />
-        <Step icon="chatbubble-ellipses-outline" title="Continue in chat" text="After payment, your request opens in chat so you can coordinate with this technician and receive an offer." last />
+        <Step
+          icon="card-outline"
+          title="Pay Service Booking Fee"
+          text={`${formatBookingFee(bookingAmount)} confirms your booking and unlocks direct technician chat.`}
+        />
+        <Step icon="chatbubble-ellipses-outline" title="Continue in chat" text="After payment, your request opens in chat so you can coordinate with this technician and negotiate service pricing." last />
       </SectionCard>
 
       <Notice tone="info" icon="information-circle-outline" text="Nothing is charged until you confirm on the next screen." />

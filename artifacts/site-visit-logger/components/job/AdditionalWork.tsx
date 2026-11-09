@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import { additionalSubtotal, formatMoney, quoteSubtotal, type Job } from '@/constants/jobs';
+import { additionalSubtotal, formatBookingFee, formatMoney, getServiceBookingFee, quoteSubtotal, type Job } from '@/constants/jobs';
 import { Button } from '@/components/ui/Button';
 import { MoneyRow } from '@/components/ui/MoneyRow';
 import { Notice } from '@/components/ui/Notice';
@@ -61,8 +61,8 @@ export function AdditionalWork({
         <MoneyRow label="Additional work" value={formatMoney(extra)} />
         <View style={[styles.divider, { backgroundColor: colors.border }]} />
         <MoneyRow label="New repair total" value={formatMoney(original + extra)} strong />
-        <MoneyRow label="Visit fee already paid" value={formatMoney(job.visitFee)} credit />
-        <MoneyRow label="Remaining balance" value={formatMoney(Math.max(original + extra - job.visitFee, 0))} strong />
+        <MoneyRow label="Booking fee paid" value={formatBookingFee(job.bookingFee?.amount ?? getServiceBookingFee(job.service))} credit />
+        <MoneyRow label="Remaining balance" value={formatMoney(Math.max(original + extra - (job.bookingFee?.status === 'PAID' ? job.bookingFee.amount : 0), 0))} strong />
       </SectionCard>
 
       <Notice tone="success" icon="shield-checkmark" text="Declining is fine — your technician will finish the repair you already approved." />

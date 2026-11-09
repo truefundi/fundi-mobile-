@@ -7,7 +7,7 @@ type Props = {
   value: string;
   /** Emphasised total row. */
   strong?: boolean;
-  /** Credits such as the visit fee already paid. */
+  /** Credits such as the booking fee already paid. */
   credit?: boolean;
   hint?: string;
 };
