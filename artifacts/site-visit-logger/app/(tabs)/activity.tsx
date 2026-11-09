@@ -18,6 +18,7 @@ import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useFundi } from '@/context/FundiContext';
 import { useNotifications } from '@/context/NotificationContext';
+import { getServiceIcon } from '@/lib/categories-api';
 
 type Tab = 'Active' | 'Completed' | 'Cancelled';
 
@@ -351,9 +352,18 @@ function JobCard({
       >
         {/* Header row: Job Title & Status */}
         <View style={styles.cardHeader}>
-          <Text style={[styles.jobServiceTitle, { color: colors.foreground }]} numberOfLines={1}>
-            {job.service}
-          </Text>
+          <View style={styles.cardHeaderTitleRow}>
+            <View style={[styles.cardHeaderIconTile, { backgroundColor: colors.secondary }]}>
+              <MaterialCommunityIcons
+                name={getServiceIcon(job.service) as any}
+                size={17}
+                color={colors.primary}
+              />
+            </View>
+            <Text style={[styles.jobServiceTitle, { color: colors.foreground }]} numberOfLines={1}>
+              {job.service}
+            </Text>
+          </View>
           <View
             style={[
               styles.statusPill,
@@ -499,7 +509,7 @@ function JobCard({
         ]}
       >
         <MaterialCommunityIcons
-          name={terminated ? 'close-circle-outline' : 'wrench-outline'}
+          name={(terminated ? 'close-circle-outline' : getServiceIcon(job.service)) as any}
           size={21}
           color={terminated ? colors.destructive : colors.primary}
         />
@@ -548,6 +558,8 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 13 },
   containerCard: { borderRadius: 14, borderWidth: 1.5, padding: 12, gap: 8, marginBottom: 11 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  cardHeaderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  cardHeaderIconTile: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },
   statusPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   statusPillText: { fontFamily: 'Inter_700Bold', fontSize: 11 },

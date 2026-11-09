@@ -1,4 +1,4 @@
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -21,6 +21,7 @@ import { isClosed, isTerminated, STATUS_LABEL, type Job } from '@/constants/jobs
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
+import { getServiceIcon } from '@/lib/categories-api';
 
 type Tab = 'In Progress' | 'Completed' | 'Cancelled';
 
@@ -249,9 +250,18 @@ export function WorkJobs() {
               >
                 {/* Header row: Job Title & Status */}
                 <View style={styles.cardHeader}>
-                  <Text style={[styles.jobServiceTitle, { color: colors.foreground }]} numberOfLines={1}>
-                    {job.service}
-                  </Text>
+                  <View style={styles.cardHeaderTitleRow}>
+                    <View style={[styles.cardHeaderIconTile, { backgroundColor: colors.secondary }]}>
+                      <MaterialCommunityIcons
+                        name={getServiceIcon(job.service) as any}
+                        size={17}
+                        color={colors.primary}
+                      />
+                    </View>
+                    <Text style={[styles.jobServiceTitle, { color: colors.foreground }]} numberOfLines={1}>
+                      {job.service}
+                    </Text>
+                  </View>
                   <View
                     style={[
                       styles.statusPill,
@@ -461,9 +471,18 @@ export function WorkJobs() {
             <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               {/* Modal Header */}
               <View style={styles.modalHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.modalTitle, { color: colors.foreground }]}>{selectedJob.service}</Text>
-                  <Text style={[styles.modalRef, { color: colors.mutedForeground }]}>Ref: {selectedJob.reference}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <View style={[styles.cardHeaderIconTile, { backgroundColor: colors.secondary }]}>
+                    <MaterialCommunityIcons
+                      name={getServiceIcon(selectedJob.service) as any}
+                      size={20}
+                      color={colors.primary}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.modalTitle, { color: colors.foreground }]}>{selectedJob.service}</Text>
+                    <Text style={[styles.modalRef, { color: colors.mutedForeground }]}>Ref: {selectedJob.reference}</Text>
+                  </View>
                 </View>
                 <Pressable
                   accessibilityRole="button"
@@ -788,6 +807,8 @@ const styles = StyleSheet.create({
   list: { gap: 12 },
   card: { borderRadius: 14, borderWidth: 1.5, padding: 12, gap: 8 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  cardHeaderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  cardHeaderIconTile: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },
   statusPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   statusPillText: { fontFamily: 'Inter_700Bold', fontSize: 11 },

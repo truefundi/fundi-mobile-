@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
@@ -22,6 +22,7 @@ import {
 } from '@/constants/technicians';
 import { FLAT_BOOKING_FEE, FLAT_BOOKING_FEE_CURRENCY, formatBookingFee } from '@/constants/jobs';
 import { getServiceBookingFee } from '@/constants/services';
+import { getServiceIcon } from '@/lib/categories-api';
 
 export default function TechnicianProfileScreen() {
   const colors = useColors();
@@ -143,7 +144,14 @@ export default function TechnicianProfileScreen() {
               <Text style={[styles.techName, { color: colors.foreground }]}>{tech.name}</Text>
               <Ionicons name="shield-checkmark" size={18} color={colors.success} />
             </View>
-            <Text style={[styles.techTrade, { color: colors.mutedForeground }]}>{tech.service}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
+              <MaterialCommunityIcons
+                name={getServiceIcon(tech.service) as any}
+                size={14}
+                color={colors.primary}
+              />
+              <Text style={[styles.techTrade, { color: colors.mutedForeground }]}>{tech.service}</Text>
+            </View>
           </View>
 
           <View style={[styles.availChip, { backgroundColor: tech.isAvailable ? colors.success + '1A' : colors.muted }]}>
@@ -210,7 +218,11 @@ export default function TechnicianProfileScreen() {
           <View style={styles.pillWrap}>
             {tech.services.map((item) => (
               <View key={item} style={[styles.pill, { backgroundColor: colors.primary + '14', borderColor: colors.primary + '30' }]}>
-                <Ionicons name="construct-outline" size={14} color={colors.primary} />
+                <MaterialCommunityIcons
+                  name={getServiceIcon(item) as any}
+                  size={15}
+                  color={colors.primary}
+                />
                 <Text style={[styles.pillText, { color: colors.primary }]}>{item}</Text>
               </View>
             ))}

@@ -1,8 +1,9 @@
 import React from 'react';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
 import type { Technician } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
+import { getServiceIcon } from '@/lib/categories-api';
 
 type Props = {
   technician: Technician;
@@ -24,7 +25,14 @@ export function TechnicianCard({ technician, caption, compact }: Props) {
             <Text numberOfLines={1} style={[styles.name, { color: colors.foreground }]}>{technician.name}</Text>
             <Ionicons name="shield-checkmark" size={15} color={colors.success} />
           </View>
-          <Text style={[styles.skill, { color: colors.mutedForeground }]}>{technician.skill}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
+            <MaterialCommunityIcons
+              name={getServiceIcon(technician.skill) as any}
+              size={13}
+              color={colors.primary}
+            />
+            <Text style={[styles.skill, { color: colors.mutedForeground }]}>{technician.skill}</Text>
+          </View>
           {caption ? <Text style={[styles.caption, { color: colors.success }]}>{caption}</Text> : null}
         </View>
         <View style={styles.ratingBlock}>

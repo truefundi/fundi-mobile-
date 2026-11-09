@@ -195,3 +195,5 @@ export function searchServices(query: string, customList?: Service[]): Service[]
     return terms.every((term) => haystack.includes(term));
   });
 }
+
+export { getServiceIcon } from '@/lib/categories-api';

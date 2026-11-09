@@ -75,6 +75,27 @@ export function resolveCategoryIcon(
   return 'tools';
 }
 
+/**
+ * Resolves the service category icon (from backend category records, icon attribute, or trade name).
+ */
+export function getServiceIcon(
+  serviceNameOrSlug?: string | null,
+): keyof typeof MaterialCommunityIcons.glyphMap {
+  if (!serviceNameOrSlug) return 'tools';
+  const normalized = serviceNameOrSlug.trim().toLowerCase();
+  if (inMemoryCategories && inMemoryCategories.length > 0) {
+    const match = inMemoryCategories.find(
+      (s) =>
+        s.label.toLowerCase() === normalized ||
+        s.slug?.toLowerCase() === normalized ||
+        s.label.toLowerCase().includes(normalized) ||
+        normalized.includes(s.label.toLowerCase()),
+    );
+    if (match) return match.icon;
+  }
+  return resolveCategoryIcon(serviceNameOrSlug, serviceNameOrSlug);
+}
+
 /** Resolves sensible baseline booking fee when backend database fee is not yet set (> 0) */
 export function resolveDefaultBookingFee(slug?: string | null, name?: string | null, backendFee = 0): number {
   if (typeof backendFee === 'number' && backendFee > 0) {

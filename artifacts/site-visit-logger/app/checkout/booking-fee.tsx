@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
@@ -18,6 +18,7 @@ import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
+import { getServiceIcon } from '@/lib/categories-api';
 import {
   MOCK_MARKETPLACE_TECHNICIANS,
   toJobTechnician,
@@ -249,9 +250,16 @@ export default function BookingFeeReviewScreen() {
                     <Text style={[styles.verifiedText, { color: colors.success }]}>Verified Pro</Text>
                   </View>
                 </View>
-                <Text style={[styles.techSkill, { color: colors.mutedForeground }]}>
-                  {technician.service}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
+                  <MaterialCommunityIcons
+                    name={getServiceIcon(technician.service) as any}
+                    size={14}
+                    color={colors.primary}
+                  />
+                  <Text style={[styles.techSkill, { color: colors.mutedForeground }]}>
+                    {technician.service}
+                  </Text>
+                </View>
               </View>
             </View>
 
@@ -343,7 +351,14 @@ export default function BookingFeeReviewScreen() {
           <Text style={[styles.summaryTitle, { color: colors.foreground }]}>Service Summary</Text>
           <View style={styles.summaryRow}>
             <Text style={[styles.summaryLabel, { color: colors.mutedForeground }]}>Category:</Text>
-            <Text style={[styles.summaryVal, { color: colors.foreground }]}>{serviceName}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <MaterialCommunityIcons
+                name={getServiceIcon(serviceName) as any}
+                size={16}
+                color={colors.primary}
+              />
+              <Text style={[styles.summaryVal, { color: colors.foreground }]}>{serviceName}</Text>
+            </View>
           </View>
           <View style={styles.summaryRow}>
             <Text style={[styles.summaryLabel, { color: colors.mutedForeground }]}>Problem:</Text>

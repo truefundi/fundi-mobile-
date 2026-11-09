@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useChat, type ChatThread } from '@/context/ChatContext';
@@ -19,6 +19,7 @@ import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollV
 import { useAuth } from '@/context/AuthContext';
 import { extractFirstName } from '@/lib/cancellation';
 import { ProfileAvatar, computeParticipantInitials } from '@/components/ui/ProfileAvatar';
+import { getServiceIcon } from '@/lib/categories-api';
 
 export { computeParticipantInitials as getParticipantInitial };
 
@@ -45,6 +46,7 @@ function formatChatTime(isoString: string): string {
 type ConversationPreview = {
   thread: ChatThread;
   name: string;
+  serviceName?: string;
   avatarInitial: string;
   avatarUri?: string;
   knownInitials?: string;
@@ -106,6 +108,8 @@ function getConversationPreview(
   const latestRequest = [...thread.messages]
     .filter((m) => m.serviceRequest)
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.serviceRequest;
+
+  const serviceName = latestRequest?.serviceName || associatedJob?.service || undefined;
 
   const requestStatus = latestRequest?.status;
   const isCancelled = requestStatus === 'CANCELLED';
@@ -201,6 +205,7 @@ function getConversationPreview(
   return {
     thread,
     name: displayName,
+    serviceName,
     avatarInitial,
     avatarUri,
     snippet,
@@ -298,21 +303,49 @@ export default function ChatTabScreen() {
                   },
                 ]}
               >
-                {/* Circular Profile Avatar with fallback to initial letter */}
-                <ProfileAvatar
-                  uri={preview.avatarUri}
-                  name={preview.name}
-                  knownInitials={preview.knownInitials}
-                  size={48}
-                  testID={`avatar-${preview.thread.id}`}
-                />
+                {/* Circular Profile Avatar with service icon badge */}
+                <View style={styles.avatarWrap}>
+                  <ProfileAvatar
+                    uri={preview.avatarUri}
+                    name={preview.name}
+                    knownInitials={preview.knownInitials}
+                    size={48}
+                    testID={`avatar-${preview.thread.id}`}
+                  />
+                  {preview.serviceName ? (
+                    <View
+                      style={[
+                        styles.avatarServiceBadge,
+                        { backgroundColor: colors.card, borderColor: colors.border },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={getServiceIcon(preview.serviceName) as any}
+                        size={11}
+                        color={colors.primary}
+                      />
+                    </View>
+                  ) : null}
+                </View>
 
-                {/* Main Content: Name, Smart Snippet, SOS Label beneath */}
+                {/* Main Content: Name, Service Tag, Smart Snippet, SOS Label beneath */}
                 <View style={styles.cardContent}>
                   <View style={styles.nameRow}>
                     <Text style={[styles.previewName, { color: colors.foreground }]} numberOfLines={1} ellipsizeMode="tail">
                       {preview.name}
                     </Text>
+                    {preview.serviceName ? (
+                      <View style={[styles.serviceTag, { backgroundColor: colors.secondary }]}>
+                        <MaterialCommunityIcons
+                          name={getServiceIcon(preview.serviceName) as any}
+                          size={11}
+                          color={colors.primary}
+                        />
+                        <Text style={[styles.serviceTagText, { color: colors.primary }]} numberOfLines={1}>
+                          {preview.serviceName}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                   <Text
                     numberOfLines={1}
@@ -419,6 +452,20 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     fontSize: 18,
   },
+  avatarWrap: {
+    position: 'relative',
+  },
+  avatarServiceBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   cardContent: {
     flex: 1,
     marginLeft: 12,
@@ -429,6 +476,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginBottom: 4,
+    flexWrap: 'wrap',
+  },
+  serviceTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    flexShrink: 0,
+  },
+  serviceTagText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 10.5,
   },
   previewName: {
     fontFamily: 'Inter_600SemiBold',

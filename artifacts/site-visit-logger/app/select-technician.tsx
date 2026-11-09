@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
@@ -10,6 +10,7 @@ import { MOCK_MARKETPLACE_TECHNICIANS, toJobTechnician, type MarketplaceTechnici
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { distanceMeters, formatDistance } from '@/lib/location';
+import { getServiceIcon } from '@/lib/categories-api';
 
 export default function SelectTechnicianScreen() {
   const colors = useColors();
@@ -190,7 +191,14 @@ export default function SelectTechnicianScreen() {
                   {service ? (
                     <View style={styles.prefillItem}>
                       <Text style={[styles.prefillLabel, { color: colors.mutedForeground }]}>Category:</Text>
-                      <Text style={[styles.prefillValue, { color: colors.foreground }]}>{service}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                        <MaterialCommunityIcons
+                          name={getServiceIcon(service) as any}
+                          size={15}
+                          color={colors.primary}
+                        />
+                        <Text style={[styles.prefillValue, { color: colors.foreground }]}>{service}</Text>
+                      </View>
                     </View>
                   ) : null}
                   {problem ? (
@@ -268,7 +276,14 @@ export default function SelectTechnicianScreen() {
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.techName, { color: colors.foreground }]}>{item.name}</Text>
-                <Text style={[styles.techService, { color: colors.mutedForeground }]}>{item.service}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                  <MaterialCommunityIcons
+                    name={getServiceIcon(item.service) as any}
+                    size={13}
+                    color={colors.primary}
+                  />
+                  <Text style={[styles.techService, { color: colors.mutedForeground }]}>{item.service}</Text>
+                </View>
               </View>
               <View style={[styles.statusBadge, { backgroundColor: item.isAvailable ? colors.success + '20' : colors.muted }]}>
                 <Text style={{ color: item.isAvailable ? colors.success : colors.mutedForeground, fontSize: 11, fontWeight: '600' }}>

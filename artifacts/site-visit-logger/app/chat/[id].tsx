@@ -21,7 +21,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useColors } from '@/hooks/useColors';
 import { useChat, type ChatMessage, type ServiceRequestDetails } from '@/context/ChatContext';
@@ -31,6 +31,7 @@ import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { isCancellationEvent } from '@/lib/cancellation';
 import { STATUS_LABEL } from '@/constants/jobs';
+import { getServiceIcon } from '@/lib/categories-api';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -41,10 +42,12 @@ function StableRequestImage({
   uri,
   style,
   fallbackStyle,
+  serviceName,
 }: {
   uri: string;
   style: StyleProp<ImageStyle>;
   fallbackStyle: StyleProp<ViewStyle>;
+  serviceName?: string;
 }) {
   const colors = useColors();
   const resolvedUri = useRequestMediaUri(uri);
@@ -54,12 +57,23 @@ function StableRequestImage({
   if (!source || failed) {
     return (
       <View style={[fallbackStyle, { backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }]}>
-        <Ionicons name="image-outline" size={22} color={colors.mutedForeground} />
+        <MaterialCommunityIcons
+          name={getServiceIcon(serviceName) as any}
+          size={28}
+          color={colors.primary}
+        />
       </View>
     );
   }
 
-  return <Image source={source} style={style} onError={() => setFailed(true)} />;
+  return (
+    <Image
+      source={source}
+      style={style}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 function getDateSeparatorLabel(dateString: string): string {
@@ -335,6 +349,8 @@ export default function StandaloneChatScreen() {
     (job?.technician as any)?.photoUri ||
     undefined;
 
+  const targetServiceName = job?.service || threadServiceRequest?.serviceName;
+
   const jobStatusText = useMemo(() => {
     if (isThreadTerminated) return 'Request Inactive';
     if (job?.status && STATUS_LABEL[job.status]) {
@@ -389,9 +405,23 @@ export default function StandaloneChatScreen() {
           <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.headerName, { color: colors.foreground }]}>
             {otherName}
           </Text>
-          <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.headerJobStatus, { color: colors.mutedForeground }]}>
-            {jobStatusText}
-          </Text>
+          <View style={styles.headerSubRow}>
+            {targetServiceName ? (
+              <View style={[styles.headerServicePill, { backgroundColor: colors.secondary }]}>
+                <MaterialCommunityIcons
+                  name={getServiceIcon(targetServiceName) as any}
+                  size={11}
+                  color={colors.primary}
+                />
+                <Text numberOfLines={1} style={[styles.headerServiceText, { color: colors.primary }]}>
+                  {targetServiceName}
+                </Text>
+              </View>
+            ) : null}
+            <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.headerJobStatus, { color: colors.mutedForeground, flexShrink: 1 }]}>
+              {jobStatusText}
+            </Text>
+          </View>
         </View>
 
         {/* Clean Icon-Only Action Buttons */}
@@ -549,7 +579,13 @@ export default function StandaloneChatScreen() {
                   >
                     <View style={styles.reqCardHeader}>
                       <View style={styles.reqCardTitleWrap}>
-                        <Ionicons name="construct-outline" size={16} color={colors.primary} />
+                        <View style={[styles.reqHeaderIconTile, { backgroundColor: colors.secondary }]}>
+                          <MaterialCommunityIcons
+                            name={getServiceIcon(item.serviceRequest.serviceName) as any}
+                            size={16}
+                            color={colors.primary}
+                          />
+                        </View>
                         <Text style={[styles.reqCardTitle, { color: colors.foreground }]}>
                           {item.serviceRequest.serviceName} Service Request
                         </Text>
@@ -584,20 +620,28 @@ export default function StandaloneChatScreen() {
                     </View>
 
                     <View style={styles.reqCardBody}>
-                      {/* Thumbnail Image */}
+                      {/* Thumbnail Image or Centered Service Icon */}
                       {item.serviceRequest.thumbnailUri ? (
                         <View style={styles.reqThumbFrame}>
                           <StableRequestImage
                             uri={item.serviceRequest.thumbnailUri}
                             style={styles.reqThumb}
                             fallbackStyle={styles.reqThumbFallback}
+                            serviceName={item.serviceRequest.serviceName}
                           />
                         </View>
                       ) : (
                         <View
-                          style={[styles.reqThumbFallback, { backgroundColor: colors.secondary }]}
+                          style={[
+                            styles.reqThumbFallback,
+                            { backgroundColor: colors.secondary },
+                          ]}
                         >
-                          <Ionicons name="construct-outline" size={24} color={colors.primary} />
+                          <MaterialCommunityIcons
+                            name={getServiceIcon(item.serviceRequest.serviceName) as any}
+                            size={28}
+                            color={colors.primary}
+                          />
                         </View>
                       )}
 
@@ -1104,9 +1148,18 @@ export default function StandaloneChatScreen() {
               ]}
             >
               <View style={styles.modalTopRow}>
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-                  {selectedRequestDetails.serviceName} Details
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <View style={[styles.reqHeaderIconTile, { backgroundColor: colors.secondary }]}>
+                    <MaterialCommunityIcons
+                      name={getServiceIcon(selectedRequestDetails.serviceName) as any}
+                      size={18}
+                      color={colors.primary}
+                    />
+                  </View>
+                  <Text style={[styles.modalTitle, { color: colors.foreground }]} numberOfLines={1}>
+                    {selectedRequestDetails.serviceName} Details
+                  </Text>
+                </View>
                 <Pressable onPress={() => setSelectedRequestDetails(null)}>
                   <Ionicons name="close" size={24} color={colors.mutedForeground} />
                 </Pressable>
@@ -1244,7 +1297,25 @@ const styles = StyleSheet.create({
   headerJobStatus: {
     fontFamily: 'Inter_400Regular',
     fontSize: 12,
-    marginTop: 1,
+  },
+  headerSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+    flexWrap: 'nowrap',
+  },
+  headerServicePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+  },
+  headerServiceText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 10.5,
   },
   headerSosRow: {
     flexDirection: 'row',
@@ -1381,8 +1452,15 @@ const styles = StyleSheet.create({
   reqCardTitleWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     flex: 1,
+  },
+  reqHeaderIconTile: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reqCardTitle: {
     fontFamily: 'Inter_600SemiBold',
@@ -1407,17 +1485,22 @@ const styles = StyleSheet.create({
   reqThumbFrame: {
     width: 64,
     height: 64,
-    borderRadius: 10,
+    borderRadius: 12,
     overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reqThumb: {
     width: 64,
     height: 64,
+    borderRadius: 12,
   },
   reqThumbFallback: {
     width: 64,
     height: 64,
-    borderRadius: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reqInfoWrap: {
     flex: 1,
