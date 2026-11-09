@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { FieldLabel } from '@/components/ui/FieldLabel';
 import { StageScreen } from '@/components/ui/StageScreen';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 import { formatPhone, initialsOf } from '@/constants/auth';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors } from '@/hooks/useColors';
@@ -77,13 +78,12 @@ export default function EditProfileScreen() {
       footer={<Button label="Save changes" onPress={save} loading={isSaving} disabled={!changed} testID="edit-profile-save" />}
     >
       <View style={styles.photoBlock}>
-        <View style={[styles.avatar, { backgroundColor: colors.secondary }]}>
-          {photoUri ? (
-            <Image source={{ uri: photoUri }} style={styles.avatarImage} contentFit="cover" accessibilityLabel="Your profile picture" />
-          ) : (
-            <Text style={[styles.avatarText, { color: colors.primary }]}>{initialsOf(name.trim() || account.name)}</Text>
-          )}
-        </View>
+        <ProfileAvatar
+          uri={photoUri}
+          name={name.trim() || account?.name}
+          knownInitials={initialsOf(name.trim() || account?.name || 'User')}
+          size={92}
+        />
         <View style={styles.photoActions}>
           <Button
             label={photoUri ? 'Change photo' : 'Choose photo'}

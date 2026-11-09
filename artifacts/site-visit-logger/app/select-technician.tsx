@@ -12,6 +12,7 @@ import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { distanceMeters, formatDistance } from '@/lib/location';
 import { getServiceIcon } from '@/lib/categories-api';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
 export default function SelectTechnicianScreen() {
   const colors = useColors();
@@ -306,9 +307,11 @@ export default function SelectTechnicianScreen() {
             ]}
           >
             <View style={styles.cardHeader}>
-              <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-                <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{item.name[0]}</Text>
-              </View>
+              <ProfileAvatar
+                uri={item.avatarUrl}
+                name={item.name}
+                size={44}
+              />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.techName, { color: colors.foreground }]}>{item.name}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>

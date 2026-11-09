@@ -220,6 +220,7 @@ export interface ServiceRequest {
   completedAt?: string;
   clientName?: string;
   clientPhone?: string;
+  clientAvatarUrl?: string;
   agreedPrice?: number;
   proposedPrice?: number;
   completedPhotoUri?: string;

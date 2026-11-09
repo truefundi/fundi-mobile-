@@ -111,6 +111,8 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
         latitude: backendJob.location?.latitude ?? -1.9441,
         longitude: backendJob.location?.longitude ?? 30.0619,
       },
+      avatarUrl: prof?.profilePictureUrl ?? undefined,
+      photoUri: prof?.profilePictureUrl ?? undefined,
     };
   }
 

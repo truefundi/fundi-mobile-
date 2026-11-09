@@ -19,6 +19,7 @@ import { PageHeading } from '@/components/ui/PageHeading';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
 import { getServiceIcon } from '@/lib/categories-api';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 import {
   toJobTechnician,
   type MarketplaceTechnician,
@@ -119,6 +120,7 @@ export default function BookingFeeReviewScreen() {
         location: job.technician.location ?? { latitude: -1.9448, longitude: 30.0619 },
         isAvailable: true,
         phoneNumber: job.technician.phone,
+        avatarUrl: job.technician.avatarUrl || job.technician.photoUri,
       };
     }
     return undefined;
@@ -230,9 +232,11 @@ export default function BookingFeeReviewScreen() {
         {technician && (
           <View style={[styles.techCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.techHeader}>
-              <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-                <Text style={styles.avatarText}>{technician.name[0]}</Text>
-              </View>
+              <ProfileAvatar
+                uri={technician.avatarUrl}
+                name={technician.name}
+                size={44}
+              />
               <View style={{ flex: 1 }}>
                 <View style={styles.nameRow}>
                   <Text numberOfLines={1} style={[styles.techName, { color: colors.foreground }]}>

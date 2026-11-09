@@ -347,6 +347,8 @@ export default function StandaloneChatScreen() {
   const avatarUri =
     (job?.technician as any)?.avatarUrl ||
     (job?.technician as any)?.photoUri ||
+    thread?.otherParticipantAvatarUrl ||
+    (job as any)?.clientAvatarUrl ||
     undefined;
 
   const targetServiceName = job?.service || threadServiceRequest?.serviceName;

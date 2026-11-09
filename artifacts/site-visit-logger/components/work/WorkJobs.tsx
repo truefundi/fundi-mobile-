@@ -22,6 +22,7 @@ import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { getServiceIcon } from '@/lib/categories-api';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
 type Tab = 'Offers' | 'In Progress' | 'Completed' | 'Cancelled';
 
@@ -713,11 +714,11 @@ export function WorkJobs() {
                 <View style={[styles.sectionBlock, { backgroundColor: colors.background, borderColor: colors.border }]}>
                   <Text style={[styles.sectionHeading, { color: colors.foreground }]}>Client Information</Text>
                   <View style={styles.clientDetailRow}>
-                    <View style={[styles.clientAvatar, { backgroundColor: colors.primary }]}>
-                      <Text style={styles.clientAvatarText}>
-                        {(selectedJob.clientName || 'C')[0]?.toUpperCase()}
-                      </Text>
-                    </View>
+                    <ProfileAvatar
+                      uri={selectedJob.clientAvatarUrl}
+                      name={selectedJob.clientName || 'Client'}
+                      size={44}
+                    />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.clientName, { color: colors.foreground }]}>
                         {selectedJob.clientName || 'Client'}

@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import type { Technician } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
 import { getServiceIcon } from '@/lib/categories-api';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
 type Props = {
   technician: Technician;
@@ -50,9 +51,12 @@ export function TechnicianCard({ technician, caption, compact, onPress, showProf
       ]}
     >
       <View style={styles.header}>
-        <View style={[styles.avatar, { backgroundColor: colors.secondary }]}>
-          <Text style={[styles.initials, { color: colors.primary }]}>{technician.initials}</Text>
-        </View>
+        <ProfileAvatar
+          uri={technician.avatarUrl || technician.photoUri}
+          name={technician.name}
+          knownInitials={technician.initials}
+          size={compact ? 42 : 50}
+        />
         <View style={styles.identity}>
           <View style={styles.nameRow}>
             <Text numberOfLines={1} style={[styles.name, { color: colors.foreground }]}>{technician.name}</Text>

@@ -97,6 +97,8 @@ export interface MatchingTechnicianItem {
   }>;
   publicLocationLabel?: string;
   matchedLocations?: string[];
+  profilePictureUrl?: string | null;
+  avatarUrl?: string | null;
 }
 
 export interface TechnicianOfferItem {

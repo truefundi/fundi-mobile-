@@ -84,6 +84,7 @@ export type ChatThread = {
   isEnded?: boolean;
   otherParticipantName: string;
   otherParticipantRole: 'client' | 'technician';
+  otherParticipantAvatarUrl?: string;
   lastMessage: string;
   lastMessageTime: string;
   agreedPrice?: number;
@@ -102,6 +103,9 @@ export function mapBackendConversationToThread(
   const otherName = isTechnician
     ? conv.customer?.fullName || 'Client'
     : (conv.technician?.fullName || 'Technician');
+  const otherAvatar = isTechnician
+    ? conv.customer?.avatarUrl || conv.customer?.profilePictureUrl
+    : conv.technician?.avatarUrl || conv.technician?.profilePictureUrl;
   const otherRole: 'client' | 'technician' = isTechnician ? 'client' : 'technician';
 
   const mappedMessages: ChatMessage[] = conv.messages.map((m) => {
@@ -164,6 +168,7 @@ export function mapBackendConversationToThread(
     isEnded: conv.status === 'DECLINED' || conv.status === 'EXPIRED' || conv.status === 'CANCELLED',
     otherParticipantName: otherName,
     otherParticipantRole: otherRole,
+    otherParticipantAvatarUrl: otherAvatar,
     lastMessage: lastMsg?.text || (conv.status === 'WAITING_FOR_TECHNICIAN' ? 'Waiting for technician to accept' : 'Conversation active'),
     lastMessageTime: conv.lastMessageAt || conv.startedAt,
     agreedPrice: conv.agreedAmount ?? undefined,

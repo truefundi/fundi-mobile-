@@ -7,7 +7,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { ModeSlider } from '@/components/ui/ModeSlider';
 import { PageHeading } from '@/components/ui/PageHeading';
-import { formatPhone } from '@/constants/auth';
+import { formatPhone, initialsOf } from '@/constants/auth';
 import { formatMoney, isClosed } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
 import { useTheme } from '@/context/ThemeContext';
@@ -54,6 +54,8 @@ export default function ProfileScreen() {
   const [isBusy, setIsBusy] = useState(false);
   const [isSavingPhoto, setIsSavingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState('');
+  const [imageError, setImageError] = useState(false);
+  const effectivePhotoUri = account?.photoUri || profile?.profilePictureUrl;
 
   const completed = jobs.filter((job) => job.status === 'COMPLETED').length;
   const active = jobs.filter((job) => !isClosed(job.status)).length;
@@ -127,7 +129,7 @@ export default function ProfileScreen() {
       <View style={[styles.profileCard, { backgroundColor: colors.primary }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={account.photoUri ? 'Change your profile picture' : 'Add a profile picture'}
+          accessibilityLabel={effectivePhotoUri ? 'Change your profile picture' : 'Add a profile picture'}
           accessibilityState={{ busy: isSavingPhoto }}
           testID="profile-photo-button"
           onPress={isSavingPhoto ? undefined : changePhoto}
@@ -135,10 +137,18 @@ export default function ProfileScreen() {
           style={({ pressed }) => [styles.avatarButton, { opacity: pressed ? 0.85 : 1 }]}
         >
           <View style={[styles.avatar, { backgroundColor: colors.primaryForeground }]}>
-            {account.photoUri ? (
-              <Image testID="profile-photo" source={{ uri: account.photoUri }} style={styles.avatarImage} contentFit="cover" />
+            {effectivePhotoUri && !imageError ? (
+              <Image
+                testID="profile-photo"
+                source={{ uri: effectivePhotoUri }}
+                style={styles.avatarImage}
+                contentFit="cover"
+                onError={() => setImageError(true)}
+              />
             ) : (
-              <Ionicons name="camera-outline" size={26} color={colors.primary} />
+              <Text style={[styles.avatarInitialText, { color: colors.primary }]}>
+                {initialsOf(account.name)}
+              </Text>
             )}
             {isSavingPhoto ? (
               <View style={[styles.avatarBusy, { backgroundColor: colors.primaryForeground }]}>
@@ -146,12 +156,10 @@ export default function ProfileScreen() {
               </View>
             ) : null}
           </View>
-          {/* With a picture in place the camera moves to a badge, so the face stays visible. */}
-          {account.photoUri ? (
-            <View style={[styles.cameraBadge, { backgroundColor: colors.foreground, borderColor: colors.primary }]}>
-              <Ionicons name="camera" size={12} color={colors.primaryForeground} />
-            </View>
-          ) : null}
+          {/* With a picture in place or initials, the camera badge stays visible so user can update */}
+          <View style={[styles.cameraBadge, { backgroundColor: colors.foreground, borderColor: colors.primary }]}>
+            <Ionicons name="camera" size={12} color={colors.primaryForeground} />
+          </View>
         </Pressable>
         <View style={styles.profileCopy}>
           <Text testID="profile-name" numberOfLines={2} style={[styles.name, { color: colors.primaryForeground }]}>{account.name}</Text>
@@ -406,6 +414,7 @@ const styles = StyleSheet.create({
   avatarButton: { width: 64, height: 64 },
   avatar: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   avatarImage: { width: 64, height: 64 },
+  avatarInitialText: { fontFamily: 'Inter_700Bold', fontSize: 22 },
   avatarBusy: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', opacity: 0.85 },
   cameraBadge: { position: 'absolute', right: -2, bottom: -2, width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   editButton: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', borderRadius: 16, paddingHorizontal: 13, minHeight: 32, marginTop: 12 },

@@ -13,6 +13,8 @@ export interface ConversationParty {
   fullName: string;
   phoneNumber?: string;
   role?: string;
+  avatarUrl?: string;
+  profilePictureUrl?: string;
 }
 
 export interface ConversationRequest {

@@ -8,6 +8,7 @@ import { initialsOf } from '@/constants/auth';
 import { useProfile } from '@/context/ProfileContext';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
 const FULL = { height: 58, padding: 5, initials: 16, badge: 17, glyph: 16, width: undefined as number | undefined };
 const COMPACT = { height: 46, padding: 4, initials: 14, badge: 15, glyph: 14, width: 104 };
@@ -32,8 +33,9 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
   const colors = useColors();
   const router = useRouter();
   const { profile: account } = useProfile();
-  const { mode, setMode } = useWork();
+  const { mode, setMode, profile: workProfile } = useWork();
   const working = mode === 'working';
+  const avatarUri = account?.photoUri || workProfile?.profilePictureUrl;
 
   const size = compact ? COMPACT : FULL;
   const knob = size.height - size.padding * 2;
@@ -146,13 +148,12 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
         ]}
         {...pan.panHandlers}
       >
-        {account?.photoUri ? (
-          <Image source={{ uri: account.photoUri }} style={{ width: knob, height: knob, borderRadius: knob / 2 }} contentFit="cover" />
-        ) : (
-          <Text style={[styles.knobText, { fontSize: size.initials, color: colors.primary }]}>
-            {account ? initialsOf(account.name) : ''}
-          </Text>
-        )}
+        <ProfileAvatar
+          uri={avatarUri}
+          name={account?.name || 'User'}
+          knownInitials={account ? initialsOf(account.name) : 'U'}
+          size={knob}
+        />
         <View
           style={[
             styles.knobBadge,

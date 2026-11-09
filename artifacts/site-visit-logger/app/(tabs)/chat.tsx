@@ -95,7 +95,12 @@ function getConversationPreview(
   );
 
   // Person avatar URL only (repair job photos of damaged pipes must not be used as profile avatars)
-  const avatarUri = (associatedJob?.technician as any)?.avatarUrl || (associatedJob?.technician as any)?.photoUri || undefined;
+  const avatarUri =
+    (associatedJob?.technician as any)?.avatarUrl ||
+    (associatedJob?.technician as any)?.photoUri ||
+    thread.otherParticipantAvatarUrl ||
+    (associatedJob as any)?.clientAvatarUrl ||
+    undefined;
   const knownInitials = associatedJob?.technician?.initials || undefined;
   const avatarInitial = computeParticipantInitials(displayName, knownInitials);
 

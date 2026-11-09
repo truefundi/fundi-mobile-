@@ -5,6 +5,7 @@ import type { Job } from '@/constants/jobs';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { Timeline, type TimelineStep } from '@/components/ui/Timeline';
+import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 import { useColors } from '@/hooks/useColors';
 
 /** Spec 12 — the on-site inspection, tracked against the rest of the job. */
@@ -39,9 +40,12 @@ export function Diagnosis({ job, onBack }: { job: Job; onBack?: () => void }) {
       {job.technician ? (
         <SectionCard title="On site">
           <View style={styles.row}>
-            <View style={[styles.avatar, { backgroundColor: colors.secondary }]}>
-              <Text style={[styles.initials, { color: colors.primary }]}>{job.technician.initials}</Text>
-            </View>
+            <ProfileAvatar
+              uri={job.technician.avatarUrl || job.technician.photoUri}
+              name={job.technician.name}
+              knownInitials={job.technician.initials}
+              size={42}
+            />
             <View style={styles.copy}>
               <Text style={[styles.name, { color: colors.foreground }]}>{job.technician.name}</Text>
               <Text style={[styles.skill, { color: colors.mutedForeground }]}>{job.technician.skill}</Text>
