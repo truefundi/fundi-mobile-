@@ -33,6 +33,7 @@ const LINKS: Link[] = [
   { icon: 'notifications-outline', label: 'Notifications', href: '/notifications' },
   { icon: 'location-outline', label: 'Saved locations', href: '/saved-locations' },
   { icon: 'help-circle-outline', label: 'Help & support', href: '/help' },
+  { icon: 'shield-checkmark-outline', label: 'Dispute Settlement', href: '/disputes' },
   { icon: 'settings-outline', label: 'Settings', href: '/settings' },
 ];
 
@@ -123,7 +124,16 @@ export default function ProfileScreen() {
       >
       <PageHeading eyebrow="Your Fundi account" title="Profile" />
 
-      <View style={[styles.profileCard, { backgroundColor: colors.primary }]}>
+      <View
+        style={[
+          styles.profileCard,
+          {
+            backgroundColor: isDark ? colors.card : colors.primary,
+            borderWidth: isDark ? 1.5 : 0,
+            borderColor: colors.primary,
+          },
+        ]}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={account.photoUri ? 'Change your profile picture' : 'Add a profile picture'}
@@ -133,14 +143,14 @@ export default function ProfileScreen() {
           hitSlop={4}
           style={({ pressed }) => [styles.avatarButton, { opacity: pressed ? 0.85 : 1 }]}
         >
-          <View style={[styles.avatar, { backgroundColor: colors.primaryForeground }]}>
+          <View style={[styles.avatar, { backgroundColor: isDark ? colors.secondary : colors.primaryForeground }]}>
             {account.photoUri ? (
               <Image testID="profile-photo" source={{ uri: account.photoUri }} style={styles.avatarImage} contentFit="cover" />
             ) : (
               <Ionicons name="camera-outline" size={26} color={colors.primary} />
             )}
             {isSavingPhoto ? (
-              <View style={[styles.avatarBusy, { backgroundColor: colors.primaryForeground }]}>
+              <View style={[styles.avatarBusy, { backgroundColor: isDark ? colors.secondary : colors.primaryForeground }]}>
                 <ActivityIndicator color={colors.primary} />
               </View>
             ) : null}
@@ -153,14 +163,14 @@ export default function ProfileScreen() {
           ) : null}
         </Pressable>
         <View style={styles.profileCopy}>
-          <Text testID="profile-name" numberOfLines={2} style={[styles.name, { color: colors.primaryForeground }]}>{account.name}</Text>
+          <Text testID="profile-name" numberOfLines={2} style={[styles.name, { color: isDark ? colors.foreground : colors.primaryForeground }]}>{account.name}</Text>
           <View style={styles.verifiedRow}>
-            <Ionicons name="checkmark-circle" size={13} color={colors.primaryForeground} />
-            <Text testID="profile-phone" style={[styles.contact, { color: colors.secondary }]}>{formatPhone(account.phone)}</Text>
+            <Ionicons name="checkmark-circle" size={13} color={isDark ? colors.primary : colors.primaryForeground} />
+            <Text testID="profile-phone" style={[styles.contact, { color: isDark ? colors.mutedForeground : colors.secondary }]}>{formatPhone(account.phone)}</Text>
           </View>
           <View style={styles.verifiedRow}>
-            <Ionicons name="location-outline" size={13} color={colors.primaryForeground} />
-            <Text numberOfLines={1} style={[styles.contact, styles.contactFlex, { color: colors.secondary }]}>{account.location}</Text>
+            <Ionicons name="location-outline" size={13} color={isDark ? colors.primary : colors.primaryForeground} />
+            <Text numberOfLines={1} style={[styles.contact, styles.contactFlex, { color: isDark ? colors.mutedForeground : colors.secondary }]}>{account.location}</Text>
           </View>
           <Pressable
             accessibilityRole="button"
@@ -168,10 +178,10 @@ export default function ProfileScreen() {
             testID="profile-edit-button"
             onPress={() => router.push('/edit-profile')}
             hitSlop={6}
-            style={({ pressed }) => [styles.editButton, { backgroundColor: colors.primaryForeground, opacity: pressed ? 0.85 : 1 }]}
+            style={({ pressed }) => [styles.editButton, { backgroundColor: isDark ? colors.primary : colors.primaryForeground, opacity: pressed ? 0.85 : 1 }]}
           >
-            <Feather name="edit-2" size={13} color={colors.primary} />
-            <Text style={[styles.editText, { color: colors.primary }]}>Update profile</Text>
+            <Feather name="edit-2" size={13} color={isDark ? colors.primaryForeground : colors.primary} />
+            <Text style={[styles.editText, { color: isDark ? colors.primaryForeground : colors.primary }]}>Update profile</Text>
           </Pressable>
         </View>
       </View>

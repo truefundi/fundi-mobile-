@@ -24,6 +24,10 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Notice } from '@/components/ui/Notice';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { useColors } from '@/hooks/useColors';
+import { useProfile } from '@/context/ProfileContext';
+import { useDisputes } from '@/context/DisputeContext';
+import { ReportDisputeModal } from '@/components/dispute/ReportDisputeModal';
+import { DisputeDetailsModal } from '@/components/dispute/DisputeDetailsModal';
 
 /** The irreversible choices on this screen, each confirmed before it happens. */
 type Pending = 'cancel' | 'declineQuote' | 'declineExtra';
@@ -70,6 +74,10 @@ export default function JobScreen() {
   } = useFundi();
   const { createOrGetThread } = useChat();
   const [pending, setPending] = useState<Pending | null>(null);
+  const { profile: account } = useProfile();
+  const { getDisputeForJob } = useDisputes();
+  const [showDisputeReport, setShowDisputeReport] = useState(false);
+  const [showDisputeDetails, setShowDisputeDetails] = useState(false);
 
   const job = id ? getJob(id) : undefined;
 

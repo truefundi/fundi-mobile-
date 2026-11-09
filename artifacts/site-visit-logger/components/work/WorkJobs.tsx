@@ -20,6 +20,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { isClosed, isTerminated, STATUS_LABEL, type Job } from '@/constants/jobs';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
+import { useProfile } from '@/context/ProfileContext';
+import { useDisputes, type DisputeRecord } from '@/context/DisputeContext';
+import { ReportDisputeModal } from '@/components/dispute/ReportDisputeModal';
+import { DisputeDetailsModal } from '@/components/dispute/DisputeDetailsModal';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 
 type Tab = 'In Progress' | 'Completed' | 'Cancelled';
@@ -32,6 +36,11 @@ export function WorkJobs() {
 
   // Selected job for the Details Modal
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+
+  const { profile: account } = useProfile();
+  const { getDisputeForJob } = useDisputes();
+  const [disputeTargetJob, setDisputeTargetJob] = useState<Job | null>(null);
+  const [selectedDispute, setSelectedDispute] = useState<DisputeRecord | null>(null);
 
   // Cancellation sub-flow
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);

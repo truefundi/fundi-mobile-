@@ -182,6 +182,23 @@ export default function SettingsScreen() {
       </View>
 
       <View>
+        <Text style={[styles.section, { color: colors.foreground }]}>Mediation</Text>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Dispute Settlement"
+            testID="settings-disputes"
+            onPress={() => router.push('/disputes')}
+            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.65 : 1 }]}
+          >
+            <Feather name="shield" size={18} color={colors.primary} />
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>Dispute Settlement Center</Text>
+            <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+      </View>
+
+      <View>
         <Text style={[styles.section, { color: colors.foreground }]}>About</Text>
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.row}>

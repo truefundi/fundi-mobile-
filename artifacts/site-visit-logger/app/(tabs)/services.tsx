@@ -9,6 +9,7 @@ import { PageHeading } from '@/components/ui/PageHeading';
 import { SERVICES } from '@/constants/services';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
+import { useTheme } from '@/context/ThemeContext';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 
 const SCREEN_GUTTER = 20;
@@ -16,6 +17,7 @@ const GRID_GAP = 11;
 
 export default function ServicesScreen() {
   const colors = useColors();
+  const { isDark } = useTheme();
   const bottomPadding = useTabScreenPadding();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -32,31 +34,30 @@ export default function ServicesScreen() {
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <AppHeader />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: SCREEN_GUTTER, paddingTop: 18, paddingBottom: bottomPadding }}
+        contentContainerStyle={{ paddingHorizontal: SCREEN_GUTTER, paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
       >
-        <PageHeading
-          eyebrow={inWork ? 'Your work' : 'Find a Fundi'}
-          title={inWork ? 'What you take on' : 'What can we fix?'}
-          subtitle={
-            inWork
-              ? 'Set the work you want and Fundi only sends jobs that fit.'
-              : 'Choose a service and tell us what is going on. We will match you with the right technician.'
-          }
-        />
-        {working ? (
-          <WorkSettings />
-        ) : locked ? (
+        {locked ? (
           <WorkLocked />
+        ) : working ? (
+          <WorkSettings />
         ) : (
           <>
+            <PageHeading
+              title={inWork ? 'Your trades' : 'All services'}
+              subtitle={
+                inWork
+                  ? 'The work you are cleared to take requests for.'
+                  : 'Upfront prices, verified local technicians and a 30-day warranty.'
+              }
+            />
             <View style={styles.grid}>
               {SERVICES.map((service) => (
                 <Pressable
                   key={service.label}
                   accessibilityRole="button"
-                  accessibilityLabel={`Request ${service.label}`}
-                  testID={`services-${service.label}`}
+                  accessibilityLabel={`${service.label}, request service`}
+                  testID={`service-card-${service.label.toLowerCase().replace(/\s+/g, '-')}`}
                   onPress={() => router.push({ pathname: '/request', params: { service: service.label } })}
                   style={({ pressed }) => [
                     styles.card,
@@ -70,25 +71,42 @@ export default function ServicesScreen() {
                   {/* The arrow sits inside the text, held to "service" by a no-break
                       space, so on narrow cards it wraps with the word, not alone. */}
                   <Text style={[styles.link, { color: colors.primary }]}>
-                    {'Request service '}
+                    {'Request service '}
                     <Ionicons name="arrow-forward" size={13} color={colors.primary} />
                   </Text>
                 </Pressable>
               ))}
             </View>
-            <View style={[styles.helpCard, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.helpKicker, { color: colors.secondary }]}>CAN&apos;T FIND IT?</Text>
-              <Text style={[styles.helpTitle, { color: colors.primaryForeground }]}>Tell us what you need</Text>
-              <Text style={[styles.helpText, { color: colors.secondary }]}>Our general maintenance specialists can help diagnose unusual problems.</Text>
+            <View
+              style={[
+                styles.helpCard,
+                {
+                  backgroundColor: isDark ? colors.card : colors.primary,
+                  borderWidth: isDark ? 1.5 : 0,
+                  borderColor: colors.primary,
+                },
+              ]}
+            >
+              <Text style={[styles.helpKicker, { color: isDark ? colors.primary : colors.secondary }]}>CAN&apos;T FIND IT?</Text>
+              <Text style={[styles.helpTitle, { color: isDark ? colors.foreground : colors.primaryForeground }]}>Tell us what you need</Text>
+              <Text style={[styles.helpText, { color: isDark ? colors.mutedForeground : colors.secondary }]}>
+                Our general maintenance specialists can help diagnose unusual problems.
+              </Text>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Start a request"
                 testID="general-request-button"
                 onPress={() => router.push({ pathname: '/request', params: { service: 'General Maintenance' } })}
-                style={({ pressed }) => [styles.helpButton, { backgroundColor: colors.primaryForeground, opacity: pressed ? 0.8 : 1 }]}
+                style={({ pressed }) => [
+                  styles.helpButton,
+                  {
+                    backgroundColor: isDark ? colors.primary : colors.primaryForeground,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
               >
-                <Text style={[styles.helpButtonText, { color: colors.primary }]}>Start a request</Text>
-                <Ionicons name="arrow-forward" size={16} color={colors.primary} />
+                <Text style={[styles.helpButtonText, { color: isDark ? colors.primaryForeground : colors.primary }]}>Start a request</Text>
+                <Ionicons name="arrow-forward" size={16} color={isDark ? colors.primaryForeground : colors.primary} />
               </Pressable>
             </View>
           </>

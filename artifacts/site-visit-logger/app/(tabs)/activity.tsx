@@ -17,6 +17,10 @@ import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useFundi } from '@/context/FundiContext';
 import { useNotifications } from '@/context/NotificationContext';
+import { useProfile } from '@/context/ProfileContext';
+import { useDisputes, type DisputeRecord } from '@/context/DisputeContext';
+import { ReportDisputeModal } from '@/components/dispute/ReportDisputeModal';
+import { DisputeDetailsModal } from '@/components/dispute/DisputeDetailsModal';
 
 type Tab = 'Active' | 'Completed' | 'Cancelled';
 
@@ -33,6 +37,11 @@ export default function ActivityScreen() {
   // In working mode but not cleared yet: say so rather than showing customer screens.
   const locked = mode === 'working' && status !== 'verified';
   const inWork = mode === 'working';
+
+  const { profile: account } = useProfile();
+  const { getDisputeForJob } = useDisputes();
+  const [disputeJobForReport, setDisputeJobForReport] = useState<Job | null>(null);
+  const [selectedDisputeView, setSelectedDisputeView] = useState<DisputeRecord | null>(null);
 
   // Client cancellation flow
   const [cancelModalJob, setCancelModalJob] = useState<Job | null>(null);
@@ -206,6 +215,8 @@ export default function ActivityScreen() {
                           onPress={() => handleJobPress(job)}
                           onCancel={() => setCancelModalJob(job)}
                           onChat={() => handleOpenChat(job)}
+                    onReportDispute={() => setDisputeJobForReport(job)}
+                    onViewDispute={(d: DisputeRecord) => setSelectedDisputeView(d)}
                         />
                       ))}
                     </View>
@@ -225,6 +236,8 @@ export default function ActivityScreen() {
                     onPress={() => handleJobPress(job)}
                     onCancel={() => setCancelModalJob(job)}
                     onChat={() => handleOpenChat(job)}
+                    onReportDispute={() => setDisputeJobForReport(job)}
+                    onViewDispute={(d: DisputeRecord) => setSelectedDisputeView(d)}
                   />
                 ))}
 
@@ -246,14 +259,80 @@ export default function ActivityScreen() {
                         onPress={() => handleJobPress(job)}
                         onCancel={() => setCancelModalJob(job)}
                         onChat={() => handleOpenChat(job)}
+                    onReportDispute={() => setDisputeJobForReport(job)}
+                    onViewDispute={(d: DisputeRecord) => setSelectedDisputeView(d)}
                       />
                     ))}
                   </View>
                 ) : null}
               </>
             )}
+
+      {disputeJobForReport && (
+        <ReportDisputeModal
+          visible={!!disputeJobForReport}
+          onClose={() => setDisputeJobForReport(null)}
+          jobId={disputeJobForReport.id}
+          jobReference={disputeJobForReport.reference}
+          service={disputeJobForReport.service}
+          role="client"
+          submitterName={account?.name || 'Client'}
+          submitterPhone={account?.phone || ''}
+          clientName={account?.name || 'Client'}
+          clientPhone={account?.phone || ''}
+          technicianName={disputeJobForReport.technician?.name || 'Assigned Technician'}
+          technicianPhone={disputeJobForReport.technician?.phone || ''}
+          agreedPrice={disputeJobForReport.agreedPrice}
+          existingDispute={getDisputeForJob(disputeJobForReport.id)}
+        />
+      )}
+
+      {selectedDisputeView && (
+        <DisputeDetailsModal
+          visible={!!selectedDisputeView}
+          onClose={() => setSelectedDisputeView(null)}
+          dispute={selectedDisputeView}
+          currentRole="client"
+          onOpenResponseModal={() => {
+            const job = jobs.find((j) => j.id === selectedDisputeView.jobId);
+            if (job) setDisputeJobForReport(job);
+          }}
+        />
+      )}
           </>
         )}
+
+      {disputeJobForReport && (
+        <ReportDisputeModal
+          visible={!!disputeJobForReport}
+          onClose={() => setDisputeJobForReport(null)}
+          jobId={disputeJobForReport.id}
+          jobReference={disputeJobForReport.reference}
+          service={disputeJobForReport.service}
+          role="client"
+          submitterName={account?.name || 'Client'}
+          submitterPhone={account?.phone || ''}
+          clientName={account?.name || 'Client'}
+          clientPhone={account?.phone || ''}
+          technicianName={disputeJobForReport.technician?.name || 'Assigned Technician'}
+          technicianPhone={disputeJobForReport.technician?.phone || ''}
+          agreedPrice={disputeJobForReport.agreedPrice}
+          existingDispute={getDisputeForJob(disputeJobForReport.id)}
+        />
+      )}
+
+      {selectedDisputeView && (
+        <DisputeDetailsModal
+          visible={!!selectedDisputeView}
+          onClose={() => setSelectedDisputeView(null)}
+          dispute={selectedDisputeView}
+          currentRole="client"
+          onOpenResponseModal={() => {
+            const job = jobs.find((j) => j.id === selectedDisputeView.jobId);
+            if (job) setDisputeJobForReport(job);
+          }}
+        />
+      )}
       </ScrollView>
 
       {/* Client Cancellation Reason Modal */}
@@ -308,6 +387,38 @@ export default function ActivityScreen() {
           </View>
         </Modal>
       )}
+
+      {disputeJobForReport && (
+        <ReportDisputeModal
+          visible={!!disputeJobForReport}
+          onClose={() => setDisputeJobForReport(null)}
+          jobId={disputeJobForReport.id}
+          jobReference={disputeJobForReport.reference}
+          service={disputeJobForReport.service}
+          role="client"
+          submitterName={account?.name || 'Client'}
+          submitterPhone={account?.phone || ''}
+          clientName={account?.name || 'Client'}
+          clientPhone={account?.phone || ''}
+          technicianName={disputeJobForReport.technician?.name || 'Assigned Technician'}
+          technicianPhone={disputeJobForReport.technician?.phone || ''}
+          agreedPrice={disputeJobForReport.agreedPrice}
+          existingDispute={getDisputeForJob(disputeJobForReport.id)}
+        />
+      )}
+
+      {selectedDisputeView && (
+        <DisputeDetailsModal
+          visible={!!selectedDisputeView}
+          onClose={() => setSelectedDisputeView(null)}
+          dispute={selectedDisputeView}
+          currentRole="client"
+          onOpenResponseModal={() => {
+            const job = jobs.find((j) => j.id === selectedDisputeView.jobId);
+            if (job) setDisputeJobForReport(job);
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -317,13 +428,19 @@ function JobCard({
   onPress,
   onCancel,
   onChat,
+  onReportDispute,
+  onViewDispute,
 }: {
   job: Job;
   onPress: () => void;
   onCancel?: () => void;
   onChat?: () => void;
+  onReportDispute?: () => void;
+  onViewDispute?: (dispute: DisputeRecord) => void;
 }) {
   const colors = useColors();
+  const { getDisputeForJob } = useDisputes();
+  const existingDispute = getDisputeForJob(job.id);
   const created = new Date(job.createdAt);
   const total = repairTotal(job);
   // Before a quote exists the only committed cost is the visit fee.
@@ -443,6 +560,52 @@ function JobCard({
             </Text>
           </View>
 
+          {existingDispute ? (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onViewDispute?.(existingDispute);
+              }}
+              style={[
+                styles.cardActionBtn,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: existingDispute.status === 'RESOLVED' ? colors.success : colors.warning,
+                },
+              ]}
+            >
+              <Feather
+                name="shield"
+                size={12}
+                color={existingDispute.status === 'RESOLVED' ? colors.success : colors.warning}
+              />
+              <Text
+                style={[
+                  styles.cardActionBtnText,
+                  { color: existingDispute.status === 'RESOLVED' ? colors.success : colors.warning },
+                ]}
+              >
+                Dispute: {existingDispute.status.replace('_', ' ')}
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onReportDispute?.();
+              }}
+              style={[
+                styles.cardActionBtn,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <Feather name="shield" size={12} color={colors.mutedForeground} />
+              <Text style={[styles.cardActionBtnText, { color: colors.mutedForeground }]}>
+                Dispute
+              </Text>
+            </Pressable>
+          )}
+
           <Pressable
             onPress={(e) => {
               e.stopPropagation();
@@ -536,6 +699,7 @@ function JobCard({
       ) : (
         <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
       )}
+
     </Pressable>
   );
 }

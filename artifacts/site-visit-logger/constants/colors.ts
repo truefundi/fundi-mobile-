@@ -6,20 +6,20 @@
  *
  * Both light and dark palettes provide high-contrast, accessible token sets
  * tuned for both client (Hiring) and technician (Working) workflows.
- * The dark palette uses true AMOLED pitch-black (#000000) for deepest contrast,
- * zero backlight glow on OLED displays, and ultra-sleek appearance.
+ * - Light mode: Ultra-bright, clean white canvas (#ffffff) with crisp slate typography.
+ * - Dark mode: Deep Antigravity matte dark canvas (#070a0f / #0f141c) with crystal-clear white text.
  */
 
 const colors = {
   light: {
-    text: '#111827',
+    text: '#0f172a',
     tint: '#f97316',
 
-    background: '#f8fafc',
-    foreground: '#111827',
+    background: '#ffffff',
+    foreground: '#0f172a',
 
     card: '#ffffff',
-    cardForeground: '#111827',
+    cardForeground: '#0f172a',
 
     primary: '#f97316',
     primaryForeground: '#ffffff',
@@ -27,8 +27,8 @@ const colors = {
     secondary: '#fff7ed',
     secondaryForeground: '#c2410c',
 
-    muted: '#f1f5f9',
-    mutedForeground: '#6b7280',
+    muted: '#f8fafc',
+    mutedForeground: '#64748b',
 
     accent: '#ffedd5',
     accentForeground: '#c2410c',
@@ -36,16 +36,12 @@ const colors = {
     destructive: '#dc2626',
     destructiveForeground: '#ffffff',
 
-    // Status colors from the Fundi design spec. Used for job status badges,
-    // timelines, and money rows. Never rely on these alone to convey state —
-    // always pair them with a label or icon.
     success: '#16a34a',
     successForeground: '#ffffff',
     successMuted: '#dcfce7',
 
     warning: '#f59e0b',
     warningMuted: '#fef3c7',
-    // Amber text on warningMuted; plain warning is too light to read on it.
     warningForeground: '#92400e',
 
     destructiveMuted: '#fee2e2',
@@ -53,35 +49,35 @@ const colors = {
     info: '#2563eb',
     infoMuted: '#dbeafe',
 
-    border: '#e5e7eb',
-    input: '#d1d5db',
+    border: '#e2e8f0',
+    input: '#cbd5e1',
   },
 
   dark: {
-    // Pure high-contrast crisp text
+    // Pure high-contrast crisp text (bright and easy to read)
     text: '#ffffff',
     tint: '#f97316',
 
-    // True AMOLED Pitch Black: zero glow, complete pixel shutoff on OLED
-    background: '#000000',
+    // Deep Antigravity matte dark canvas
+    background: '#070a0f',
     foreground: '#ffffff',
 
-    // Deepest dark surface elevation (true pitch dark cards)
-    card: '#0c0c0e',
+    // Sleek dark surface elevation
+    card: '#0f141c',
     cardForeground: '#ffffff',
 
     // Fundi brand primary orange
     primary: '#f97316',
     primaryForeground: '#ffffff',
 
-    secondary: '#181008',
+    secondary: '#1c1208',
     secondaryForeground: '#fb923c',
 
     // Deep dark neutral layer
-    muted: '#121214',
-    mutedForeground: '#7a7a85',
+    muted: '#131924',
+    mutedForeground: '#94a3b8',
 
-    accent: '#221307',
+    accent: '#261609',
     accentForeground: '#fdba74',
 
     destructive: '#ef4444',
@@ -89,7 +85,7 @@ const colors = {
 
     success: '#22c55e',
     successForeground: '#ffffff',
-    successMuted: '#05180c',
+    successMuted: '#061a0d',
 
     warning: '#f59e0b',
     warningMuted: '#1a1002',
@@ -98,11 +94,11 @@ const colors = {
     destructiveMuted: '#1c0507',
 
     info: '#3b82f6',
-    infoMuted: '#06101e',
+    infoMuted: '#0b1626',
 
-    // Ultra-subtle dark borders that don't wash out or lighten the screen
-    border: '#1c1c1f',
-    input: '#161618',
+    // Sleek dark borders
+    border: '#1b2230',
+    input: '#121824',
   },
 
   // Border radius (in px). Sync from the sibling web artifact's --radius

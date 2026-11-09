@@ -23,6 +23,7 @@ import { configureApi, checkApiHealth } from '@/lib/api';
 import { ChatProvider } from '@/context/ChatContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AdsProvider } from '@/context/AdsContext';
+import { DisputeProvider } from '@/context/DisputeContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { useColors } from '@/hooks/useColors';
 
@@ -134,6 +135,7 @@ function RootLayoutNav() {
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen name="help" options={{ headerShown: false }} />
         <Stack.Screen name="chatbot" options={{ headerShown: false }} />
+        <Stack.Screen name="disputes" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>
     </View>
@@ -193,11 +195,13 @@ export default function RootLayout() {
                   <WorkProvider>
                     <ChatProvider>
                       <AdsProvider>
+                        <DisputeProvider>
                         <GestureHandlerRootView style={{ flex: 1 }}>
                           <KeyboardProvider>
                             <RootLayoutNav />
                           </KeyboardProvider>
                         </GestureHandlerRootView>
+                        </DisputeProvider>
                       </AdsProvider>
                     </ChatProvider>
                   </WorkProvider>
