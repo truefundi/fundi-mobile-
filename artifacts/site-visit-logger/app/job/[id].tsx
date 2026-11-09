@@ -163,7 +163,17 @@ export default function JobScreen() {
                 <Button
                   label="Review & Pay Booking Fee"
                   icon="arrow-forward"
-                  onPress={() => router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service } })}
+                  onPress={() => {
+                    if (job.bookingFee?.status === 'PAID') {
+                      const destChat = job.chatThreadId || job.chatId || job.id;
+                      router.replace({
+                        pathname: `/chat/${destChat}` as any,
+                        params: { requestId: job.id },
+                      });
+                      return;
+                    }
+                    router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service } });
+                  }}
                   testID="review-booking-fee-button"
                 />
                 <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} testID="visit-fee-cancel-button" />
@@ -282,12 +292,20 @@ export default function JobScreen() {
                 <Button
                   label="Pay Booking Fee"
                   icon="arrow-forward"
-                  onPress={() =>
+                  onPress={() => {
+                    if (job.bookingFee?.status === 'PAID') {
+                      const destChat = job.chatThreadId || job.chatId || job.id;
+                      router.replace({
+                        pathname: `/chat/${destChat}` as any,
+                        params: { requestId: job.id },
+                      });
+                      return;
+                    }
                     router.push({
                       pathname: '/checkout/booking-fee',
                       params: { requestId: job.id, technicianId: job.technician?.id, service: job.service },
-                    })
-                  }
+                    });
+                  }}
                   testID="pay-booking-fee-pending-button"
                 />
                 <Button label="Cancel request" variant="outline" onPress={() => setPending('cancel')} />

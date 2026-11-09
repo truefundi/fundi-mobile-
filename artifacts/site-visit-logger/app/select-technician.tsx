@@ -129,6 +129,17 @@ export default function SelectTechnicianScreen() {
     if (!targetJob) return;
 
     selectTechnician(targetJob.id, toJobTechnician(tech, requestLocation));
+
+    // Intercept call to navigate to payment screens if payment has already been settled
+    if (targetJob.bookingFee?.status === 'PAID') {
+      const destChat = targetJob.chatThreadId || targetJob.chatId || targetJob.id;
+      router.replace({
+        pathname: `/chat/${destChat}` as any,
+        params: { requestId: targetJob.id },
+      });
+      return;
+    }
+
     router.push({
       pathname: '/checkout/booking-fee',
       params: {

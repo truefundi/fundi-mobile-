@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import {
+  ActivityIndicator,
+  BackHandler,
   Platform,
   ScrollView,
   StyleSheet,
@@ -46,19 +48,60 @@ export default function BookingFeeReviewScreen() {
   }>();
 
   const job = params.requestId ? getJob(params.requestId) : undefined;
+  const isAlreadyPaid = job?.bookingFee?.status === 'PAID';
+  const destinationChatId = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
 
-  // Route Guard: If booking fee has already been settled, redirect to chat immediately to prevent duplicate charges or re-entry
+  // Route Guard: If booking fee has already been settled, redirect to chat always
   useEffect(() => {
-    if (job?.bookingFee?.status === 'PAID') {
-      const destinationThreadId = job.chatThreadId || job.chatId || job.id;
-      router.replace({
-        pathname: `/chat/${destinationThreadId}` as any,
-        params: {
-          requestId: job.id,
-        },
-      });
+    if (isAlreadyPaid) {
+      if (destinationChatId) {
+        router.replace({
+          pathname: `/chat/${destinationChatId}` as any,
+          params: { requestId: job?.id || params.requestId },
+        });
+      } else {
+        router.replace('/(tabs)/chat');
+      }
     }
-  }, [job?.bookingFee?.status, job?.chatThreadId, job?.chatId, job?.id, router]);
+  }, [isAlreadyPaid, destinationChatId, job?.id, params.requestId, router]);
+
+  // Back guard: Prevent returning into booking fee once fee is already paid (Mobile & Web)
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (isAlreadyPaid) {
+          if (destinationChatId) {
+            router.replace({
+              pathname: `/chat/${destinationChatId}` as any,
+              params: { requestId: job?.id || params.requestId },
+            });
+          } else {
+            router.replace('/(tabs)/chat');
+          }
+          return true;
+        }
+        return false;
+      });
+      return () => backSub.remove();
+    }
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleWebPop = () => {
+        if (isAlreadyPaid) {
+          if (destinationChatId) {
+            router.replace({
+              pathname: `/chat/${destinationChatId}` as any,
+              params: { requestId: job?.id || params.requestId },
+            });
+          } else {
+            router.replace('/(tabs)/chat');
+          }
+        }
+      };
+      window.addEventListener('popstate', handleWebPop);
+      return () => window.removeEventListener('popstate', handleWebPop);
+    }
+  }, [isAlreadyPaid, destinationChatId, job?.id, params.requestId, router]);
 
   // Resolve technician from job or technicianId parameter
   const technician: MarketplaceTechnician | undefined = useMemo(() => {
@@ -96,6 +139,19 @@ export default function BookingFeeReviewScreen() {
   const bookingCurrency = job?.bookingFee?.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
   const handleProceedToPayment = () => {
+    // Intercept: If already paid, redirect to chat always!
+    if (isAlreadyPaid) {
+      if (destinationChatId) {
+        router.replace({
+          pathname: `/chat/${destinationChatId}` as any,
+          params: { requestId: job?.id || params.requestId },
+        });
+      } else {
+        router.replace('/(tabs)/chat');
+      }
+      return;
+    }
+
     let finalRequestId = job?.id;
 
     if (!finalRequestId) {
@@ -129,6 +185,15 @@ export default function BookingFeeReviewScreen() {
     });
   };
 
+  // Immediate block on web/native: Do not render review/payment UI if already paid
+  if (isAlreadyPaid) {
+    return (
+      <View style={[styles.screen, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       {/* Top Header */}
@@ -141,7 +206,15 @@ export default function BookingFeeReviewScreen() {
           },
         ]}
       >
-        <BackButton onPress={() => router.back()} />
+        <BackButton
+          onPress={() => {
+            if (job?.bookingFee?.status === 'PAID') {
+              router.replace('/(tabs)/chat');
+              return;
+            }
+            router.back();
+          }}
+        />
         <Text style={[styles.titleTop, { color: colors.foreground }]}>Review Booking</Text>
         <View style={{ width: 34 }} />
       </View>

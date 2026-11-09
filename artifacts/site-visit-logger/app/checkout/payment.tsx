@@ -106,37 +106,60 @@ export default function CheckoutPaymentScreen() {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [transactionRef, setTransactionRef] = useState<string>('');
 
-  // Route Guard: If booking fee is already settled, redirect to chat immediately
-  useEffect(() => {
-    if (job?.bookingFee?.status === 'PAID' && !isProcessing && !paymentSuccess) {
-      const destinationThreadId = job.chatThreadId || job.chatId || job.id;
-      router.replace({
-        pathname: `/chat/${destinationThreadId}` as any,
-        params: {
-          requestId: job.id,
-        },
-      });
-    }
-  }, [job?.bookingFee?.status, job?.chatThreadId, job?.chatId, job?.id, isProcessing, paymentSuccess, router]);
+  const isAlreadyPaid = job?.bookingFee?.status === 'PAID';
+  const destinationChatId = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
 
-  // Back guard: Prevent hardware back navigation once payment is confirmed or already paid
+  // Route Guard: If booking fee is already settled, redirect to chat always to prevent disruptions
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (paymentSuccess || job?.bookingFee?.status === 'PAID') {
-        const dest = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
-        if (dest) {
-          router.replace({
-            pathname: `/chat/${dest}` as any,
-            params: { requestId: job?.id || params.requestId },
-          });
+    if (isAlreadyPaid && !isProcessing && !paymentSuccess) {
+      if (destinationChatId) {
+        router.replace({
+          pathname: `/chat/${destinationChatId}` as any,
+          params: { requestId: job?.id || params.requestId },
+        });
+      } else {
+        router.replace('/(tabs)/chat');
+      }
+    }
+  }, [isAlreadyPaid, isProcessing, paymentSuccess, destinationChatId, job?.id, params.requestId, router]);
+
+  // Back guard: Prevent returning into payment once fee is confirmed or already paid (Mobile & Web)
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (paymentSuccess || isAlreadyPaid) {
+          if (destinationChatId) {
+            router.replace({
+              pathname: `/chat/${destinationChatId}` as any,
+              params: { requestId: job?.id || params.requestId },
+            });
+          } else {
+            router.replace('/(tabs)/chat');
+          }
           return true;
         }
-      }
-      return false;
-    });
-    return () => backSub.remove();
-  }, [paymentSuccess, job?.bookingFee?.status, job?.chatThreadId, job?.chatId, job?.id, params.requestId, router]);
+        return false;
+      });
+      return () => backSub.remove();
+    }
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleWebPop = () => {
+        if (paymentSuccess || isAlreadyPaid) {
+          if (destinationChatId) {
+            router.replace({
+              pathname: `/chat/${destinationChatId}` as any,
+              params: { requestId: job?.id || params.requestId },
+            });
+          } else {
+            router.replace('/(tabs)/chat');
+          }
+        }
+      };
+      window.addEventListener('popstate', handleWebPop);
+      return () => window.removeEventListener('popstate', handleWebPop);
+    }
+  }, [paymentSuccess, isAlreadyPaid, destinationChatId, job?.id, params.requestId, router]);
 
   const handlePay = () => {
     if (!params.requestId && !job?.id) {
@@ -213,19 +236,29 @@ export default function CheckoutPaymentScreen() {
   };
 
   const handleCancel = () => {
-    // Allows back-navigation without creating or opening an active chat session when unpaid
-    if (paymentSuccess || job?.bookingFee?.status === 'PAID') {
-      const dest = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
-      if (dest) {
+    // If payment was already completed, redirect to chats always
+    if (paymentSuccess || isAlreadyPaid) {
+      if (destinationChatId) {
         router.replace({
-          pathname: `/chat/${dest}` as any,
+          pathname: `/chat/${destinationChatId}` as any,
           params: { requestId: job?.id || params.requestId },
         });
-        return;
+      } else {
+        router.replace('/(tabs)/chat');
       }
+      return;
     }
     router.back();
   };
+
+  // Immediate block on web/native: Do not render payment UI if already paid
+  if (isAlreadyPaid && !isProcessing && !paymentSuccess) {
+    return (
+      <View style={[styles.screen, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>

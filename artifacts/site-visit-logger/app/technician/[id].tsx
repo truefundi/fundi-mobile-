@@ -75,6 +75,17 @@ export default function TechnicianProfileScreen() {
       selectTechnician(finalRequestId, toJobTechnician(tech));
     }
 
+    // Intercept call to navigate to payment screens if payment has already been settled
+    const targetJob = finalRequestId ? getJob(finalRequestId) : undefined;
+    if (targetJob?.bookingFee?.status === 'PAID') {
+      const destChat = targetJob.chatThreadId || targetJob.chatId || targetJob.id;
+      router.replace({
+        pathname: `/chat/${destChat}` as any,
+        params: { requestId: targetJob.id },
+      });
+      return;
+    }
+
     // Explicitly route to Booking Fee review screen instead of launching chat immediately
     router.push({
       pathname: '/checkout/booking-fee',

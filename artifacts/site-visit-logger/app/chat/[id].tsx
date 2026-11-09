@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -272,12 +273,34 @@ export default function StandaloneChatScreen() {
   };
 
   const handleBack = () => {
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/(tabs)/chat');
-    }
+    // Block returning into payment/checkout screens; always redirect to chat listings
+    router.replace('/(tabs)/chat');
   };
+
+  // Intercept Android hardware back button to prevent returning into payment screens
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      router.replace('/(tabs)/chat');
+      return true;
+    });
+    return () => backSub.remove();
+  }, [router]);
+
+  // Intercept web browser back button to prevent returning into payment screens
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      window.history.pushState({ fundiChat: true }, '', window.location.href);
+    } catch {}
+
+    const handleWebPop = () => {
+      router.replace('/(tabs)/chat');
+    };
+
+    window.addEventListener('popstate', handleWebPop);
+    return () => window.removeEventListener('popstate', handleWebPop);
+  }, [router]);
 
   // Mark thread as read when viewed
   useEffect(() => {
