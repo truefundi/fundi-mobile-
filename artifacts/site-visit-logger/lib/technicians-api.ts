@@ -94,12 +94,32 @@ export async function fetchPublicTechnicians(query?: {
 }
 
 export async function fetchPublicTechnicianById(id: string): Promise<MarketplaceTechnician | null> {
+  // 1. Try public endpoint first
   try {
     const res = await apiRequest<BackendPublicTechnician>(`/api/v1/public/technicians/${id}`);
-    return mapBackendTechnicianToMarketplace(res);
-  } catch {
-    return null;
-  }
+    if (res && res.id) {
+      return mapBackendTechnicianToMarketplace(res);
+    }
+  } catch {}
+
+  // 2. Try authenticated approved endpoint (allows approved tech even if offline)
+  try {
+    const resAuth = await apiRequest<BackendPublicTechnician>(`/api/v1/technicians/approved/${id}`, {
+      authenticated: true,
+    });
+    if (resAuth && resAuth.id) {
+      return mapBackendTechnicianToMarketplace(resAuth);
+    }
+  } catch {}
+
+  // 3. Fallback: Search in available list
+  try {
+    const list = await fetchPublicTechnicians();
+    const found = list.find((t) => t.id === id);
+    if (found) return found;
+  } catch {}
+
+  return null;
 }
 
 export async function fetchAvailableTechnicians(query?: {

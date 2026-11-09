@@ -8,7 +8,7 @@ import { Timeline, type TimelineStep } from '@/components/ui/Timeline';
 import { useColors } from '@/hooks/useColors';
 
 /** Spec 14 — work underway after the customer approved the quote. */
-export function RepairInProgress({ job }: { job: Job }) {
+export function RepairInProgress({ job, onBack }: { job: Job; onBack?: () => void }) {
   const colors = useColors();
   const approved = job.status === 'QUOTE_APPROVED';
 
@@ -29,7 +29,7 @@ export function RepairInProgress({ job }: { job: Job }) {
           ? 'Your approved quote is ready for the selected technician.'
           : 'Your technician will confirm completion when the repair is done.'
       }
-      hideBack
+      onBack={onBack}
     >
       <SectionCard title="Job progress">
         <Timeline steps={steps} />

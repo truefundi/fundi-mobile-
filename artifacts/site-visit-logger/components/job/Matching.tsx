@@ -11,10 +11,12 @@ export function Matching({
   job,
   onChooseTechnician,
   onCancel,
+  onBack,
 }: {
   job: Job;
   onChooseTechnician: () => void;
   onCancel: () => void;
+  onBack?: () => void;
 }) {
   const colors = useColors();
 
@@ -23,7 +25,7 @@ export function Matching({
       eyebrow="CHOOSE A TECHNICIAN"
       title="Browse available technicians"
       subtitle="Select a technician yourself. Your choice will stay with this request."
-      hideBack
+      onBack={onBack}
       footer={
         <>
           <Button label="Choose technician" onPress={onChooseTechnician} testID="matching-choose-button" />

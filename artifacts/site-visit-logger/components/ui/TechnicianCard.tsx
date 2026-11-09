@@ -1,6 +1,7 @@
 import React from 'react';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import type { Technician } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
 import { getServiceIcon } from '@/lib/categories-api';
@@ -10,12 +11,44 @@ type Props = {
   /** Line under the name, e.g. "Accepted your request". */
   caption?: string;
   compact?: boolean;
+  onPress?: () => void;
+  showProfileLink?: boolean;
 };
 
-export function TechnicianCard({ technician, caption, compact }: Props) {
+export function TechnicianCard({ technician, caption, compact, onPress, showProfileLink = true }: Props) {
   const colors = useColors();
+  const router = useRouter();
+
+  const handleOpenProfile = () => {
+    if (onPress) {
+      onPress();
+      return;
+    }
+    if (technician.id) {
+      router.push({
+        pathname: `/technician/${technician.id}` as any,
+        params: {
+          techName: technician.name,
+          techService: technician.skill,
+          techRating: String(technician.rating),
+          techJobsCompleted: String(technician.jobsCompleted),
+          techYearsExperience: String(technician.yearsExperience),
+          techAvatarUrl: technician.avatarUrl || technician.photoUri || '',
+        },
+      });
+    }
+  };
+
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }, compact && styles.compact]}>
+    <Pressable
+      onPress={handleOpenProfile}
+      style={({ pressed }) => [
+        styles.card,
+        { backgroundColor: colors.card, borderColor: colors.border },
+        compact && styles.compact,
+        pressed && { opacity: 0.88 },
+      ]}
+    >
       <View style={styles.header}>
         <View style={[styles.avatar, { backgroundColor: colors.secondary }]}>
           <Text style={[styles.initials, { color: colors.primary }]}>{technician.initials}</Text>
@@ -41,6 +74,14 @@ export function TechnicianCard({ technician, caption, compact }: Props) {
             <Text style={[styles.rating, { color: colors.foreground }]}>{technician.rating.toFixed(1)}</Text>
           </View>
           <Text style={[styles.jobs, { color: colors.mutedForeground }]}>{technician.jobsCompleted.toLocaleString('en-US')} jobs</Text>
+          {showProfileLink && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 4 }}>
+              <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: colors.primary }}>
+                View Profile
+              </Text>
+              <Feather name="arrow-right" size={11} color={colors.primary} />
+            </View>
+          )}
         </View>
       </View>
       {!compact && (
@@ -54,7 +95,7 @@ export function TechnicianCard({ technician, caption, compact }: Props) {
           <Stat icon="award" label="Experience" value={`${technician.yearsExperience} yrs`} />
         </View>
       )}
-    </View>
+    </Pressable>
   );
 }
 

@@ -10,7 +10,17 @@ import { TechnicianCard } from '@/components/ui/TechnicianCard';
 import { useColors } from '@/hooks/useColors';
 
 /** Shows the technician the customer selected from the local marketplace. */
-export function TechnicianFound({ job, onContinue, onCancel }: { job: Job; onContinue: () => void; onCancel: () => void }) {
+export function TechnicianFound({
+  job,
+  onContinue,
+  onCancel,
+  onBack,
+}: {
+  job: Job;
+  onContinue: () => void;
+  onCancel: () => void;
+  onBack?: () => void;
+}) {
   if (!job.technician) return null;
 
   return (
@@ -18,7 +28,7 @@ export function TechnicianFound({ job, onContinue, onCancel }: { job: Job; onCon
       eyebrow="TECHNICIAN FOUND"
       title="Your technician is ready"
       subtitle="Review who is coming before you confirm the callout."
-      hideBack
+      onBack={onBack}
       footer={
         <>
           <Button label="Continue to visit fee" onPress={onContinue} testID="offer-continue-button" />

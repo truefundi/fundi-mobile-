@@ -20,7 +20,17 @@ const METHODS: { id: PaymentMethod; icon: keyof typeof Ionicons.glyphMap; detail
  * Spec 7 and 9 — the visit fee explainer, then the payment sheet.
  * Both live here because the customer moves straight between them.
  */
-export function VisitFee({ job, onPay, onCancel }: { job: Job; onPay: (method: PaymentMethod) => void; onCancel: () => void }) {
+export function VisitFee({
+  job,
+  onPay,
+  onCancel,
+  onBack,
+}: {
+  job: Job;
+  onPay: (method: PaymentMethod) => void;
+  onCancel: () => void;
+  onBack?: () => void;
+}) {
   const colors = useColors();
   const [showPayment, setShowPayment] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>('Card');
@@ -33,7 +43,7 @@ export function VisitFee({ job, onPay, onCancel }: { job: Job; onPay: (method: P
       <StageScreen
         eyebrow="VISIT FEE"
         title="Technician visit & diagnostic fee"
-        hideBack
+        onBack={onBack}
         footer={
           <>
             <Button label="Continue to payment" icon="arrow-forward" onPress={() => setShowPayment(true)} testID="visit-fee-continue-button" />

@@ -22,7 +22,7 @@ const OPTIONS: { id: SettlementMethod; label: string; detail: string; icon: keyo
  * Only the Fundi option runs money through the platform; the others record the
  * settlement without forcing the transaction through Fundi.
  */
-export function Settlement({ job, onRecord }: { job: Job; onRecord: (method: SettlementMethod) => void }) {
+export function Settlement({ job, onRecord, onBack }: { job: Job; onRecord: (method: SettlementMethod) => void; onBack?: () => void }) {
   const colors = useColors();
   const [method, setMethod] = useState<SettlementMethod>('Fundi');
   const [submitting, setSubmitting] = useState(false);
@@ -33,7 +33,7 @@ export function Settlement({ job, onRecord }: { job: Job; onRecord: (method: Set
       eyebrow="PAYMENT"
       title="How was the repair paid?"
       subtitle="Recording this keeps your service history and invoice accurate."
-      hideBack
+      onBack={onBack}
       footer={
         <Button
           label={method === 'Fundi' ? `Pay ${formatMoney(due)} with Fundi` : `Record as paid by ${OPTIONS.find((o) => o.id === method)!.label.toLowerCase()}`}

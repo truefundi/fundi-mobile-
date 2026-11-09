@@ -9,7 +9,17 @@ import { StageScreen } from '@/components/ui/StageScreen';
 import { useColors } from '@/hooks/useColors';
 
 /** Spec 15 — extra work found mid-repair. Never charged without approval. */
-export function AdditionalWork({ job, onApprove, onDecline }: { job: Job; onApprove: () => void; onDecline: () => void }) {
+export function AdditionalWork({
+  job,
+  onApprove,
+  onDecline,
+  onBack,
+}: {
+  job: Job;
+  onApprove: () => void;
+  onDecline: () => void;
+  onBack?: () => void;
+}) {
   const colors = useColors();
   if (!job.additionalWork || !job.quote) return null;
 
@@ -22,7 +32,7 @@ export function AdditionalWork({ job, onApprove, onDecline }: { job: Job; onAppr
       eyebrow="ACTION NEEDED"
       title="Additional work requires approval"
       subtitle="Your technician found something else. Nothing is charged unless you approve."
-      hideBack
+      onBack={onBack}
       footer={
         <>
           <Button label={`Approve extra work · ${formatMoney(extra)}`} onPress={onApprove} testID="additional-approve-button" />

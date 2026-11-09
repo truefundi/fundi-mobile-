@@ -1,5 +1,5 @@
-import React, { useState, type ReactNode } from 'react';
-import { StyleSheet, View, Platform } from 'react-native';
+import React, { useEffect, useState, type ReactNode } from 'react';
+import { StyleSheet, View, Platform, BackHandler } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { vibrate } from '@/lib/haptics';
@@ -77,14 +77,31 @@ export default function JobScreen() {
     vibrate();
   };
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/activity');
+    }
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [router]);
+
   if (!isHydrated) return <LoadingState label="Loading your job…" fullScreen />;
 
   if (!job) {
     return (
       <StageScreen
         title="Job not found"
-        onBack={() => router.replace('/activity')}
-        footer={<Button label="Back to my services" onPress={() => router.replace('/activity')} testID="job-missing-back" />}
+        onBack={handleBack}
+        footer={<Button label="Back to my services" onPress={handleBack} testID="job-missing-back" />}
       >
         <EmptyState icon="alert-circle" title="This request is no longer available" text="It may have been cleared from this device." />
       </StageScreen>
@@ -134,6 +151,7 @@ export default function JobScreen() {
           job={job}
           onChooseTechnician={() => router.push({ pathname: '/select-technician', params: { jobId: job.id } })}
           onCancel={() => setPending('cancel')}
+          onBack={handleBack}
         />
       );
       break;
@@ -147,6 +165,7 @@ export default function JobScreen() {
             acceptOffer(job.id);
           }}
           onCancel={() => setPending('cancel')}
+          onBack={handleBack}
         />
       );
       break;
@@ -158,6 +177,7 @@ export default function JobScreen() {
             eyebrow="SERVICE BOOKING FEE"
             title="Confirm your technician booking"
             subtitle="Pay the flat Service Booking Fee to unlock direct real-time chat with your technician."
+            onBack={handleBack}
             footer={
               <>
                 <Button
@@ -201,6 +221,7 @@ export default function JobScreen() {
           eyebrow={job.status === 'IN_PROGRESS' ? 'SERVICE IN PROGRESS' : 'JOB ACTIVE'}
           title={job.status === 'IN_PROGRESS' ? 'Technician is working on your service' : 'Technician accepted your request'}
           subtitle={job.status === 'IN_PROGRESS' ? 'The technician has started work. Coordinate details directly in chat.' : 'Your booking is active. Coordinate the visit and agree on the repair price in chat.'}
+          onBack={handleBack}
           footer={
             <>
               <Button
@@ -229,12 +250,12 @@ export default function JobScreen() {
       break;
 
     case 'ARRIVED':
-      stage = <Arrived job={job} />;
+      stage = <Arrived job={job} onBack={handleBack} />;
       break;
 
     case 'DIAGNOSING':
     case 'DIAGNOSIS_COMPLETE':
-      stage = <Diagnosis job={job} />;
+      stage = <Diagnosis job={job} onBack={handleBack} />;
       break;
 
     case 'QUOTE_PENDING':
@@ -246,13 +267,14 @@ export default function JobScreen() {
             approveQuote(job.id);
           }}
           onDecline={() => setPending('declineQuote')}
+          onBack={handleBack}
         />
       );
       break;
 
     case 'QUOTE_APPROVED':
     case 'REPAIR_IN_PROGRESS':
-      stage = <RepairInProgress job={job} />;
+      stage = <RepairInProgress job={job} onBack={handleBack} />;
       break;
 
     case 'ADDITIONAL_APPROVAL_REQUIRED':
@@ -264,6 +286,7 @@ export default function JobScreen() {
             approveAdditionalWork(job.id);
           }}
           onDecline={() => setPending('declineExtra')}
+          onBack={handleBack}
         />
       );
       break;
@@ -276,6 +299,7 @@ export default function JobScreen() {
             tap();
             startSettlement(job.id);
           }}
+          onBack={handleBack}
         />
       );
       break;
@@ -287,6 +311,7 @@ export default function JobScreen() {
             eyebrow="SERVICE BOOKING FEE"
             title="Service Booking Fee Required"
             subtitle="Pay the flat Service Booking Fee to confirm your technician and unlock direct chat."
+            onBack={handleBack}
             footer={
               <>
                 <Button
@@ -329,12 +354,17 @@ export default function JobScreen() {
             tap();
             recordSettlement(job.id, method);
           }}
+          onBack={handleBack}
         />
       );
       break;
 
     case 'PAYMENT_REPORTED':
-      stage = <LoadingState label="Preparing your invoice…" fullScreen />;
+      stage = (
+        <StageScreen title="Invoice processing" onBack={handleBack}>
+          <LoadingState label="Preparing your invoice…" />
+        </StageScreen>
+      );
       break;
 
     default:
@@ -365,9 +395,6 @@ export default function JobScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      {/* <View style={[styles.headerBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8, borderBottomColor: colors.border }]}>
-        <BackButton onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))} />
-      </View> */}
       <View style={{ flex: 1 }}>{stage}</View>
       <ConfirmDialog
         visible={!!dialog}
@@ -385,5 +412,4 @@ export default function JobScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  headerBar: { paddingHorizontal: 20, paddingBottom: 8, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center' },
 });

@@ -9,7 +9,17 @@ import { StageScreen } from '@/components/ui/StageScreen';
 import { useColors } from '@/hooks/useColors';
 
 /** Spec 13 — the repair quote the customer must approve before work begins. */
-export function RepairQuote({ job, onApprove, onDecline }: { job: Job; onApprove: () => void; onDecline: () => void }) {
+export function RepairQuote({
+  job,
+  onApprove,
+  onDecline,
+  onBack,
+}: {
+  job: Job;
+  onApprove: () => void;
+  onDecline: () => void;
+  onBack?: () => void;
+}) {
   const colors = useColors();
   if (!job.quote) return null;
 
@@ -22,7 +32,7 @@ export function RepairQuote({ job, onApprove, onDecline }: { job: Job; onApprove
       eyebrow="REPAIR QUOTE"
       title="Repair quote"
       subtitle="Review the full cost before the repair starts."
-      hideBack
+      onBack={onBack}
       footer={
         <>
           <Button label={`Approve repair · ${formatMoney(remaining)}`} onPress={onApprove} testID="quote-approve-button" />

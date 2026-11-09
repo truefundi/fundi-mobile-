@@ -339,20 +339,33 @@ export default function SelectTechnicianScreen() {
                 </Text>
               </View>
               <Pressable
-                onPress={() => {
+                accessibilityRole="button"
+                accessibilityLabel={`View ${item.name} profile`}
+                onPress={(e) => {
+                  e.stopPropagation();
                   router.push({
                     pathname: `/technician/${item.id}` as any,
                     params: {
                       requestId: requestJob?.id,
-                      service,
+                      service: service || item.service,
                       problem,
                       locationLabel,
+                      techName: item.name,
+                      techService: item.service,
+                      techServices: JSON.stringify(item.services),
+                      techRating: String(item.rating),
+                      techReviewsCount: String(item.reviewsCount),
+                      techJobsCompleted: String(item.jobsCompleted),
+                      techYearsExperience: String(item.yearsExperience),
+                      techAvailable: item.isAvailable ? 'true' : 'false',
+                      techAvatarUrl: item.avatarUrl || '',
+                      techLocation: item.location ? `${item.location.latitude},${item.location.longitude}` : '',
                     },
                   });
                 }}
-                style={{ paddingVertical: 4, paddingHorizontal: 6 }}
+                style={[styles.profilePill, { backgroundColor: colors.secondary }]}
               >
-                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: colors.primary }}>Profile →</Text>
+                <Text style={[styles.profilePillText, { color: colors.primary }]}>Profile →</Text>
               </Pressable>
             </View>
           </Pressable>
@@ -390,4 +403,16 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 10, borderTopWidth: 1 },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+  profilePill: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  profilePillText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
 });

@@ -8,12 +8,12 @@ import { TechnicianCard } from '@/components/ui/TechnicianCard';
 import { useColors } from '@/hooks/useColors';
 
 /** Spec 11 — arrival confirmation, shown briefly before diagnosis starts. */
-export function Arrived({ job }: { job: Job }) {
+export function Arrived({ job, onBack }: { job: Job; onBack?: () => void }) {
   const colors = useColors();
   if (!job.technician) return null;
 
   return (
-    <StageScreen eyebrow="ARRIVED" title="Your technician has arrived" hideBack>
+    <StageScreen eyebrow="ARRIVED" title="Your technician has arrived" onBack={onBack}>
       <View style={styles.hero}>
         <View style={[styles.iconRing, { borderColor: colors.successMuted }]}>
           <View style={[styles.iconCore, { backgroundColor: colors.success }]}>

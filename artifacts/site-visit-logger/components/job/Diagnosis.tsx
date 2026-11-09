@@ -8,7 +8,7 @@ import { Timeline, type TimelineStep } from '@/components/ui/Timeline';
 import { useColors } from '@/hooks/useColors';
 
 /** Spec 12 — the on-site inspection, tracked against the rest of the job. */
-export function Diagnosis({ job }: { job: Job }) {
+export function Diagnosis({ job, onBack }: { job: Job; onBack?: () => void }) {
   const colors = useColors();
   const complete = job.status === 'DIAGNOSIS_COMPLETE';
 
@@ -30,7 +30,7 @@ export function Diagnosis({ job }: { job: Job }) {
           ? 'Your repair quote is being prepared. It will arrive in a moment.'
           : 'This usually takes a few minutes. You will get a written quote before any repair starts.'
       }
-      hideBack
+      onBack={onBack}
     >
       <SectionCard title="Job progress">
         <Timeline steps={steps} />

@@ -10,7 +10,7 @@ import { useColors } from '@/hooks/useColors';
 import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
 
 /** Spec 16 — the repair is done and the balance is ready to settle. */
-export function JobCompleted({ job, onContinue }: { job: Job; onContinue: () => void }) {
+export function JobCompleted({ job, onContinue, onBack }: { job: Job; onContinue: () => void; onBack?: () => void }) {
   const colors = useColors();
   const finishedAt = new Date(job.statusSince);
   const photoUri = useRequestMediaUri(job.photoUri ?? '');
@@ -19,7 +19,7 @@ export function JobCompleted({ job, onContinue }: { job: Job; onContinue: () => 
     <StageScreen
       eyebrow="COMPLETED"
       title="Job completed"
-      hideBack
+      onBack={onBack}
       footer={<Button label="Continue to payment" onPress={onContinue} testID="completed-continue-button" />}
     >
       <View style={styles.hero}>
