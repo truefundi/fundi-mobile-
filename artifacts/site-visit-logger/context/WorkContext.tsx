@@ -31,6 +31,17 @@ import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
 import { cleanAndNormalizePhone, updateUserRole } from '@/lib/auth-api';
 import { getAccessToken } from '@/lib/auth-session';
+import {
+  acceptTechnicianOffer,
+  confirmJobCooperation,
+  dropTechnicianJob,
+  fetchTechnicianJobs,
+  fetchTechnicianOffers,
+  rejectTechnicianOffer,
+  updateJobProgress,
+  type BackendJob,
+  type TechnicianOfferItem,
+} from '@/lib/jobs-api';
 
 export type {
   BookingFee,
@@ -218,69 +229,89 @@ async function appendLocalFile(form: FormData, uri: string, fileName: string, mi
 
 export const TECH_JOBS_KEY = '@fundi/technician-jobs';
 
-const DEMO_TECH_JOBS: Record<string, Job[]> = {
-  '+250788555555': [
-    {
-      id: 'tech-job-claude-1',
-      reference: 'FND-8821',
-      service: 'Plumbing & Pipe Repair',
-      problem: 'Kitchen sink drain pipe is fractured and leaking water onto the kitchen cabinet floor. Needs immediate pipe replacement and sealing.',
-      urgency: 'Today',
-      locationLabel: 'KG 622 St, Kimihurura, Kigali',
-      locationLatitude: -1.9536,
-      locationLongitude: 30.0928,
-      status: 'REPAIR_IN_PROGRESS',
-      statusSince: new Date(Date.now() - 3600000).toISOString(),
-      createdAt: new Date(Date.now() - 7200000).toISOString(),
-      clientName: 'Alice Uwase',
-      clientPhone: '+250788111111',
-      agreedPrice: 28000,
-      visitFee: 28000,
-      chatThreadId: 'thread-demo-alice',
-      type: 'STANDARD',
-      bookingFee: {
-        amount: 28000,
-        currency: 'RWF',
-        status: 'PAID',
-        paidAt: new Date(Date.now() - 7200000).toISOString(),
-      },
-      events: [
-        {
-          id: 'evt-claude-1',
-          status: 'REPAIR_IN_PROGRESS',
-          title: 'Job in progress',
-          text: 'Technician started the job with agreed fee of RWF 28,000',
-          at: new Date(Date.now() - 3600000).toISOString(),
-        },
-      ],
+function mapBackendJobToTechnicianJob(backendJob: BackendJob): Job {
+  const photoMedia = backendJob.media?.filter((m) => m.type === 'PHOTO') ?? [];
+  const videoMedia = backendJob.media?.filter((m) => m.type === 'VIDEO') ?? [];
+  const photoUris = photoMedia.map((m) => m.url);
+  const videoUris = videoMedia.map((m) => m.url);
+
+  let status: JobStatus = 'ACTIVE';
+  if (backendJob.status === 'CANCELLED' || backendJob.status === 'FAILED') status = 'CANCELLED';
+  else if (backendJob.status === 'COMPLETED') status = 'COMPLETED';
+  else if (backendJob.status === 'IN_PROGRESS') status = 'IN_PROGRESS';
+  else if (backendJob.status === 'OPEN') status = 'REQUESTED';
+  else if (backendJob.status === 'ASSIGNED') status = 'ACTIVE';
+
+  return {
+    id: backendJob.id,
+    reference: `FND-${backendJob.id.slice(-4).toUpperCase()}`,
+    service: backendJob.serviceCategory?.name || backendJob.service || 'Service Request',
+    serviceCategoryId: backendJob.serviceCategory?.id,
+    problem: backendJob.description,
+    urgency: backendJob.requestType === 'SOS' || backendJob.priority === 'URGENT' ? 'Emergency' : 'Today',
+    locationLabel: backendJob.location?.address || 'Kigali, Rwanda',
+    locationLatitude: backendJob.location?.latitude,
+    locationLongitude: backendJob.location?.longitude,
+    photoUri: photoUris[0],
+    photoUris,
+    videoUri: videoUris[0],
+    videoUris,
+    status,
+    statusSince: backendJob.updatedAt || backendJob.createdAt,
+    createdAt: backendJob.createdAt,
+    completedAt: backendJob.completedAt ?? undefined,
+    cancellationReason: backendJob.cancellationReason ?? undefined,
+    clientName: 'Client',
+    clientPhone: '',
+    type: backendJob.requestType === 'SOS' ? 'SOS' : 'STANDARD',
+    visitFee: backendJob.offeredAmount || 0,
+    agreedPrice: backendJob.offeredAmount || undefined,
+    cooperationStatus: backendJob.cooperationStatus,
+    customerProgress: backendJob.customerProgress,
+    technicianProgress: backendJob.technicianProgress,
+    paymentId: backendJob.bookingPayment?.id,
+    bookingFee: {
+      amount: backendJob.bookingPayment?.amount || 0,
+      currency: backendJob.bookingPayment?.currency || 'RWF',
+      status: 'PAID',
+      paidAt: backendJob.bookingPayment?.paidAt,
+      transactionId: backendJob.bookingPayment?.externalPaymentId,
     },
-    {
-      id: 'tech-job-claude-2',
-      reference: 'FND-6412',
-      service: 'Bathroom Shower Installation',
-      problem: 'Installed dual-head shower system and verified water pressure and heating.',
-      urgency: 'Today',
-      locationLabel: 'KN 3 Ave, Kiyovu, Kigali',
-      status: 'COMPLETED',
-      statusSince: new Date(Date.now() - 86400000).toISOString(),
-      createdAt: new Date(Date.now() - 90000000).toISOString(),
-      completedAt: new Date(Date.now() - 86400000).toISOString(),
-      clientName: 'Eric Mugabo',
-      clientPhone: '+250788222222',
-      agreedPrice: 45000,
-      visitFee: 45000,
-      chatThreadId: 'thread-demo-eric',
-      type: 'STANDARD',
-      bookingFee: {
-        amount: 45000,
-        currency: 'RWF',
-        status: 'PAID',
-        paidAt: new Date(Date.now() - 90000000).toISOString(),
-      },
-      events: [],
+    events: [],
+  };
+}
+
+function mapOfferToJob(offer: TechnicianOfferItem): Job {
+  const photoMedia = offer.job.media?.filter((m) => m.type === 'PHOTO') ?? [];
+  const videoMedia = offer.job.media?.filter((m) => m.type === 'VIDEO') ?? [];
+  return {
+    id: offer.job.id,
+    offerId: offer.id,
+    reference: `OFF-${offer.id.slice(-4).toUpperCase()}`,
+    service: offer.job.service || 'Incoming Offer',
+    problem: offer.job.description,
+    urgency: offer.job.priority === 'URGENT' ? 'Emergency' : 'Today',
+    locationLabel: offer.job.locationAddress || 'Client Location',
+    locationLatitude: offer.job.latitude,
+    locationLongitude: offer.job.longitude,
+    photoUris: photoMedia.map((m) => m.url),
+    videoUris: videoMedia.map((m) => m.url),
+    photoUri: photoMedia[0]?.url,
+    videoUri: videoMedia[0]?.url,
+    status: 'OFFERED',
+    statusSince: offer.job.createdAt,
+    createdAt: offer.job.createdAt,
+    visitFee: offer.job.offeredAmount || 0,
+    agreedPrice: offer.job.offeredAmount || 0,
+    type: 'STANDARD',
+    bookingFee: {
+      amount: offer.job.offeredAmount || 0,
+      currency: offer.job.currency || 'RWF',
+      status: 'PAID',
     },
-  ],
-};
+    events: [],
+  };
+}
 
 type WorkContextValue = {
   mode: Mode;
@@ -294,10 +325,15 @@ type WorkContextValue = {
   refreshApplication: () => Promise<void>;
   apply: (profile: TechnicianApplication) => Promise<void>;
   offers: Job[];
+  technicianOffers: TechnicianOfferItem[];
   mine: Job[];
   done: Job[];
   cancelled: Job[];
   earnings: number;
+  refreshJobs: () => Promise<void>;
+  acceptOffer: (offerId: string) => Promise<BackendJob>;
+  rejectOffer: (offerId: string, reason?: string) => Promise<{ success: boolean }>;
+  confirmCooperation: (jobId: string) => Promise<BackendJob>;
   addOrUpdateJob: (job: Job, targetTechnicianPhone?: string) => Promise<void>;
   startJob: (jobId: string) => Promise<void>;
   cancelJob: (jobId: string, reason: string) => Promise<void>;
@@ -317,6 +353,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<Stored>(EMPTY);
   const [techJobs, setTechJobs] = useState<Job[]>([]);
   const techJobsRef = useRef<Job[]>([]);
+  const [technicianOffers, setTechnicianOffers] = useState<TechnicianOfferItem[]>([]);
   const storageKey = account ? workKey(account.phone) : null;
 
   const [localDrafts, setLocalDrafts] = useState<Job[]>([]);
@@ -414,10 +451,29 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     return finalChatId;
   }, []);
 
+  const refreshJobs = useCallback(async () => {
+    if (!account?.phone) return;
+    try {
+      const [jobs, offers] = await Promise.all([
+        fetchTechnicianJobs().catch(() => []),
+        fetchTechnicianOffers().catch(() => []),
+      ]);
+      const mappedJobs = jobs.map(mapBackendJobToTechnicianJob);
+      techJobsRef.current = mappedJobs;
+      setTechJobs(mappedJobs);
+      setTechnicianOffers(offers);
+      const key = `${TECH_JOBS_KEY}/${account.phone}`;
+      await AsyncStorage.setItem(key, JSON.stringify(mappedJobs)).catch(() => {});
+    } catch (err) {
+      console.warn('Could not refresh technician jobs/offers:', err);
+    }
+  }, [account?.phone]);
+
   useEffect(() => {
     if (!account?.phone) {
       setTechJobs([]);
       techJobsRef.current = [];
+      setTechnicianOffers([]);
       return;
     }
     const key = `${TECH_JOBS_KEY}/${account.phone}`;
@@ -428,17 +484,42 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           if (Array.isArray(parsed) && parsed.length > 0) {
             setTechJobs(parsed);
             techJobsRef.current = parsed;
-            return;
           }
         } catch {}
       }
-      const defaults = DEMO_TECH_JOBS[account.phone] ?? [];
-      setTechJobs(defaults);
-      techJobsRef.current = defaults;
-      if (defaults.length > 0) {
-        void AsyncStorage.setItem(key, JSON.stringify(defaults));
-      }
+      void refreshJobs();
     });
+  }, [account?.phone, refreshJobs]);
+
+  const acceptOffer = useCallback(async (offerId: string): Promise<BackendJob> => {
+    const backendJob = await acceptTechnicianOffer(offerId);
+    const mapped = mapBackendJobToTechnicianJob(backendJob);
+    const updated = [mapped, ...techJobsRef.current.filter((j) => j.id !== mapped.id)];
+    techJobsRef.current = updated;
+    setTechJobs(updated);
+    setTechnicianOffers((prev) => prev.filter((o) => o.id !== offerId));
+    if (account?.phone) {
+      await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated)).catch(() => {});
+    }
+    return backendJob;
+  }, [account?.phone]);
+
+  const rejectOffer = useCallback(async (offerId: string, reason?: string): Promise<{ success: boolean }> => {
+    const res = await rejectTechnicianOffer(offerId, reason);
+    setTechnicianOffers((prev) => prev.filter((o) => o.id !== offerId));
+    return res;
+  }, []);
+
+  const confirmCooperation = useCallback(async (jobId: string): Promise<BackendJob> => {
+    const backendJob = await confirmJobCooperation(jobId, 'technician');
+    const mapped = mapBackendJobToTechnicianJob(backendJob);
+    const updated = techJobsRef.current.map((j) => (j.id === jobId ? mapped : j));
+    techJobsRef.current = updated;
+    setTechJobs(updated);
+    if (account?.phone) {
+      await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated)).catch(() => {});
+    }
+    return backendJob;
   }, [account?.phone]);
 
   const addOrUpdateJob = useCallback(
@@ -467,6 +548,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
   const startJob = useCallback(
     async (jobId: string) => {
+      try {
+        await updateJobProgress(jobId, 'IN_PROGRESS', 'technician');
+      } catch (err) {
+        console.warn('Backend start progress update non-fatal:', err);
+      }
+
       const now = new Date().toISOString();
       const targetJob = techJobsRef.current.find((j) => j.id === jobId);
       const updated = techJobsRef.current.map((j) => {
@@ -528,6 +615,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
   const cancelJob = useCallback(
     async (jobId: string, reason: string) => {
+      try {
+        await dropTechnicianJob(jobId, reason);
+      } catch (err) {
+        console.warn('Backend drop job non-fatal:', err);
+      }
+
       const now = new Date().toISOString();
       const targetJob = techJobsRef.current.find((j) => j.id === jobId);
       const updated = techJobsRef.current.map((j) => {
@@ -597,6 +690,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
   const completeJob = useCallback(
     async (jobId: string, completedPhotoUri?: string) => {
+      try {
+        await updateJobProgress(jobId, 'COMPLETED', 'technician');
+      } catch (err) {
+        console.warn('Backend complete job non-fatal:', err);
+      }
+
       const now = new Date().toISOString();
       const targetJob = techJobsRef.current.find((j) => j.id === jobId);
       const updated = techJobsRef.current.map((j) => {
@@ -1000,13 +1099,18 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           throw error;
         }
       },
-      offers: [],
+      offers: technicianOffers.map(mapOfferToJob),
+      technicianOffers,
       mine: techJobs.filter((j) => !isClosed(j.status) && !isTerminated(j.status)),
       done: techJobs.filter((j) => j.status === 'COMPLETED' || j.status === 'REPAIR_COMPLETED'),
       cancelled: techJobs.filter((j) => isTerminated(j.status)),
       earnings: techJobs
         .filter((j) => j.status === 'COMPLETED' || j.status === 'REPAIR_COMPLETED')
         .reduce((sum, j) => sum + (j.agreedPrice || j.visitFee * (1 - COMMISSION_RATE)), 0),
+      refreshJobs,
+      acceptOffer,
+      rejectOffer,
+      confirmCooperation,
       addOrUpdateJob,
       startJob,
       cancelJob,
@@ -1015,7 +1119,27 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       markBookingFeePaid: fundi ? fundi.markBookingFeePaid : localMarkBookingFeePaid,
       initializeChatId: fundi ? fundi.initializeChatId : localInitializeChatId,
     };
-  }, [account, addOrUpdateJob, cancelJob, completeJob, fundi, localCreateDraftRequest, localInitializeChatId, localMarkBookingFeePaid, refreshApplication, startJob, state, storageKey, techJobs, update]);
+  }, [
+    account,
+    acceptOffer,
+    addOrUpdateJob,
+    cancelJob,
+    completeJob,
+    confirmCooperation,
+    fundi,
+    localCreateDraftRequest,
+    localInitializeChatId,
+    localMarkBookingFeePaid,
+    refreshApplication,
+    refreshJobs,
+    rejectOffer,
+    startJob,
+    state,
+    storageKey,
+    techJobs,
+    technicianOffers,
+    update,
+  ]);
 
   return <WorkContext.Provider value={value}>{children}</WorkContext.Provider>;
 }

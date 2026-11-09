@@ -23,10 +23,8 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { useAuth } from '@/context/AuthContext';
-import {
-  MOCK_MARKETPLACE_TECHNICIANS,
-  type MarketplaceTechnician,
-} from '@/constants/technicians';
+import { getCachedCategories } from '@/lib/categories-api';
+import { type MarketplaceTechnician } from '@/constants/technicians';
 import {
   FLAT_BOOKING_FEE,
   FLAT_BOOKING_FEE_CURRENCY,
@@ -71,8 +69,17 @@ export default function CheckoutPaymentScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { account } = useAuth();
-  const { getJob, markBookingFeePaid, linkChatThread } = useFundi();
-  const { createOrGetThread } = useChat();
+  const {
+    getJob,
+    markBookingFeePaid,
+    linkChatThread,
+    createBackendJob,
+    requestPhoneVerification,
+    verifyPhoneOtp,
+    createBookingPayment,
+    proposeTechnicianToJob,
+  } = useFundi();
+  const { createOrGetThread, openConversation } = useChat();
 
   const params = useLocalSearchParams<{
     requestId?: string;
@@ -84,14 +91,24 @@ export default function CheckoutPaymentScreen() {
 
   const job = params.requestId ? getJob(params.requestId) : undefined;
   const technician: MarketplaceTechnician | undefined = useMemo(() => {
-    if (params.technicianId) {
-      return MOCK_MARKETPLACE_TECHNICIANS.find((t) => t.id === params.technicianId);
-    }
     if (job?.technician) {
-      return MOCK_MARKETPLACE_TECHNICIANS.find((t) => t.id === job.technician?.id);
+      return {
+        id: job.technician.id,
+        name: job.technician.name,
+        service: job.technician.skill,
+        services: [job.technician.skill],
+        rating: job.technician.rating,
+        reviewsCount: 45,
+        jobsCompleted: job.technician.jobsCompleted,
+        etaMinutes: job.technician.etaMinutes,
+        yearsExperience: job.technician.yearsExperience,
+        location: job.technician.location ?? { latitude: -1.9448, longitude: 30.0619 },
+        isAvailable: true,
+        phoneNumber: job.technician.phone,
+      };
     }
-    return MOCK_MARKETPLACE_TECHNICIANS[0];
-  }, [job?.technician, params.technicianId]);
+    return undefined;
+  }, [job?.technician]);
 
   const targetService = job?.service || params.service || technician?.service;
   const bookingAmount = job?.bookingFee?.amount ?? (params.amount ? parseFloat(params.amount) : getServiceBookingFee(targetService));
@@ -105,6 +122,13 @@ export default function CheckoutPaymentScreen() {
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [transactionRef, setTransactionRef] = useState<string>('');
+
+  // Phone verification state
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
 
   const isAlreadyPaid = job?.bookingFee?.status === 'PAID';
   const destinationChatId = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
@@ -161,78 +185,123 @@ export default function CheckoutPaymentScreen() {
     }
   }, [paymentSuccess, isAlreadyPaid, destinationChatId, job?.id, params.requestId, router]);
 
-  const handlePay = () => {
+  const handlePay = async () => {
     if (!params.requestId && !job?.id) {
       setPaymentError('Request reference is missing. Please go back and try again.');
       return;
     }
 
     setPaymentError(null);
-    setIsProcessing(true);
+    setOtpError(null);
 
-    // Simulate payment gateway processing (1.6s delay)
-    setTimeout(() => {
-      const targetRequestId = params.requestId || job!.id;
-      const txId = `TX-${selectedChannel.slice(0, 3)}-${Date.now().toString(36).toUpperCase()}`;
-
+    // If phone verification not yet obtained, request phone verification code first
+    if (!phoneVerificationId) {
+      setIsProcessing(true);
       try {
-        // 1. Update request state to mark booking fee paid
-        markBookingFeePaid(targetRequestId, txId);
-        setTransactionRef(txId);
+        const req = await requestPhoneVerification();
+        setPhoneVerificationId(req.verificationId);
         setIsProcessing(false);
-        setPaymentSuccess(true);
-
-        // 2. Prepare technician chat thread
-        const updatedJob = getJob(targetRequestId);
-        const techName = technician?.name ?? updatedJob?.technician?.name ?? 'Assigned Technician';
-        const techPhone = technician?.phoneNumber ?? (technician as any)?.phone ?? updatedJob?.technician?.phone ?? (updatedJob?.technician as any)?.phoneNumber;
-        const techLocation = technician?.location ?? updatedJob?.technician?.location;
-
-        const threadId = createOrGetThread(
-          techName,
-          'technician',
-          targetRequestId,
-          {
-            id: targetRequestId,
-            serviceName: updatedJob?.service ?? 'Service Request',
-            problem: updatedJob?.problem ?? '',
-            address: updatedJob?.locationLabel ?? '',
-            thumbnailUri: updatedJob?.photoUris?.[0] ?? updatedJob?.photoUri,
-            photos: updatedJob?.photoUris ?? (updatedJob?.photoUri ? [updatedJob.photoUri] : []),
-            videos: updatedJob?.videoUris ?? (updatedJob?.videoUri ? [updatedJob.videoUri] : []),
-            createdAt: updatedJob?.createdAt ?? new Date().toISOString(),
-            status: 'REQUEST_RECEIVED',
-            type: updatedJob?.type ?? 'STANDARD',
-            bookingFee: {
-              amount: bookingAmount,
-              currency: bookingCurrency,
-              status: 'PAID',
-              paidAt: new Date().toISOString(),
-              transactionId: txId,
-            },
-          },
-          techPhone,
-          techLocation,
-        );
-
-        // Link thread to request now that it is paid
-        linkChatThread(targetRequestId, threadId);
-
-        // Auto-navigate to /chat/[id] after 1.4s of success animation
-        setTimeout(() => {
-          router.replace({
-            pathname: `/chat/${threadId}` as any,
-            params: {
-              requestId: targetRequestId,
-              firstMessage: 'true',
-            },
-          });
-        }, 1400);
+        setShowOtpModal(true);
+        return;
       } catch (err) {
         setIsProcessing(false);
-        setPaymentError(err instanceof Error ? err.message : 'Payment authorization failed. Please retry.');
+        setPaymentError(err instanceof Error ? err.message : 'Could not request phone verification.');
+        return;
       }
-    }, 1600);
+    }
+
+    await executeBookingAndCreateJob(phoneVerificationId);
+  };
+
+  const handleConfirmOtpAndPay = async () => {
+    if (!phoneVerificationId || otpCode.trim().length < 6) return;
+    setIsVerifyingOtp(true);
+    setOtpError(null);
+    try {
+      const verifyRes = await verifyPhoneOtp(phoneVerificationId, otpCode.trim());
+      if (!verifyRes.verified) {
+        throw new Error('Code verification failed. Check the code and try again.');
+      }
+      setShowOtpModal(false);
+      await executeBookingAndCreateJob(phoneVerificationId);
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : 'Invalid verification code.');
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const executeBookingAndCreateJob = async (verificationId: string) => {
+    setIsProcessing(true);
+    setPaymentError(null);
+
+    const targetRequestId = params.requestId || job!.id;
+    const targetServiceCategoryId =
+      job?.serviceCategoryId ||
+      getCachedCategories()?.find((c) => c.label.toLowerCase() === (targetService || '').toLowerCase())?.id ||
+      getCachedCategories()?.[0]?.id ||
+      'default-category-id';
+
+    try {
+      // 1. Create booking payment via real payment endpoint
+      const bookingPayment = await createBookingPayment(
+        targetServiceCategoryId,
+        job?.type === 'SOS' ? 'SOS' : 'NORMAL',
+        phoneNumber,
+      );
+
+      // 2. Create customer job on real backend
+      const createdBackendJob = await createBackendJob({
+        paymentId: bookingPayment.id,
+        phoneVerificationId: verificationId,
+        serviceCategoryId: targetServiceCategoryId,
+        description: job?.problem || params.service || 'Service Request',
+        locationAddress: job?.locationLabel || 'Kigali, Rwanda',
+        latitude: job?.locationLatitude ?? -1.9441,
+        longitude: job?.locationLongitude ?? 30.0619,
+        offeredAmount: bookingAmount,
+        requestType: job?.type === 'SOS' ? 'SOS' : 'NORMAL',
+      });
+
+      // 3. For normal requests, propose technician if selected
+      const techId = params.technicianId || job?.technician?.id;
+      if (techId && job?.type !== 'SOS') {
+        try {
+          await proposeTechnicianToJob(createdBackendJob.id, techId);
+        } catch (propErr) {
+          console.warn('Technician proposal non-fatal error:', propErr);
+        }
+      }
+
+      // 4. Open real negotiation conversation
+      let destChatId = createdBackendJob.id;
+      try {
+        const convId = await openConversation(createdBackendJob.id);
+        destChatId = convId;
+      } catch (convErr) {
+        console.warn('Open conversation non-fatal error:', convErr);
+      }
+
+      // 5. Update local state and show payment success
+      const txId = bookingPayment.externalPaymentId || `TX-${Date.now().toString(36).toUpperCase()}`;
+      markBookingFeePaid(targetRequestId, txId);
+      setTransactionRef(txId);
+      setIsProcessing(false);
+      setPaymentSuccess(true);
+
+      setTimeout(() => {
+        router.replace({
+          pathname: `/chat/${destChatId}` as any,
+          params: {
+            requestId: createdBackendJob.id,
+            firstMessage: 'true',
+          },
+        });
+      }, 1400);
+    } catch (err) {
+      setIsProcessing(false);
+      setPaymentError(err instanceof Error ? err.message : 'Payment or job creation failed. Please retry.');
+    }
   };
 
   const handleCancel = () => {
@@ -423,6 +492,73 @@ export default function CheckoutPaymentScreen() {
           testID="confirm-payment-button"
         />
       </View>
+
+      {/* Phone Verification OTP Modal */}
+      <Modal visible={showOtpModal} transparent animationType="slide">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalBox, { backgroundColor: colors.card, borderColor: colors.border, width: '90%', maxWidth: 400 }]}>
+            <View style={[styles.successIconCircle, { backgroundColor: colors.primary + '18' }]}>
+              <Ionicons name="shield-checkmark" size={32} color={colors.primary} />
+            </View>
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Verify Phone Number</Text>
+            <Text style={[styles.modalDesc, { color: colors.mutedForeground }]}>
+              Enter the 6-digit verification code sent to {phoneNumber} to authenticate your service request.
+            </Text>
+            {otpError && (
+              <Text style={{ color: colors.destructive, fontSize: 13, textAlign: 'center', marginTop: 4 }}>
+                {otpError}
+              </Text>
+            )}
+            <TextInput
+              value={otpCode}
+              onChangeText={setOtpCode}
+              placeholder="123456"
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="number-pad"
+              maxLength={6}
+              style={[
+                styles.textInput,
+                {
+                  color: colors.foreground,
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 22,
+                  fontWeight: '700',
+                  textAlign: 'center',
+                  letterSpacing: 6,
+                  width: '100%',
+                  marginTop: 8,
+                },
+              ]}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, width: '100%', marginTop: 14 }}>
+              <Button
+                label="Cancel"
+                variant="outline"
+                size="small"
+                style={{ flex: 1 }}
+                onPress={() => {
+                  setShowOtpModal(false);
+                  setOtpCode('');
+                  setOtpError(null);
+                }}
+              />
+              <Button
+                label="Verify & Pay"
+                size="small"
+                loading={isVerifyingOtp}
+                disabled={otpCode.trim().length < 6}
+                style={{ flex: 1 }}
+                onPress={handleConfirmOtpAndPay}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Payment Processing Modal */}
       <Modal visible={isProcessing} transparent animationType="fade">

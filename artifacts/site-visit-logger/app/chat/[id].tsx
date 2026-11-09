@@ -56,7 +56,7 @@ function StableRequestImage({
 
   if (!source || failed) {
     return (
-      <View style={[fallbackStyle, { backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }]}>
+      <View style={[fallbackStyle, { backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }]}>
         <MaterialCommunityIcons
           name={getServiceIcon(serviceName) as any}
           size={28}
@@ -1461,6 +1461,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   reqCardTitle: {
     fontFamily: 'Inter_600SemiBold',
@@ -1489,6 +1490,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   reqThumb: {
     width: 64,
@@ -1501,6 +1503,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   reqInfoWrap: {
     flex: 1,

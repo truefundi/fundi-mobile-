@@ -24,8 +24,8 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { useAuth } from '@/context/AuthContext';
+import { getCachedCategories } from '@/lib/categories-api';
 import {
-  MOCK_MARKETPLACE_TECHNICIANS,
   toJobTechnician,
   type MarketplaceTechnician,
 } from '@/constants/technicians';
@@ -80,8 +80,12 @@ export default function SosDispatchScreen() {
     markBookingFeePaid,
     assignEmergencyTechnician,
     linkChatThread,
+    createBackendJob,
+    createBookingPayment,
+    requestPhoneVerification,
+    verifyPhoneOtp,
   } = useFundi();
-  const { createOrGetThread } = useChat();
+  const { createOrGetThread, openConversation } = useChat();
 
   const params = useLocalSearchParams<{
     requestId?: string;
@@ -102,6 +106,13 @@ export default function SosDispatchScreen() {
   const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '0788123456');
   const [matchedSpecialist, setMatchedSpecialist] = useState<MarketplaceTechnician | null>(null);
   const [transactionRef, setTransactionRef] = useState<string>('');
+
+  // Phone verification state
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
 
   // Radar animation values
   const pulse1 = useRef(new Animated.Value(0)).current;
@@ -208,87 +219,97 @@ export default function SosDispatchScreen() {
     };
   }, [phase]);
 
-  const handleAuthorizeAndBroadcast = () => {
+  const handleAuthorizeAndBroadcast = async () => {
     vibrate();
-    setPhase('AUTHORIZING');
 
-    // Simulate instant gateway authorization (1s)
-    setTimeout(() => {
-      let finalId = targetRequestId;
-      if (!finalId) {
-        finalId = createDraftRequest({
-          service: serviceName,
-          problem: problemDesc,
-          locationLabel,
-          urgency: 'Emergency',
-          type: 'SOS',
-          status: 'SEARCHING_DISPATCH',
-          bookingFee: {
-            amount: dispatchFee,
-            currency: 'RWF',
-            status: 'PENDING',
-          },
-        });
+    // Check if phone verification needed
+    if (!phoneVerificationId) {
+      setPhase('AUTHORIZING');
+      try {
+        const req = await requestPhoneVerification();
+        setPhoneVerificationId(req.verificationId);
+        setPhase('REVIEW');
+        setShowOtpModal(true);
+        return;
+      } catch (err) {
+        setPhase('REVIEW');
+        return;
       }
+    }
 
-      const txId = `TX-SOS-${Date.now().toString(36).toUpperCase()}`;
-      setTransactionRef(txId);
-
-      // 1. Confirm payment and transition request to SEARCHING_DISPATCH
-      markBookingFeePaid(finalId, txId);
-      notify('success');
-
-      // 2. Switch to radar search pulse screen
-      setPhase('SEARCHING_DISPATCH');
-    }, 1100);
+    await executeSosBroadcast(phoneVerificationId);
   };
 
-  const handleTechnicianAcceptance = () => {
+  const handleConfirmOtpAndBroadcast = async () => {
+    if (!phoneVerificationId || otpCode.trim().length < 6) return;
+    setIsVerifyingOtp(true);
+    setOtpError(null);
+    try {
+      const verifyRes = await verifyPhoneOtp(phoneVerificationId, otpCode.trim());
+      if (!verifyRes.verified) {
+        throw new Error('Verification code invalid.');
+      }
+      setShowOtpModal(false);
+      await executeSosBroadcast(phoneVerificationId);
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : 'Invalid code.');
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const executeSosBroadcast = async (verificationId: string) => {
+    setPhase('AUTHORIZING');
+    try {
+      const targetServiceCategoryId =
+        activeJob?.serviceCategoryId ||
+        getCachedCategories()?.find((c) => c.label.toLowerCase().includes('emergency') || c.label.toLowerCase() === (serviceName || '').toLowerCase())?.id ||
+        getCachedCategories()?.[0]?.id ||
+        'default-category-id';
+
+      const bookingPayment = await createBookingPayment(targetServiceCategoryId, 'SOS', phoneNumber);
+
+      const createdBackendJob = await createBackendJob({
+        paymentId: bookingPayment.id,
+        phoneVerificationId: verificationId,
+        serviceCategoryId: targetServiceCategoryId,
+        description: problemDesc,
+        locationAddress: locationLabel,
+        latitude: activeJob?.locationLatitude ?? -1.9441,
+        longitude: activeJob?.locationLongitude ?? 30.0619,
+        offeredAmount: dispatchFee,
+        requestType: 'SOS',
+      });
+
+      const txId = bookingPayment.externalPaymentId || `TX-SOS-${Date.now().toString(36).toUpperCase()}`;
+      setTransactionRef(txId);
+      markBookingFeePaid(createdBackendJob.id, txId);
+      notify('success');
+
+      // Switch to radar search pulse screen
+      setPhase('SEARCHING_DISPATCH');
+    } catch (err) {
+      setPhase('REVIEW');
+    }
+  };
+
+  const handleTechnicianAcceptance = async () => {
     const finalId = targetRequestId || activeJob?.id;
     if (!finalId) return;
 
-    // Pick top available technician for emergency response
-    const selectedTech: MarketplaceTechnician =
-      MOCK_MARKETPLACE_TECHNICIANS.find((t) => t.isAvailable) ?? MOCK_MARKETPLACE_TECHNICIANS[0];
-
-    setMatchedSpecialist(selectedTech);
     setPhase('ACCEPTED');
     notify('success');
     vibrate();
 
-    // 1. Assign technician to job and transition to ACCEPTED
-    assignEmergencyTechnician(finalId, toJobTechnician(selectedTech));
+    let destChatId = finalId;
+    try {
+      const convId = await openConversation(finalId);
+      destChatId = convId;
+    } catch {}
 
-    const updatedJob = getJob(finalId);
-
-    // 2. Create or link emergency chat thread with type: 'SOS'
-    const threadId = createOrGetThread(
-      selectedTech.name,
-      'technician',
-      finalId,
-      {
-        id: finalId,
-        serviceName: updatedJob?.service ?? 'Emergency SOS',
-        problem: updatedJob?.problem ?? 'Emergency Request',
-        address: updatedJob?.locationLabel ?? '',
-        thumbnailUri: updatedJob?.photoUris?.[0] ?? updatedJob?.photoUri,
-        photos: updatedJob?.photoUris ?? (updatedJob?.photoUri ? [updatedJob.photoUri] : []),
-        videos: updatedJob?.videoUris ?? (updatedJob?.videoUri ? [updatedJob.videoUri] : []),
-        createdAt: updatedJob?.createdAt ?? new Date().toISOString(),
-        status: 'ACCEPTED',
-        type: 'SOS',
-        bookingFee: updatedJob?.bookingFee,
-      },
-      selectedTech.phoneNumber,
-      selectedTech.location
-    );
-
-    linkChatThread(finalId, threadId);
-
-    // 3. Route directly to /chat/[id]?type=SOS
     setTimeout(() => {
       router.replace({
-        pathname: `/chat/${threadId}` as any,
+        pathname: `/chat/${destChatId}` as any,
         params: {
           requestId: finalId,
           type: 'SOS',
@@ -604,6 +625,75 @@ export default function SosDispatchScreen() {
           </View>
         </>
       )}
+
+      {/* Phone Verification OTP Modal */}
+      <Modal visible={showOtpModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, width: '90%', maxWidth: 400 }]}>
+            <View style={[styles.modalIconRing, { backgroundColor: colors.primary }]}>
+              <Ionicons name="shield-checkmark" size={32} color="#ffffff" />
+            </View>
+
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Verify Phone Number</Text>
+            <Text style={[styles.modalSub, { color: colors.mutedForeground }]}>
+              Enter the 6-digit verification code sent to {phoneNumber} to authenticate your emergency broadcast.
+            </Text>
+
+            {otpError && (
+              <Text style={{ color: colors.destructive, fontSize: 13, textAlign: 'center', marginTop: 4 }}>
+                {otpError}
+              </Text>
+            )}
+
+            <TextInput
+              value={otpCode}
+              onChangeText={setOtpCode}
+              placeholder="123456"
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="number-pad"
+              maxLength={6}
+              style={{
+                color: colors.foreground,
+                backgroundColor: colors.background,
+                borderColor: colors.border,
+                borderWidth: 1,
+                borderRadius: 12,
+                paddingHorizontal: 16,
+                paddingVertical: 12,
+                fontSize: 22,
+                fontWeight: '700',
+                textAlign: 'center',
+                letterSpacing: 6,
+                width: '100%',
+                marginTop: 10,
+              }}
+            />
+
+            <View style={{ flexDirection: 'row', gap: 10, width: '100%', marginTop: 14 }}>
+              <Button
+                label="Cancel"
+                variant="outline"
+                size="small"
+                style={{ flex: 1 }}
+                onPress={() => {
+                  setShowOtpModal(false);
+                  setOtpCode('');
+                  setOtpError(null);
+                }}
+              />
+              <Button
+                label="Verify & Broadcast"
+                size="small"
+                variant="danger"
+                loading={isVerifyingOtp}
+                disabled={otpCode.trim().length < 6}
+                style={{ flex: 1 }}
+                onPress={handleConfirmOtpAndBroadcast}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* =========================================================================
           MATCH ACCEPTANCE CELEBRATION MODAL

@@ -7,6 +7,18 @@ import { useWork } from '@/context/WorkContext';
 import { jobsKey } from '@/constants/storage';
 import type { BookingFee, JobStatus, RequestLifecycleStatus, RequestType, ServiceRequest } from '@/constants/jobs';
 import type { Coordinates } from '@/lib/location';
+import {
+  acceptJobRequestInConversation,
+  acceptPriceOffer as apiAcceptPriceOffer,
+  declineJobRequestInConversation,
+  declinePriceOffer as apiDeclinePriceOffer,
+  listConversations,
+  openJobConversation,
+  sendConversationMessage,
+  sendPriceOffer as apiSendPriceOffer,
+  type BackendConversation,
+  type PriceOfferItem,
+} from '@/lib/conversations-api';
 
 export type { ServiceRequest } from '@/constants/jobs';
 
@@ -82,10 +94,90 @@ export type ChatThread = {
   cancelledById?: string;
 };
 
+export function mapBackendConversationToThread(
+  conv: BackendConversation,
+  currentUserRole?: string,
+): ChatThread {
+  const isTechnician = currentUserRole === 'TECHNICIAN';
+  const otherName = isTechnician
+    ? conv.customer?.fullName || 'Client'
+    : (conv.technician?.fullName || 'Technician');
+  const otherRole: 'client' | 'technician' = isTechnician ? 'client' : 'technician';
+
+  const mappedMessages: ChatMessage[] = conv.messages.map((m) => {
+    let priceOffer: ServiceOffer | undefined = undefined;
+    if (m.type === 'PRICE_OFFER' && m.offer) {
+      priceOffer = {
+        id: m.offer.id,
+        amount: m.offer.amount,
+        currency: m.offer.currency,
+        status: m.offer.status as any,
+        senderRole: m.offer.offeredByRole === 'TECHNICIAN' ? 'technician' : 'client',
+        notes: m.offer.notes ?? undefined,
+        createdAt: m.offer.createdAt,
+      };
+    }
+
+    let serviceRequest: ServiceRequestDetails | undefined = undefined;
+    if (m.type === 'REQUEST_DETAILS' && conv.request) {
+      serviceRequest = {
+        id: conv.jobId,
+        serviceName: conv.request.service || 'Service Request',
+        problem: conv.request.description,
+        address: conv.request.locationAddress,
+        latitude: conv.request.latitude,
+        longitude: conv.request.longitude,
+        photos: [],
+        videos: [],
+        createdAt: m.createdAt,
+        status: conv.status === 'WAITING_FOR_TECHNICIAN' ? 'REQUEST_RECEIVED' : conv.status === 'DECLINED' ? 'DECLINED' : 'ACCEPTED',
+        type: 'STANDARD',
+      };
+    }
+
+    const senderRole = m.sender?.role === 'TECHNICIAN' ? 'technician' : 'client';
+
+    return {
+      id: m.id,
+      senderId: m.senderId || m.sender?.id || '',
+      senderName: m.sender?.fullName || (senderRole === 'technician' ? 'Technician' : 'Client'),
+      senderRole,
+      text: m.text,
+      timestamp: m.createdAt,
+      priceOffer,
+      serviceRequest,
+      cancelledByRole: conv.status === 'DECLINED' ? 'technician' : undefined,
+      cancelledByName: conv.declinedById ? (isTechnician ? 'Client' : 'Technician') : undefined,
+    };
+  });
+
+  const lastMsg = mappedMessages[mappedMessages.length - 1];
+
+  return {
+    id: conv.id,
+    jobId: conv.jobId,
+    clientName: conv.customer?.fullName,
+    clientPhone: conv.customer?.phoneNumber,
+    technicianName: conv.technician?.fullName,
+    technicianPhone: conv.technician?.phoneNumber,
+    isAccepted: conv.status === 'AGREED' || conv.status === 'NEGOTIATING',
+    isEnded: conv.status === 'DECLINED' || conv.status === 'EXPIRED' || conv.status === 'CANCELLED',
+    otherParticipantName: otherName,
+    otherParticipantRole: otherRole,
+    lastMessage: lastMsg?.text || (conv.status === 'WAITING_FOR_TECHNICIAN' ? 'Waiting for technician to accept' : 'Conversation active'),
+    lastMessageTime: conv.lastMessageAt || conv.startedAt,
+    agreedPrice: conv.agreedAmount ?? undefined,
+    messages: mappedMessages,
+    cancelledByRole: conv.status === 'DECLINED' ? 'technician' : undefined,
+  };
+}
+
 type ChatContextValue = {
   threads: ChatThread[];
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
+  refreshConversations: () => Promise<void>;
+  openConversation: (jobId: string) => Promise<string>;
   sendMessage: (threadId: string, text: string, imageUri?: string) => Promise<void>;
   markThreadAsRead: (threadId: string) => Promise<void>;
   updateRequestStatus: (threadId: string, requestId: string, status: RequestLifecycleStatus, reason?: string) => Promise<void>;
@@ -129,6 +221,31 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
   const storageKey = account ? `${CHAT_STORAGE_KEY}/${account.phone}` : null;
+
+  const refreshConversations = useCallback(async () => {
+    if (!account) return;
+    try {
+      const serverConvs = await listConversations();
+      const mappedThreads = serverConvs.map((conv) => mapBackendConversationToThread(conv, account.role));
+      setThreads((current) => {
+        const serverIds = new Set(mappedThreads.map((t) => t.id));
+        const localOnly = current.filter((t) => !serverIds.has(t.id));
+        return [...mappedThreads, ...localOnly];
+      });
+    } catch {
+      // Backend fetch failure is non-fatal: offline storage continues
+    }
+  }, [account]);
+
+  const openConversation = useCallback(
+    async (jobId: string): Promise<string> => {
+      const backendConv = await openJobConversation(jobId);
+      const mapped = mapBackendConversationToThread(backendConv, account?.role);
+      setThreads((current) => [mapped, ...current.filter((t) => t.id !== mapped.id)]);
+      return backendConv.id;
+    },
+    [account?.role],
+  );
 
   useEffect(() => {
     if (!storageKey) {
@@ -189,7 +306,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             }
             return { ...thread, messages, isEnded: thread.isEnded || hadCompletedRequest, ownerPhone: account?.phone };
           });
-        if (mounted) setThreads(owned);
+        if (mounted) {
+          setThreads(owned);
+          void refreshConversations();
+        }
       } catch (error) {
         console.error('Unable to load chat threads.', error);
         if (mounted) setThreads([]);
@@ -199,7 +319,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [storageKey, account?.phone]);
+  }, [storageKey, account?.phone, refreshConversations]);
 
   const persistThreads = async (updated: ChatThread[]) => {
     setThreads(updated);
@@ -229,6 +349,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const sendMessage = useCallback(
     async (threadId: string, text: string, imageUri?: string) => {
       if (!account) return;
+      if (text.trim()) {
+        try {
+          await sendConversationMessage(threadId, text.trim());
+        } catch (err) {
+          console.warn('Backend sendConversationMessage error (non-fatal):', err);
+        }
+      }
       const now = new Date().toISOString();
       const newMessage: ChatMessage = {
         id: 'msg-' + Date.now(),
@@ -489,6 +616,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
       if (sourceThread.isEnded) throw new Error('This request has ended and cannot receive new offers.');
 
+      try {
+        await apiSendPriceOffer(threadId, amount, notes);
+      } catch (err) {
+        console.warn('Backend sendPriceOffer error (non-fatal):', err);
+      }
+
       const now = new Date().toISOString();
       const senderRole = senderRoleOverride ?? (account.role === 'TECHNICIAN' ? 'technician' : 'client');
       
@@ -590,6 +723,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const respondToOffer = useCallback(
     async (threadId: string, offerId: string, status: 'ACCEPTED' | 'DECLINED') => {
+      try {
+        if (status === 'ACCEPTED') {
+          await apiAcceptPriceOffer(threadId, offerId);
+        } else {
+          await apiDeclinePriceOffer(threadId, offerId);
+        }
+      } catch (err) {
+        console.warn('Backend respondToOffer non-fatal:', err);
+      }
+
       const now = new Date().toISOString();
       const sourceThread = threads.find((thread) => thread.id === threadId);
       const sourceOffer = sourceThread?.messages.find((message) => message.priceOffer?.id === offerId)?.priceOffer;
@@ -701,6 +844,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const acceptRequestThread = useCallback(
     async (threadId: string) => {
+      try {
+        await acceptJobRequestInConversation(threadId);
+      } catch (err) {
+        console.warn('Backend acceptJobRequestInConversation non-fatal:', err);
+      }
+
       const request = threads
         .find((thread) => thread.id === threadId)
         ?.messages.find((message) => message.serviceRequest)?.serviceRequest;
@@ -737,6 +886,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const endRequestThread = useCallback(
     async (threadId: string) => {
+      try {
+        await declineJobRequestInConversation(threadId, 'Request ended');
+      } catch (err) {
+        console.warn('Backend declineJobRequestInConversation non-fatal:', err);
+      }
+
       const now = new Date().toISOString();
       const initiatorRole: 'technician' | 'client' = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
       const initiatorName = account?.name ?? (initiatorRole === 'technician' ? 'Technician' : 'Client');
@@ -916,6 +1071,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       threads,
       activeThreadId,
       setActiveThreadId,
+      refreshConversations,
+      openConversation,
       sendMessage,
       markThreadAsRead,
       updateRequestStatus,
@@ -925,7 +1082,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       endRequestThread,
       createOrGetThread,
     }),
-    [threads, activeThreadId, sendMessage, markThreadAsRead, updateRequestStatus, sendPriceOffer, respondToOffer, acceptRequestThread, endRequestThread, createOrGetThread],
+    [
+      threads,
+      activeThreadId,
+      refreshConversations,
+      openConversation,
+      sendMessage,
+      markThreadAsRead,
+      updateRequestStatus,
+      sendPriceOffer,
+      respondToOffer,
+      acceptRequestThread,
+      endRequestThread,
+      createOrGetThread,
+    ],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

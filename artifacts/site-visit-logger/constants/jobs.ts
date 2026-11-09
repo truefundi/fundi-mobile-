@@ -139,6 +139,8 @@ export type Technician = {
   phone: string;
   yearsExperience: number;
   location?: Coordinates;
+  avatarUrl?: string;
+  photoUri?: string;
 };
 
 export type QuoteLine = {
@@ -222,6 +224,13 @@ export interface ServiceRequest {
   proposedPrice?: number;
   completedPhotoUri?: string;
   cancellationReason?: string;
+  cooperationStatus?: 'PENDING' | 'CONFIRMED';
+  customerProgress?: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+  technicianProgress?: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+  paymentId?: string;
+  phoneVerificationId?: string;
+  serviceCategoryId?: string;
+  offerId?: string;
   events: JobEvent[];
   type: RequestType;
   bookingFee: {

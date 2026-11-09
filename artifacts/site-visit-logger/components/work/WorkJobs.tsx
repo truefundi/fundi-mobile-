@@ -23,13 +23,25 @@ import { useColors } from '@/hooks/useColors';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { getServiceIcon } from '@/lib/categories-api';
 
-type Tab = 'In Progress' | 'Completed' | 'Cancelled';
+type Tab = 'Offers' | 'In Progress' | 'Completed' | 'Cancelled';
 
 export function WorkJobs() {
   const colors = useColors();
   const router = useRouter();
-  const { mine, done, cancelled, earnings, cancelJob, completeJob, startJob } = useWork();
-  const [tab, setTab] = useState<Tab>('In Progress');
+  const {
+    offers,
+    mine,
+    done,
+    cancelled,
+    earnings,
+    cancelJob,
+    completeJob,
+    startJob,
+    acceptOffer,
+    rejectOffer,
+    confirmCooperation,
+  } = useWork();
+  const [tab, setTab] = useState<Tab>(offers.length > 0 ? 'Offers' : 'In Progress');
 
   // Selected job for the Details Modal
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -47,7 +59,8 @@ export function WorkJobs() {
   // Image preview modal
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  const visibleJobs: Job[] = tab === 'In Progress' ? mine : tab === 'Completed' ? done : cancelled;
+  const visibleJobs: Job[] =
+    tab === 'Offers' ? offers : tab === 'In Progress' ? mine : tab === 'Completed' ? done : cancelled;
 
   const handleStartJob = async (job: Job) => {
     if (!job.agreedPrice || job.agreedPrice <= 0) {
@@ -72,6 +85,52 @@ export function WorkJobs() {
       Alert.alert('Job Started', 'The job status is now In Progress. The client has been notified.');
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Could not start the job.');
+    }
+  };
+
+  const handleAcceptOffer = async (job: Job) => {
+    const offerId = job.offerId || job.id;
+    try {
+      await acceptOffer(offerId);
+      Alert.alert('Offer Accepted', 'The job has been assigned to you. You can coordinate and start work.');
+      setTab('In Progress');
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Could not accept the offer.');
+    }
+  };
+
+  const handleRejectOffer = (job: Job) => {
+    const offerId = job.offerId || job.id;
+    Alert.alert(
+      'Decline Offer',
+      'Are you sure you want to decline this job offer?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Decline',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await rejectOffer(offerId, 'Technician unavailable');
+              Alert.alert('Offer Declined', 'The offer has been declined.');
+            } catch (e) {
+              Alert.alert('Error', e instanceof Error ? e.message : 'Could not decline the offer.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleConfirmCooperation = async (job: Job) => {
+    try {
+      await confirmCooperation(job.id);
+      if (selectedJob?.id === job.id) {
+        setSelectedJob({ ...selectedJob, cooperationStatus: 'CONFIRMED' });
+      }
+      Alert.alert('Cooperation Confirmed', 'You have confirmed cooperation with the client.');
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Could not confirm cooperation.');
     }
   };
 
@@ -176,11 +235,18 @@ export function WorkJobs() {
         </View>
       </View>
 
-      {/* Tabs: In Progress, Completed, Cancelled */}
+      {/* Tabs: Offers, In Progress, Completed, Cancelled */}
       <View style={[styles.tabsRow, { backgroundColor: colors.muted }]}>
-        {(['In Progress', 'Completed', 'Cancelled'] as Tab[]).map((t) => {
+        {(['Offers', 'In Progress', 'Completed', 'Cancelled'] as Tab[]).map((t) => {
           const selected = t === tab;
-          const count = t === 'In Progress' ? mine.length : t === 'Completed' ? done.length : cancelled.length;
+          const count =
+            t === 'Offers'
+              ? offers.length
+              : t === 'In Progress'
+              ? mine.length
+              : t === 'Completed'
+              ? done.length
+              : cancelled.length;
           return (
             <Pressable
               key={t}
@@ -206,17 +272,29 @@ export function WorkJobs() {
       {/* Job list */}
       {visibleJobs.length === 0 ? (
         <EmptyState
-          icon={tab === 'In Progress' ? 'briefcase' : tab === 'Completed' ? 'check-circle' : 'x-circle'}
+          icon={
+            tab === 'Offers'
+              ? 'inbox'
+              : tab === 'In Progress'
+              ? 'briefcase'
+              : tab === 'Completed'
+              ? 'check-circle'
+              : 'x-circle'
+          }
           title={
-            tab === 'In Progress'
+            tab === 'Offers'
+              ? 'No incoming job offers'
+              : tab === 'In Progress'
               ? 'No jobs in progress'
               : tab === 'Completed'
               ? 'No completed jobs yet'
               : 'No cancelled jobs'
           }
           text={
-            tab === 'In Progress'
-              ? 'When you start a job from your client service chat, it will appear here.'
+            tab === 'Offers'
+              ? 'Incoming dispatch and client requests will appear here for you to accept or decline.'
+              : tab === 'In Progress'
+              ? 'When you accept an offer or coordinate with a client, active jobs will appear here.'
               : tab === 'Completed'
               ? 'Jobs you complete will be kept here along with your earnings.'
               : 'Jobs that were terminated or cancelled will appear here.'
@@ -266,11 +344,14 @@ export function WorkJobs() {
                     style={[
                       styles.statusPill,
                       {
-                        backgroundColor: inProgress
-                          ? colors.primary + '20'
-                          : terminated
-                          ? colors.destructive + '15'
-                          : colors.success + '20',
+                        backgroundColor:
+                          tab === 'Offers' || job.status === 'OFFERED'
+                            ? colors.warning + '20'
+                            : inProgress
+                            ? colors.primary + '20'
+                            : terminated
+                            ? colors.destructive + '15'
+                            : colors.success + '20',
                       },
                     ]}
                   >
@@ -278,15 +359,24 @@ export function WorkJobs() {
                       style={[
                         styles.statusPillText,
                         {
-                          color: inProgress
-                            ? colors.primary
-                            : terminated
-                            ? colors.destructive
-                            : colors.success,
+                          color:
+                            tab === 'Offers' || job.status === 'OFFERED'
+                              ? colors.warning
+                              : inProgress
+                              ? colors.primary
+                              : terminated
+                              ? colors.destructive
+                              : colors.success,
                         },
                       ]}
                     >
-                      {isActive ? 'Active' : isStarted ? 'In Progress' : STATUS_LABEL[job.status]}
+                      {tab === 'Offers' || job.status === 'OFFERED'
+                        ? 'New Offer'
+                        : isActive
+                        ? 'Active'
+                        : isStarted
+                        ? 'In Progress'
+                        : STATUS_LABEL[job.status]}
                     </Text>
                   </View>
                 </View>
@@ -332,99 +422,178 @@ export function WorkJobs() {
                   </View>
                 </View>
 
-                {/* 3 Action Buttons on the Container */}
-                {inProgress && (
+                {/* Card Action Buttons */}
+                {tab === 'Offers' ? (
                   <View style={styles.cardActionsContainer}>
                     <Pressable
                       onPress={(e) => {
                         e.stopPropagation();
-                        void handleStartJob(job);
+                        void handleAcceptOffer(job);
                       }}
-                      disabled={isStarted}
                       style={[
                         styles.cardActionBtn,
                         {
-                          backgroundColor: isStarted
-                            ? colors.secondary
-                            : !job.agreedPrice
-                            ? colors.muted
-                            : colors.primary,
-                          borderColor: isStarted
-                            ? colors.border
-                            : !job.agreedPrice
-                            ? colors.border
-                            : colors.primary,
+                          backgroundColor: colors.primary,
+                          borderColor: colors.primary,
+                          flex: 1.3,
                         },
                       ]}
                     >
-                      <Feather
-                        name={isStarted ? 'check' : !job.agreedPrice ? 'message-circle' : 'play'}
-                        size={12}
-                        color={
-                          isStarted
-                            ? colors.mutedForeground
-                            : !job.agreedPrice
-                            ? colors.mutedForeground
-                            : colors.primaryForeground
-                        }
-                      />
-                      <Text
+                      <Feather name="check" size={12} color={colors.primaryForeground} />
+                      <Text style={[styles.cardActionBtnText, { color: colors.primaryForeground }]}>
+                        Accept Offer
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleRejectOffer(job);
+                      }}
+                      style={[
+                        styles.cardActionBtn,
+                        {
+                          backgroundColor: colors.card,
+                          borderColor: colors.destructive + '40',
+                          flex: 1,
+                        },
+                      ]}
+                    >
+                      <Feather name="x" size={12} color={colors.destructive} />
+                      <Text style={[styles.cardActionBtnText, { color: colors.destructive }]}>
+                        Decline
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleChatClient(job.chatThreadId);
+                      }}
+                      style={[
+                        styles.cardChatBtn,
+                        { backgroundColor: colors.secondary, borderColor: colors.border },
+                      ]}
+                    >
+                      <Ionicons name="chatbubbles-outline" size={14} color={colors.primary} />
+                    </Pressable>
+                  </View>
+                ) : inProgress && (
+                  <View style={styles.cardActionsContainer}>
+                    {job.cooperationStatus === 'PENDING' ? (
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          void handleConfirmCooperation(job);
+                        }}
                         style={[
-                          styles.cardActionBtnText,
+                          styles.cardActionBtn,
                           {
-                            color: isStarted
-                              ? colors.mutedForeground
-                              : !job.agreedPrice
-                              ? colors.mutedForeground
-                              : colors.primaryForeground,
+                            backgroundColor: colors.primary,
+                            borderColor: colors.primary,
+                            flex: 1,
                           },
                         ]}
                       >
-                        {isStarted ? 'In Progress' : !job.agreedPrice ? 'Agree Price' : 'Start Job'}
-                      </Text>
-                    </Pressable>
+                        <Feather name="user-check" size={12} color={colors.primaryForeground} />
+                        <Text style={[styles.cardActionBtnText, { color: colors.primaryForeground }]}>
+                          Confirm Cooperation
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <>
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            void handleStartJob(job);
+                          }}
+                          disabled={isStarted}
+                          style={[
+                            styles.cardActionBtn,
+                            {
+                              backgroundColor: isStarted
+                                ? colors.secondary
+                                : !job.agreedPrice
+                                ? colors.muted
+                                : colors.primary,
+                              borderColor: isStarted
+                                ? colors.border
+                                : !job.agreedPrice
+                                ? colors.border
+                                : colors.primary,
+                            },
+                          ]}
+                        >
+                          <Feather
+                            name={isStarted ? 'check' : !job.agreedPrice ? 'message-circle' : 'play'}
+                            size={12}
+                            color={
+                              isStarted
+                                ? colors.mutedForeground
+                                : !job.agreedPrice
+                                ? colors.mutedForeground
+                                : colors.primaryForeground
+                            }
+                          />
+                          <Text
+                            style={[
+                              styles.cardActionBtnText,
+                              {
+                                color: isStarted
+                                  ? colors.mutedForeground
+                                  : !job.agreedPrice
+                                  ? colors.mutedForeground
+                                  : colors.primaryForeground,
+                              },
+                            ]}
+                          >
+                            {isStarted ? 'In Progress' : !job.agreedPrice ? 'Agree Price' : 'Start Job'}
+                          </Text>
+                        </Pressable>
 
-                    <Pressable
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        if (!isStarted) {
-                          Alert.alert('Start Job First', 'Please start the job before ending and uploading proof.');
-                          return;
-                        }
-                        setSelectedJob(job);
-                        setShowCompleteFlow(true);
-                      }}
-                      style={[
-                        styles.cardActionBtn,
-                        {
-                          backgroundColor: !isStarted ? colors.secondary : colors.card,
-                          borderColor: colors.border,
-                          opacity: !isStarted ? 0.7 : 1,
-                        },
-                      ]}
-                    >
-                      <Feather name="check-circle" size={12} color={!isStarted ? colors.mutedForeground : colors.foreground} />
-                      <Text style={[styles.cardActionBtnText, { color: !isStarted ? colors.mutedForeground : colors.foreground }]}>
-                        End Job
-                      </Text>
-                    </Pressable>
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            if (!isStarted) {
+                              Alert.alert('Start Job First', 'Please start the job before ending and uploading proof.');
+                              return;
+                            }
+                            setSelectedJob(job);
+                            setShowCompleteFlow(true);
+                          }}
+                          style={[
+                            styles.cardActionBtn,
+                            {
+                              backgroundColor: !isStarted ? colors.secondary : colors.card,
+                              borderColor: colors.border,
+                              opacity: !isStarted ? 0.7 : 1,
+                            },
+                          ]}
+                        >
+                          <Feather name="check-circle" size={12} color={!isStarted ? colors.mutedForeground : colors.foreground} />
+                          <Text style={[styles.cardActionBtnText, { color: !isStarted ? colors.mutedForeground : colors.foreground }]}>
+                            End Job
+                          </Text>
+                        </Pressable>
 
-                    <Pressable
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        setSelectedJob(job);
-                        setShowCancelPrompt(true);
-                      }}
-                      style={[
-                        styles.cardActionBtn,
-                        { backgroundColor: colors.card, borderColor: colors.destructive + '40' },
-                      ]}
-                    >
-                      <Feather name="x-circle" size={12} color={colors.destructive} />
-                      <Text style={[styles.cardActionBtnText, { color: colors.destructive }]}>
-                        Cancel
-                      </Text>
-                    </Pressable>
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            setSelectedJob(job);
+                            setShowCancelPrompt(true);
+                          }}
+                          style={[
+                            styles.cardActionBtn,
+                            { backgroundColor: colors.card, borderColor: colors.destructive + '40' },
+                          ]}
+                        >
+                          <Feather name="x-circle" size={12} color={colors.destructive} />
+                          <Text style={[styles.cardActionBtnText, { color: colors.destructive }]}>
+                            Cancel
+                          </Text>
+                        </Pressable>
+                      </>
+                    )}
 
                     <Pressable
                       onPress={(e) => {
@@ -634,11 +803,45 @@ export function WorkJobs() {
                   </View>
                 )}
 
-                {/* Actions: Cancel or End Service (Only for In-Progress jobs) */}
-                {!isClosed(selectedJob.status) && !isTerminated(selectedJob.status) && (
+                {/* Actions: Offers, Cooperation Confirmation, or Service In-Progress */}
+                {selectedJob.status === 'OFFERED' ? (
+                  <View style={styles.actionsContainer}>
+                    <View style={styles.twoActionRow}>
+                      <Button
+                        label="Accept Offer"
+                        icon="checkmark-circle-outline"
+                        onPress={() => {
+                          const j = selectedJob;
+                          setSelectedJob(null);
+                          void handleAcceptOffer(j);
+                        }}
+                        style={{ flex: 1.3 }}
+                      />
+                      <Button
+                        label="Decline"
+                        variant="outline"
+                        icon="close-circle-outline"
+                        onPress={() => {
+                          const j = selectedJob;
+                          setSelectedJob(null);
+                          handleRejectOffer(j);
+                        }}
+                        style={{ flex: 1, borderColor: colors.destructive }}
+                        textColor={colors.destructive}
+                      />
+                    </View>
+                  </View>
+                ) : !isClosed(selectedJob.status) && !isTerminated(selectedJob.status) && (
                   <View style={styles.actionsContainer}>
                     {!showCancelPrompt && !showCompleteFlow && (
                       <View style={{ gap: 10 }}>
+                        {selectedJob.cooperationStatus === 'PENDING' && (
+                          <Button
+                            label="Confirm Cooperation"
+                            icon="checkmark-done-circle-outline"
+                            onPress={() => void handleConfirmCooperation(selectedJob)}
+                          />
+                        )}
                         {selectedJob.status === 'ACTIVE' && (
                           <Button
                             label={selectedJob.agreedPrice ? 'Start Job' : 'Agree Price in Chat'}
@@ -808,7 +1011,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: 14, borderWidth: 1.5, padding: 12, gap: 8 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   cardHeaderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  cardHeaderIconTile: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  cardHeaderIconTile: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },
   statusPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   statusPillText: { fontFamily: 'Inter_700Bold', fontSize: 11 },

@@ -27,7 +27,7 @@ export default function ActivityScreen() {
   const colors = useColors();
   const bottomPadding = useTabScreenPadding();
   const router = useRouter();
-  const { jobs, isHydrated, cancelJob } = useFundi();
+  const { jobs, isHydrated, cancelJob, confirmCooperation, updateCustomerProgress } = useFundi();
   const { addNotification } = useNotifications();
   const [tab, setTab] = useState<Tab>('Active');
   const { mode, status } = useWork();
@@ -40,6 +40,36 @@ export default function ActivityScreen() {
   const [cancelModalJob, setCancelModalJob] = useState<Job | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelLoading, setCancelLoading] = useState(false);
+
+  const handleConfirmCooperation = async (job: Job) => {
+    try {
+      await confirmCooperation(job.id);
+      Alert.alert('Cooperation Confirmed', 'You have confirmed cooperation with your technician.');
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Could not confirm cooperation.');
+    }
+  };
+
+  const handleConfirmCompleted = (job: Job) => {
+    Alert.alert(
+      'Confirm Work Completed',
+      'Has the technician finished all the requested service to your satisfaction?',
+      [
+        { text: 'Not Yet', style: 'cancel' },
+        {
+          text: 'Yes, Completed',
+          onPress: async () => {
+            try {
+              await updateCustomerProgress(job.id, 'COMPLETED');
+              Alert.alert('Service Completed', 'Thank you! The job has been marked as completed.');
+            } catch (e) {
+              Alert.alert('Error', e instanceof Error ? e.message : 'Could not update completion status.');
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const { active, completed, cancelled } = useMemo(
     () => ({
@@ -227,6 +257,8 @@ export default function ActivityScreen() {
                     onPress={() => handleJobPress(job)}
                     onCancel={() => setCancelModalJob(job)}
                     onChat={() => handleOpenChat(job)}
+                    onConfirmCooperation={() => void handleConfirmCooperation(job)}
+                    onConfirmCompleted={() => handleConfirmCompleted(job)}
                   />
                 ))}
 
@@ -319,11 +351,15 @@ function JobCard({
   onPress,
   onCancel,
   onChat,
+  onConfirmCooperation,
+  onConfirmCompleted,
 }: {
   job: Job;
   onPress: () => void;
   onCancel?: () => void;
   onChat?: () => void;
+  onConfirmCooperation?: () => void;
+  onConfirmCompleted?: () => void;
 }) {
   const colors = useColors();
   const created = new Date(job.createdAt);
@@ -428,31 +464,73 @@ function JobCard({
           </View>
         </View>
 
-        {/* Actions for client: Status pill, Cancel button, Chat button */}
+        {/* Actions for client: Cooperation Confirmation / Progress / Cancel / Chat */}
         <View style={styles.cardActionsContainer}>
-          <View
-            style={[
-              styles.statusIndicatorBtn,
-              {
-                backgroundColor: isStarted ? colors.success + '15' : colors.primary + '15',
-                borderColor: isStarted ? colors.success + '35' : colors.primary + '35',
-              },
-            ]}
-          >
-            <Feather
-              name={isStarted ? 'loader' : 'check-circle'}
-              size={12}
-              color={isStarted ? colors.success : colors.primary}
-            />
-            <Text
+          {job.cooperationStatus === 'PENDING' ? (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onConfirmCooperation?.();
+              }}
               style={[
-                styles.statusIndicatorText,
-                { color: isStarted ? colors.success : colors.primary },
+                styles.cardActionBtn,
+                {
+                  backgroundColor: colors.primary,
+                  borderColor: colors.primary,
+                  flex: 1.2,
+                },
               ]}
             >
-              {isStarted ? 'In Progress' : 'Active'}
-            </Text>
-          </View>
+              <Feather name="user-check" size={12} color={colors.primaryForeground} />
+              <Text style={[styles.cardActionBtnText, { color: colors.primaryForeground }]}>
+                Confirm Cooperation
+              </Text>
+            </Pressable>
+          ) : isStarted ? (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onConfirmCompleted?.();
+              }}
+              style={[
+                styles.cardActionBtn,
+                {
+                  backgroundColor: colors.success + '20',
+                  borderColor: colors.success,
+                  flex: 1.2,
+                },
+              ]}
+            >
+              <Feather name="check-circle" size={12} color={colors.success} />
+              <Text style={[styles.cardActionBtnText, { color: colors.success }]}>
+                Confirm Completed
+              </Text>
+            </Pressable>
+          ) : (
+            <View
+              style={[
+                styles.statusIndicatorBtn,
+                {
+                  backgroundColor: colors.primary + '15',
+                  borderColor: colors.primary + '35',
+                },
+              ]}
+            >
+              <Feather
+                name={job.cooperationStatus === 'CONFIRMED' ? 'check' : 'loader'}
+                size={12}
+                color={colors.primary}
+              />
+              <Text
+                style={[
+                  styles.statusIndicatorText,
+                  { color: colors.primary },
+                ]}
+              >
+                {job.cooperationStatus === 'CONFIRMED' ? 'Cooperating' : 'Active'}
+              </Text>
+            </View>
+          )}
 
           <Pressable
             onPress={(e) => {
@@ -559,7 +637,7 @@ const styles = StyleSheet.create({
   containerCard: { borderRadius: 14, borderWidth: 1.5, padding: 12, gap: 8, marginBottom: 11 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   cardHeaderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  cardHeaderIconTile: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  cardHeaderIconTile: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   jobServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },
   statusPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   statusPillText: { fontFamily: 'Inter_700Bold', fontSize: 11 },
@@ -626,7 +704,7 @@ const styles = StyleSheet.create({
   inputBox: { borderWidth: 1, borderRadius: 10, padding: 12, minHeight: 70, fontSize: 13 },
   flowActionRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   jobCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 11 },
-  jobIcon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  jobIcon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   jobCopy: { flex: 1, gap: 3 },
   jobTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   jobTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, flex: 1 },

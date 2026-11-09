@@ -1,12 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
-import { MOCK_MARKETPLACE_TECHNICIANS, toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
+import { toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
+import { fetchPublicTechnicians } from '@/lib/technicians-api';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { distanceMeters, formatDistance } from '@/lib/location';
@@ -42,6 +43,8 @@ export default function SelectTechnicianScreen() {
   const requestJob = jobId ? getJob(jobId) : undefined;
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
+  const [apiTechnicians, setApiTechnicians] = useState<MarketplaceTechnician[]>([]);
+  const [loadingTechs, setLoadingTechs] = useState(true);
 
   const service = requestJob?.service ?? category ?? serviceParam;
   const problem = requestJob?.problem ?? description ?? problemParam;
@@ -50,6 +53,25 @@ export default function SelectTechnicianScreen() {
     requestJob?.locationLatitude ?? (latParam ? parseFloat(latParam) : undefined);
   const locationLongitude =
     requestJob?.locationLongitude ?? (lngParam ? parseFloat(lngParam) : undefined);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoadingTechs(true);
+    fetchPublicTechnicians()
+      .then((techs) => {
+        if (!mounted) return;
+        setApiTechnicians(techs);
+      })
+      .catch((err) => {
+        console.warn('Could not fetch public technicians:', err);
+      })
+      .finally(() => {
+        if (mounted) setLoadingTechs(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const technicians = useMemo(() => {
     const requestedService = (service ?? '').toLowerCase().trim();
@@ -80,14 +102,14 @@ export default function SelectTechnicianScreen() {
       return false;
     };
 
-    const directFiltered = MOCK_MARKETPLACE_TECHNICIANS.filter(
+    const directFiltered = apiTechnicians.filter(
       (tech) => (!availableOnly || tech.isAvailable) && matchesService(tech),
     );
 
-    // Fallback: if no technician directly matches the niche trade, include general maintenance specialists
+    // Fallback: if no technician directly matches the niche trade, include available specialists
     const pool = directFiltered.length > 0
       ? directFiltered
-      : MOCK_MARKETPLACE_TECHNICIANS.filter((tech) => !availableOnly || tech.isAvailable);
+      : apiTechnicians.filter((tech) => !availableOnly || tech.isAvailable);
 
     return pool
       .map((technician) => ({
@@ -106,7 +128,7 @@ export default function SelectTechnicianScreen() {
         if (b.distance === null) return -1;
         return a.distance - b.distance;
       });
-  }, [availableOnly, locationLatitude, locationLongitude, service, sortBy]);
+  }, [apiTechnicians, availableOnly, locationLatitude, locationLongitude, service, sortBy]);
 
   const handleSelectTech = async (tech: MarketplaceTechnician) => {
     let targetJob = requestJob;
@@ -129,7 +151,11 @@ export default function SelectTechnicianScreen() {
 
     if (!targetJob) return;
 
-    selectTechnician(targetJob.id, toJobTechnician(tech, requestLocation));
+    const meters =
+      requestLocation && tech.location ? distanceMeters(requestLocation, tech.location) : null;
+    const distKm = meters !== null ? Math.round((meters / 1000) * 10) / 10 : undefined;
+
+    selectTechnician(targetJob.id, toJobTechnician(tech, distKm));
 
     // Intercept call to navigate to payment screens if payment has already been settled
     if (targetJob.bookingFee?.status === 'PAID') {
@@ -257,9 +283,18 @@ export default function SelectTechnicianScreen() {
           </View>
         }
         ListEmptyComponent={
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            No technicians match this service and availability filter yet.
-          </Text>
+          loadingTechs ? (
+            <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={[styles.emptyText, { color: colors.mutedForeground, marginTop: 8 }]}>
+                Finding verified technicians…
+              </Text>
+            </View>
+          ) : (
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              No technicians match this service and availability filter yet.
+            </Text>
+          )
         }
         renderItem={({ item: { technician: item, distance } }) => (
           <Pressable

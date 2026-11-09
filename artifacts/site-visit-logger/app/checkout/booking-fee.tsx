@@ -20,7 +20,6 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
 import { getServiceIcon } from '@/lib/categories-api';
 import {
-  MOCK_MARKETPLACE_TECHNICIANS,
   toJobTechnician,
   type MarketplaceTechnician,
 } from '@/constants/technicians';
@@ -104,15 +103,9 @@ export default function BookingFeeReviewScreen() {
     }
   }, [isAlreadyPaid, destinationChatId, job?.id, params.requestId, router]);
 
-  // Resolve technician from job or technicianId parameter
+  // Resolve technician from job
   const technician: MarketplaceTechnician | undefined = useMemo(() => {
-    if (params.technicianId) {
-      const match = MOCK_MARKETPLACE_TECHNICIANS.find((t) => t.id === params.technicianId);
-      if (match) return match;
-    }
     if (job?.technician) {
-      const match = MOCK_MARKETPLACE_TECHNICIANS.find((t) => t.id === job.technician?.id);
-      if (match) return match;
       return {
         id: job.technician.id,
         name: job.technician.name,
@@ -128,8 +121,8 @@ export default function BookingFeeReviewScreen() {
         phoneNumber: job.technician.phone,
       };
     }
-    return MOCK_MARKETPLACE_TECHNICIANS[0];
-  }, [job?.technician, params.technicianId]);
+    return undefined;
+  }, [job?.technician]);
 
   const serviceName = job?.service || params.service || technician?.service || 'General Maintenance';
   const problemDesc = job?.problem || params.problem || 'Standard Service Request';

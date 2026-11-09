@@ -26,8 +26,13 @@ export function resolveCategoryIcon(
   name?: string | null,
   providedIcon?: string | null,
 ): keyof typeof MaterialCommunityIcons.glyphMap {
-  if (providedIcon && providedIcon in require('@expo/vector-icons/build/vendor/react-native-vector-icons/glyphmaps/MaterialCommunityIcons.json')) {
-    return providedIcon as keyof typeof MaterialCommunityIcons.glyphMap;
+  if (providedIcon) {
+    try {
+      const glyphMap = require('@expo/vector-icons/build/vendor/react-native-vector-icons/glyphmaps/MaterialCommunityIcons.json');
+      if (providedIcon in glyphMap) {
+        return providedIcon as keyof typeof MaterialCommunityIcons.glyphMap;
+      }
+    } catch {}
   }
 
   const normalized = (slug || name || '').toLowerCase().trim();

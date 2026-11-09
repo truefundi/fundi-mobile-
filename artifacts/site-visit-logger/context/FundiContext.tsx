@@ -6,6 +6,22 @@ import { getServiceBookingFee } from '@/constants/services';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import {
+  cancelCustomerJob,
+  confirmJobCooperation,
+  createBookingPayment as apiCreateBookingPayment,
+  createCustomerJob,
+  fetchCustomerJobs,
+  proposeTechnician,
+  requestJobPhoneVerification,
+  updateJobProgress,
+  verifyJobPhone,
+  type BackendJob,
+  type CreateBookingPaymentResponse,
+  type CreateJobInput,
+  type PhoneVerificationRequestResponse,
+  type VerifyPhoneResponse,
+} from '@/lib/jobs-api';
+import {
   isClosed,
   visitFeeFor,
   type BookingFee,
@@ -55,10 +71,94 @@ type NewRequest = Pick<
   videoMimeType?: string;
 };
 
+export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
+  const photoMedia = backendJob.media?.filter((m) => m.type === 'PHOTO') ?? [];
+  const videoMedia = backendJob.media?.filter((m) => m.type === 'VIDEO') ?? [];
+  const photoUris = photoMedia.map((m) => m.url);
+  const videoUris = videoMedia.map((m) => m.url);
+
+  let status: JobStatus = 'REQUESTED';
+  if (backendJob.status === 'CANCELLED') {
+    status = 'CANCELLED';
+  } else if (backendJob.status === 'COMPLETED') {
+    status = 'COMPLETED';
+  } else if (backendJob.status === 'IN_PROGRESS') {
+    status = 'IN_PROGRESS';
+  } else if (backendJob.status === 'ASSIGNED') {
+    status = 'ACTIVE';
+  } else if (backendJob.status === 'OPEN') {
+    if (backendJob.dispatchStatus === 'OFFERED') {
+      status = 'OFFERED';
+    } else {
+      status = backendJob.requestType === 'SOS' ? 'SEARCHING_DISPATCH' : 'REQUESTED';
+    }
+  }
+
+  let tech: Technician | undefined = undefined;
+  if (backendJob.currentTechnician) {
+    const prof = backendJob.currentTechnician.profile;
+    tech = {
+      id: backendJob.currentTechnician.id,
+      name: backendJob.currentTechnician.fullName,
+      phone: '',
+      skill: prof?.serviceExperiences?.[0]?.category?.name || prof?.serviceExperiences?.[0]?.customName || backendJob.service || 'Specialist',
+      rating: 4.9,
+      jobsCompleted: 35,
+      etaMinutes: 15,
+      initials: backendJob.currentTechnician.fullName.slice(0, 2).toUpperCase(),
+      yearsExperience: prof?.yearsOfExperience || 3,
+      location: {
+        latitude: backendJob.location?.latitude ?? -1.9441,
+        longitude: backendJob.location?.longitude ?? 30.0619,
+      },
+    };
+  }
+
+  const feeAmount = backendJob.bookingPayment?.amount ?? (backendJob.serviceCategory?.bookingFee || 3000);
+
+  return {
+    id: backendJob.id,
+    reference: `FND-${backendJob.id.slice(-4).toUpperCase()}`,
+    service: backendJob.serviceCategory?.name || backendJob.service || 'Service Request',
+    serviceCategoryId: backendJob.serviceCategory?.id,
+    problem: backendJob.description,
+    urgency: backendJob.requestType === 'SOS' || backendJob.priority === 'URGENT' ? 'Emergency' : 'Today',
+    locationLabel: backendJob.location?.address || 'Kigali, Rwanda',
+    locationLatitude: backendJob.location?.latitude,
+    locationLongitude: backendJob.location?.longitude,
+    photoUri: photoUris[0],
+    photoUris,
+    videoUri: videoUris[0],
+    videoUris,
+    status,
+    statusSince: backendJob.updatedAt || backendJob.createdAt,
+    createdAt: backendJob.createdAt,
+    completedAt: backendJob.completedAt ?? undefined,
+    cancellationReason: backendJob.cancellationReason ?? undefined,
+    technician: tech,
+    type: backendJob.requestType === 'SOS' ? 'SOS' : 'STANDARD',
+    visitFee: feeAmount,
+    agreedPrice: backendJob.offeredAmount || undefined,
+    cooperationStatus: backendJob.cooperationStatus,
+    customerProgress: backendJob.customerProgress,
+    technicianProgress: backendJob.technicianProgress,
+    paymentId: backendJob.bookingPayment?.id,
+    bookingFee: {
+      amount: feeAmount,
+      currency: backendJob.bookingPayment?.currency || backendJob.currency || 'RWF',
+      status: backendJob.bookingPayment ? 'PAID' : 'PENDING',
+      paidAt: backendJob.bookingPayment?.paidAt,
+      transactionId: backendJob.bookingPayment?.externalPaymentId,
+    },
+    events: [],
+  };
+}
+
 type FundiContextValue = {
   jobs: Job[];
   isHydrated: boolean;
   getJob: (id: string) => Job | undefined;
+  refreshJobs: () => Promise<void>;
   /** Every status change in reverse-chronological order, newest first. */
   events: (JobEvent & { jobId: string; service: string })[];
   addRequest: (request: NewRequest) => Promise<string>;
@@ -75,7 +175,7 @@ type FundiContextValue = {
   startSettlement: (id: string) => void;
   recordSettlement: (id: string, method: SettlementMethod) => void;
   submitRating: (id: string, rating: Rating) => void;
-  cancelJob: (id: string, reason?: string, recipientPhones?: string[]) => void;
+  cancelJob: (id: string, reason?: string, recipientPhones?: string[]) => Promise<void>;
   updateJob: (id: string, updates: Partial<Job>, recipientPhones?: string[]) => void;
   advance: (id: string, next: JobStatus) => void;
   assignEmergencyTechnician: (id: string, technician: Technician) => void;
@@ -86,6 +186,14 @@ type FundiContextValue = {
   markArrived: (id: string) => void;
   submitDiagnosis: (id: string, quote: Quote) => void;
   completeRepair: (id: string) => void;
+  // Real backend workflow methods
+  createBackendJob: (input: CreateJobInput) => Promise<BackendJob>;
+  requestPhoneVerification: () => Promise<PhoneVerificationRequestResponse>;
+  verifyPhoneOtp: (verificationId: string, otp: string) => Promise<VerifyPhoneResponse>;
+  createBookingPayment: (serviceCategoryId: string, requestType?: 'NORMAL' | 'SOS', phoneNumber?: string) => Promise<CreateBookingPaymentResponse>;
+  proposeTechnicianToJob: (jobId: string, technicianId: string) => Promise<BackendJob>;
+  confirmCooperation: (jobId: string) => Promise<BackendJob>;
+  updateCustomerProgress: (jobId: string, status: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED') => Promise<BackendJob>;
 };
 
 export const FundiContext = createContext<FundiContextValue | undefined>(undefined);
@@ -193,6 +301,24 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   const storageKey = account ? jobsKey(account.phone) : null;
   const isHydrated = sessionReady && (storageKey === null || loadedKey === storageKey);
 
+  const refreshJobs = useCallback(async () => {
+    if (!account) return;
+    try {
+      const serverJobs = await fetchCustomerJobs();
+      const mapped = serverJobs.map(mapBackendJobToFrontendJob);
+      const serverIds = new Set(mapped.map((j) => j.id));
+      const localOnly = jobsRef.current.filter((j) => !serverIds.has(j.id));
+      const combined = [...mapped, ...localOnly];
+      jobsRef.current = combined;
+      setJobs(combined);
+      if (storageKey) {
+        await AsyncStorage.setItem(storageKey, JSON.stringify(combined)).catch(() => {});
+      }
+    } catch {
+      // Backend fetch failure is non-fatal: offline/local storage continues to work
+    }
+  }, [account, storageKey]);
+
   useEffect(() => {
     if (!storageKey) {
       jobsRef.current = [];
@@ -210,6 +336,8 @@ export function FundiProvider({ children }: { children: ReactNode }) {
         jobsRef.current = stored;
         setJobs(stored);
         setLoadedKey(storageKey);
+        // Refresh from real backend API immediately after loading cached jobs
+        void refreshJobs();
       })
       .catch(() => {
         if (!mounted) return;
@@ -219,7 +347,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [storageKey]);
+  }, [storageKey, refreshJobs]);
 
   // Persist after hydration only, so an early write cannot clobber saved jobs.
   useEffect(() => {
@@ -552,6 +680,94 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     return id;
   }, [addNotification]);
 
+  const cancelJob = useCallback(
+    async (id: string, reason?: string, recipientPhones?: string[]) => {
+      try {
+        if (account) {
+          await cancelCustomerJob(id, reason || 'Client cancelled request');
+        }
+      } catch (err) {
+        console.warn('Backend job cancellation non-fatal error:', err);
+      }
+      update(
+        id,
+        (job) => ({
+          ...transition(job, 'CANCELLED'),
+          ...(reason ? { cancellationReason: reason } : {}),
+        }),
+        recipientPhones,
+      );
+    },
+    [account, update],
+  );
+
+  const createBackendJob = useCallback(async (input: CreateJobInput): Promise<BackendJob> => {
+    const backendJob = await createCustomerJob(input);
+    const mapped = mapBackendJobToFrontendJob(backendJob);
+    const updated = [mapped, ...jobsRef.current.filter((j) => j.id !== mapped.id)];
+    jobsRef.current = updated;
+    setJobs(updated);
+    if (storageKey) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(updated)).catch(() => {});
+    }
+    return backendJob;
+  }, [storageKey]);
+
+  const requestPhoneVerification = useCallback(async (): Promise<PhoneVerificationRequestResponse> => {
+    return requestJobPhoneVerification();
+  }, []);
+
+  const verifyPhoneOtp = useCallback(async (verificationId: string, otp: string): Promise<VerifyPhoneResponse> => {
+    return verifyJobPhone(verificationId, otp);
+  }, []);
+
+  const createBookingPayment = useCallback(async (
+    serviceCategoryId: string,
+    requestType?: 'NORMAL' | 'SOS',
+    phoneNumber?: string,
+  ): Promise<CreateBookingPaymentResponse> => {
+    return apiCreateBookingPayment(serviceCategoryId, requestType, phoneNumber);
+  }, []);
+
+  const proposeTechnicianToJob = useCallback(async (jobId: string, technicianId: string): Promise<BackendJob> => {
+    const backendJob = await proposeTechnician(jobId, technicianId);
+    const mapped = mapBackendJobToFrontendJob(backendJob);
+    const updated = jobsRef.current.map((j) => (j.id === jobId ? mapped : j));
+    jobsRef.current = updated;
+    setJobs(updated);
+    if (storageKey) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(updated)).catch(() => {});
+    }
+    return backendJob;
+  }, [storageKey]);
+
+  const confirmCooperation = useCallback(async (jobId: string): Promise<BackendJob> => {
+    const backendJob = await confirmJobCooperation(jobId, 'customer');
+    const mapped = mapBackendJobToFrontendJob(backendJob);
+    const updated = jobsRef.current.map((j) => (j.id === jobId ? mapped : j));
+    jobsRef.current = updated;
+    setJobs(updated);
+    if (storageKey) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(updated)).catch(() => {});
+    }
+    return backendJob;
+  }, [storageKey]);
+
+  const updateCustomerProgress = useCallback(async (
+    jobId: string,
+    status: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED',
+  ): Promise<BackendJob> => {
+    const backendJob = await updateJobProgress(jobId, status, 'customer');
+    const mapped = mapBackendJobToFrontendJob(backendJob);
+    const updated = jobsRef.current.map((j) => (j.id === jobId ? mapped : j));
+    jobsRef.current = updated;
+    setJobs(updated);
+    if (storageKey) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(updated)).catch(() => {});
+    }
+    return backendJob;
+  }, [storageKey]);
+
   const value = useMemo<FundiContextValue>(() => {
     const events = jobs
       .flatMap((job) => job.events.map((event) => ({ ...event, jobId: job.id, service: job.service })))
@@ -562,6 +778,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       isHydrated,
       events,
       getJob: (id) => jobs.find((job) => job.id === id),
+      refreshJobs,
       addRequest,
       createDraftRequest,
       markBookingFeePaid,
@@ -595,7 +812,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       recordSettlement: (id, method) =>
         update(id, (job) => transition({ ...job, settlementMethod: method }, 'PAYMENT_REPORTED')),
       submitRating: (id, rating) => update(id, (job) => ({ ...job, rating })),
-      cancelJob: (id, reason, recipientPhones) => update(id, (job) => ({ ...transition(job, 'CANCELLED'), ...(reason ? { cancellationReason: reason } : {}) }), recipientPhones),
+      cancelJob,
       updateJob: (id, updates, recipientPhones) => update(id, (job) => { const now = new Date().toISOString(); const nextStatus = updates.status ?? job.status; let moved: Job = { ...job, ...updates, status: nextStatus, statusSince: nextStatus !== job.status ? now : job.statusSince }; if (nextStatus === 'COMPLETED') { moved.completedAt = updates.completedAt ?? now; } if (nextStatus !== job.status && EVENT_COPY[nextStatus]) { const copy = EVENT_COPY[nextStatus]!; moved.events = [...job.events, { id: makeId('evt'), status: nextStatus, title: copy.title, text: copy.text, at: now }]; } return moved; }, recipientPhones),
 
       advance,
@@ -606,8 +823,41 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       markArrived,
       submitDiagnosis,
       completeRepair,
+
+      createBackendJob,
+      requestPhoneVerification,
+      verifyPhoneOtp,
+      createBookingPayment,
+      proposeTechnicianToJob,
+      confirmCooperation,
+      updateCustomerProgress,
     };
-  }, [addRequest, advance, assignEmergencyTechnician, completeRepair, createDraftRequest, findAnotherTechnician, initializeChatId, isHydrated, jobs, linkChatThread, markArrived, markBookingFeePaid, selectTechnician, submitDiagnosis, update]);
+  }, [
+    jobs,
+    isHydrated,
+    refreshJobs,
+    addRequest,
+    createDraftRequest,
+    markBookingFeePaid,
+    initializeChatId,
+    cancelJob,
+    advance,
+    assignEmergencyTechnician,
+    selectTechnician,
+    linkChatThread,
+    findAnotherTechnician,
+    markArrived,
+    submitDiagnosis,
+    completeRepair,
+    createBackendJob,
+    requestPhoneVerification,
+    verifyPhoneOtp,
+    createBookingPayment,
+    proposeTechnicianToJob,
+    confirmCooperation,
+    updateCustomerProgress,
+    update,
+  ]);
 
   return <FundiContext.Provider value={value}>{children}</FundiContext.Provider>;
 }
