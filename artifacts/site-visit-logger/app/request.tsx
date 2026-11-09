@@ -15,6 +15,7 @@ import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { useColors } from '@/hooks/useColors';
 import { SERVICES } from '@/constants/services';
+import { useCategories } from '@/lib/categories-api';
 import { PLACE_ICON, type SavedPlace } from '@/constants/places';
 import { useAuth } from '@/context/AuthContext';
 import { useProfile } from '@/context/ProfileContext';
@@ -52,17 +53,22 @@ export default function RequestScreen() {
   const { width } = useWindowDimensions();
   const narrow = width < 360;
   const router = useRouter();
-  const { service: serviceParam, emergency: emergencyParam } = useLocalSearchParams<{
+  const { service: serviceParam, categoryId: categoryIdParam, emergency: emergencyParam } = useLocalSearchParams<{
     service?: string;
+    categoryId?: string;
     emergency?: string;
   }>();
   const isEmergency = emergencyParam === 'true';
+
+  const { categories } = useCategories();
+  const activeCategories = categories.length > 0 ? categories : SERVICES;
 
   const [service, setService] = useState(
     isEmergency
       ? (serviceParam || 'Emergency Service')
       : (serviceParam || SERVICES[0]?.label || 'General Maintenance')
   );
+  const [categoryId, setCategoryId] = useState<string | undefined>(categoryIdParam);
   const { addRequest } = useFundi();
   const { account } = useAuth();
   const { profile, savedPlaces, preferences } = useProfile();
@@ -407,12 +413,12 @@ export default function RequestScreen() {
       if (isEmergency) {
         router.replace({
           pathname: '/checkout/sos-dispatch' as any,
-          params: { requestId: jobId, jobId },
+          params: { requestId: jobId, jobId, service, ...(categoryId ? { categoryId } : {}) },
         });
       } else {
         router.replace({
           pathname: '/select-technician',
-          params: { jobId },
+          params: { jobId, service, ...(categoryId ? { categoryId } : {}) },
         });
       }
     } catch (submitError) {
@@ -613,12 +619,15 @@ export default function RequestScreen() {
 
             <FieldLabel label="Service Type" required style={styles.firstLabel} />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.serviceScroll}>
-              {SERVICES.map((s) => {
+              {activeCategories.map((s) => {
                 const selected = service === s.label;
                 return (
                   <Pressable
-                    key={s.label}
-                    onPress={() => setService(s.label)}
+                    key={s.id || s.slug || s.label}
+                    onPress={() => {
+                      setService(s.label);
+                      setCategoryId(s.id);
+                    }}
                     style={[
                       styles.serviceChip,
                       {
@@ -770,11 +779,11 @@ export default function RequestScreen() {
                 editor={
                   <View style={styles.editor}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.serviceScroll}>
-                      {SERVICES.map((s) => {
+                      {activeCategories.map((s) => {
                         const sel = draftService === s.label;
                         return (
                           <Pressable
-                            key={s.label}
+                            key={s.id || s.slug || s.label}
                             onPress={() => setDraftService(s.label)}
                             style={[
                               styles.serviceChip,

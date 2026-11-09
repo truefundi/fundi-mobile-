@@ -87,8 +87,9 @@ export default function StandaloneChatScreen() {
     sendPriceOffer,
     respondToOffer,
     updateRequestStatus,
+    createOrGetThread,
   } = useChat();
-  const { getJob } = useFundi();
+  const { getJob, linkChatThread } = useFundi();
 
   const {
     id: routeId,
@@ -104,18 +105,54 @@ export default function StandaloneChatScreen() {
 
   // Find target thread by thread ID or associated job/request ID
   const thread = useMemo(() => {
-    if (!routeId && !requestId) return threads[0];
-    return (
-      threads.find((t) => t.id === routeId) ??
-      threads.find((t) => t.jobId === routeId) ??
-      threads.find((t) => requestId && t.jobId === requestId) ??
-      threads[0]
-    );
+    if (routeId) {
+      const match =
+        threads.find((t) => t.id === routeId) ??
+        threads.find((t) => t.jobId === routeId);
+      if (match) return match;
+    }
+    if (requestId) {
+      const match = threads.find((t) => t.jobId === requestId);
+      if (match) return match;
+    }
+    return !routeId && !requestId ? threads[0] : undefined;
   }, [routeId, requestId, threads]);
 
   const targetJobId = thread?.jobId || requestId || routeId;
   const job = targetJobId ? getJob(targetJobId) : undefined;
   const otherName = thread?.otherParticipantName ?? (job?.technician?.name || 'Technician');
+
+  // Auto-instantiate thread if opening a paid job directly
+  useEffect(() => {
+    if (!thread && job) {
+      const techName = job.technician?.name || 'Technician';
+      const techPhone = job.technician?.phone;
+      const techLocation = job.technician?.location;
+      const createdThreadId = createOrGetThread(
+        techName,
+        'technician',
+        job.id,
+        {
+          id: job.id,
+          serviceName: job.service,
+          problem: job.problem,
+          address: job.locationLabel,
+          thumbnailUri: job.photoUris?.[0] ?? job.photoUri,
+          photos: job.photoUris ?? (job.photoUri ? [job.photoUri] : []),
+          videos: job.videoUris ?? (job.videoUri ? [job.videoUri] : []),
+          createdAt: job.createdAt,
+          status: 'REQUEST_RECEIVED',
+          type: job.type || 'STANDARD',
+          bookingFee: job.bookingFee,
+        },
+        techPhone,
+        techLocation,
+      );
+      if (job.bookingFee?.status === 'PAID') {
+        linkChatThread(job.id, createdThreadId);
+      }
+    }
+  }, [thread, job, createOrGetThread, linkChatThread]);
 
   const threadServiceRequest = useMemo(() => {
     return thread?.messages.find((m) => Boolean(m.serviceRequest))?.serviceRequest;
@@ -697,14 +734,18 @@ export default function StandaloneChatScreen() {
                         <Button
                           label="Accept Price"
                           size="small"
-                          onPress={() => respondToOffer(thread.id, item.priceOffer!.id, 'ACCEPTED')}
+                          onPress={() => {
+                            if (thread) respondToOffer(thread.id, item.priceOffer!.id, 'ACCEPTED');
+                          }}
                           style={{ flex: 1 }}
                         />
                         <Button
                           label="Decline"
                           variant="outline"
                           size="small"
-                          onPress={() => respondToOffer(thread.id, item.priceOffer!.id, 'DECLINED')}
+                          onPress={() => {
+                            if (thread) respondToOffer(thread.id, item.priceOffer!.id, 'DECLINED');
+                          }}
                           style={{ flex: 1, marginLeft: 8 }}
                         />
                       </View>

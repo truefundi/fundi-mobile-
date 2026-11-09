@@ -1,11 +1,21 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { WorkSettings } from '@/components/work/WorkSettings';
 import { WorkLocked } from '@/components/work/WorkLocked';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { PageHeading } from '@/components/ui/PageHeading';
+import { useCategories } from '@/lib/categories-api';
 import { SERVICES } from '@/constants/services';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
@@ -28,12 +38,34 @@ export default function ServicesScreen() {
   const locked = mode === 'working' && status !== 'verified';
   const inWork = mode === 'working';
 
+  const { categories, isLoading, refresh } = useCategories();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const displayedServices = categories.length > 0 ? categories : SERVICES;
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <AppHeader />
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: SCREEN_GUTTER, paddingTop: 18, paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
       >
         <PageHeading
           eyebrow={inWork ? 'Your work' : 'Find a Fundi'}
@@ -50,36 +82,55 @@ export default function ServicesScreen() {
           <WorkLocked />
         ) : (
           <>
-            <View style={styles.grid}>
-              {SERVICES.map((service) => (
-                <Pressable
-                  key={service.label}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Request ${service.label}`}
-                  testID={`services-${service.label}`}
-                  onPress={() => router.push({ pathname: '/request', params: { service: service.label } })}
-                  style={({ pressed }) => [
-                    styles.card,
-                    { width: cardWidth, backgroundColor: colors.card, borderColor: pressed ? colors.primary : colors.border },
-                  ]}
-                >
-                  <View style={[styles.icon, { backgroundColor: colors.secondary }]}>
-                    <MaterialCommunityIcons name={service.icon} size={27} color={colors.primary} />
-                  </View>
-                  <Text style={[styles.label, { color: colors.foreground }]}>{service.label}</Text>
-                  {/* The arrow sits inside the text, held to "service" by a no-break
-                      space, so on narrow cards it wraps with the word, not alone. */}
-                  <Text style={[styles.link, { color: colors.primary }]}>
-                    {'Request service '}
-                    <Ionicons name="arrow-forward" size={13} color={colors.primary} />
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            {isLoading && displayedServices.length === 0 ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
+                  Loading services...
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.grid}>
+                {displayedServices.map((service) => (
+                  <Pressable
+                    key={service.id || service.slug || service.label}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Request ${service.label}`}
+                    testID={`services-${service.label}`}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/request',
+                        params: {
+                          service: service.label,
+                          categoryId: service.id,
+                        },
+                      })
+                    }
+                    style={({ pressed }) => [
+                      styles.card,
+                      { width: cardWidth, backgroundColor: colors.card, borderColor: pressed ? colors.primary : colors.border },
+                    ]}
+                  >
+                    <View style={[styles.icon, { backgroundColor: colors.secondary }]}>
+                      <MaterialCommunityIcons name={service.icon} size={27} color={colors.primary} />
+                    </View>
+                    <Text style={[styles.label, { color: colors.foreground }]}>{service.label}</Text>
+                    {/* The arrow sits inside the text, held to "service" by a no-break
+                        space, so on narrow cards it wraps with the word, not alone. */}
+                    <Text style={[styles.link, { color: colors.primary }]}>
+                      {'Request service '}
+                      <Ionicons name="arrow-forward" size={13} color={colors.primary} />
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
             <View style={[styles.helpCard, { backgroundColor: colors.primary }]}>
               <Text style={[styles.helpKicker, { color: colors.secondary }]}>CAN&apos;T FIND IT?</Text>
               <Text style={[styles.helpTitle, { color: colors.primaryForeground }]}>Tell us what you need</Text>
-              <Text style={[styles.helpText, { color: colors.secondary }]}>Our general maintenance specialists can help diagnose unusual problems.</Text>
+              <Text style={[styles.helpText, { color: colors.secondary }]}>
+                Our general maintenance specialists can help diagnose unusual problems.
+              </Text>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Start a request"
@@ -100,6 +151,8 @@ export default function ServicesScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  loadingContainer: { paddingVertical: 48, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingText: { fontFamily: 'Inter_500Medium', fontSize: 14 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP, marginTop: 22 },
   card: { minHeight: 145, borderRadius: 16, borderWidth: 1, padding: 13, justifyContent: 'space-between' },
   icon: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },

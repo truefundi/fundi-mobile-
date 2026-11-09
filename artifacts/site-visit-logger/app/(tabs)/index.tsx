@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { formatMoney, isClosed, repairTotal } from '@/constants/jobs';
 import { searchServices, SERVICES, type Service } from '@/constants/services';
+import { useCategories } from '@/lib/categories-api';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FloatingActionGroup } from '@/components/ui/FloatingActionGroup';
@@ -78,9 +79,11 @@ export default function HomeScreen({
     };
   }, [jobs]);
 
+  const { categories, search: searchCategories } = useCategories();
+  const allServices = categories.length > 0 ? categories : SERVICES;
   const isSearching = serviceQuery.trim().length > 0;
   // A search looks through every service, not just the six on show.
-  const shownServices = isSearching ? searchServices(serviceQuery) : SERVICES.slice(0, HOME_SERVICE_COUNT);
+  const shownServices = isSearching ? searchCategories(serviceQuery) : allServices.slice(0, HOME_SERVICE_COUNT);
 
   // Compute visibility based on mode, active job state, search input, and explicit overrides
   const { hideBot: computedHideBot, hideSos: computedHideSos } = useFloatingActionVisibility({
@@ -92,7 +95,11 @@ export default function HomeScreen({
     activeJob,
   });
 
-  const requestService = (service: string) => router.push({ pathname: '/request', params: { service } });
+  const requestService = (service: Service | string) => {
+    const name = typeof service === 'string' ? service : service.label;
+    const categoryId = typeof service === 'string' ? undefined : service.id;
+    router.push({ pathname: '/request', params: { service: name, ...(categoryId ? { categoryId } : {}) } });
+  };
 
   // Get the Ads if available
   const { ads, isLoading } = useAds();
@@ -218,7 +225,7 @@ export default function HomeScreen({
             ) : (
               <View style={styles.categoryGrid}>
                 {shownServices.map((service) => (
-                  <ServiceCard key={service.label} service={service} width={cardWidth} onPress={() => requestService(service.label)} />
+                  <ServiceCard key={service.id || service.slug || service.label} service={service} width={cardWidth} onPress={() => requestService(service)} />
                 ))}
               </View>
             )}

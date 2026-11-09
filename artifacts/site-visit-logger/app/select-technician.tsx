@@ -51,15 +51,44 @@ export default function SelectTechnicianScreen() {
     requestJob?.locationLongitude ?? (lngParam ? parseFloat(lngParam) : undefined);
 
   const technicians = useMemo(() => {
-    const requestedService = (service ?? '').toLowerCase();
+    const requestedService = (service ?? '').toLowerCase().trim();
     const matchesService = (tech: MarketplaceTechnician) => {
       if (!requestedService) return true;
-      return tech.services.some((offered) => offered.toLowerCase() === requestedService) ||
-        (requestedService === 'emergency service' && tech.services.includes('General Maintenance'));
+      // 1. Direct match in offered services
+      const directMatch = tech.services.some((offered) => {
+        const offNorm = offered.toLowerCase().trim();
+        return (
+          offNorm === requestedService ||
+          offNorm.includes(requestedService) ||
+          requestedService.includes(offNorm)
+        );
+      });
+      if (directMatch) return true;
+
+      // 2. Skill/trade title match (e.g. "HVAC & Appliance Specialist" matches "HVAC & Refrigeration")
+      const titleNorm = tech.service.toLowerCase().trim();
+      if (titleNorm.includes(requestedService) || requestedService.includes(titleNorm)) {
+        return true;
+      }
+
+      // 3. Emergency / SOS fallback
+      if (requestedService.includes('emergency') || requestedService.includes('sos')) {
+        return tech.services.includes('General Maintenance') || tech.services.includes('Home Repair');
+      }
+
+      return false;
     };
 
-    return MOCK_MARKETPLACE_TECHNICIANS
-      .filter((tech) => (!availableOnly || tech.isAvailable) && matchesService(tech))
+    const directFiltered = MOCK_MARKETPLACE_TECHNICIANS.filter(
+      (tech) => (!availableOnly || tech.isAvailable) && matchesService(tech),
+    );
+
+    // Fallback: if no technician directly matches the niche trade, include general maintenance specialists
+    const pool = directFiltered.length > 0
+      ? directFiltered
+      : MOCK_MARKETPLACE_TECHNICIANS.filter((tech) => !availableOnly || tech.isAvailable);
+
+    return pool
       .map((technician) => ({
         technician,
         distance:
