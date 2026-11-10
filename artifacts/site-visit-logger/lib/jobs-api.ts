@@ -1,4 +1,6 @@
+import { Platform } from 'react-native';
 import { apiRequest, apiUpload } from '@/lib/api';
+import { resolveRequestMediaUri } from '@/lib/requestMedia';
 import { cleanAndNormalizePhone } from '@/lib/auth-api';
 import type { RequestType } from '@/constants/jobs';
 
@@ -172,13 +174,15 @@ export interface CreateBookingPaymentResponse {
 
 export interface CreateJobInput {
   paymentId: string;
-  phoneVerificationId: string;
+  /** Omit when the account phone number is already verified. */
+  phoneVerificationId?: string;
   serviceCategoryId: string;
   description: string;
   locationAddress: string;
   latitude: number;
   longitude: number;
-  offeredAmount: number;
+  /** Optional budget. The price is normally agreed later in the chat. */
+  offeredAmount?: number;
   requestType?: 'NORMAL' | 'SOS';
   priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
   photos?: Array<{ uri: string; name?: string; mimeType?: string }>;
@@ -186,6 +190,15 @@ export interface CreateJobInput {
 }
 
 // ─── Customer Phone Verification ──────────────────────────────────────────
+
+export type JobPhoneStatus = { phoneNumber: string; verified: boolean; verifiedAt: string | null };
+
+/** Whether the account phone is verified, in which case a job needs no per-job code. */
+export async function fetchJobPhoneStatus(): Promise<JobPhoneStatus> {
+  return apiRequest<JobPhoneStatus>('/api/v1/jobs/phone-verification/status', {
+    authenticated: true,
+  });
+}
 
 export async function requestJobPhoneVerification(phoneNumber?: string): Promise<PhoneVerificationRequestResponse> {
   const normalizedPhone = phoneNumber ? cleanAndNormalizePhone(phoneNumber) : undefined;
@@ -224,40 +237,63 @@ export async function createBookingPayment(
 
 // ─── Job Creation & Customer Management ───────────────────────────────────
 
+/**
+ * Adds a local file to a multipart body. Native takes the `{ uri, name, type }`
+ * descriptor; the browser needs the bytes, so saved web attachments are read
+ * back as a Blob first.
+ */
+async function appendUploadFile(
+  formData: FormData,
+  field: string,
+  file: { uri: string; name: string; type: string },
+): Promise<void> {
+  if (Platform.OS !== 'web') {
+    formData.append(field, file as any);
+    return;
+  }
+  const resolved = await resolveRequestMediaUri(file.uri);
+  const response = await fetch(resolved);
+  if (!response.ok) throw new Error('An attachment could not be read. Remove it and attach it again.');
+  const blob = await response.blob();
+  formData.append(field, blob, file.name);
+}
+
 export async function createCustomerJob(input: CreateJobInput): Promise<BackendJob> {
   const isSos = input.requestType === 'SOS';
   const path = isSos ? '/api/v1/jobs/sos' : '/api/v1/jobs';
 
   const formData = new FormData();
   formData.append('paymentId', input.paymentId);
-  formData.append('phoneVerificationId', input.phoneVerificationId);
+  if (input.phoneVerificationId) {
+    formData.append('phoneVerificationId', input.phoneVerificationId);
+  }
   formData.append('serviceCategoryId', input.serviceCategoryId);
   formData.append('description', input.description);
   formData.append('locationAddress', input.locationAddress);
   formData.append('latitude', String(input.latitude));
   formData.append('longitude', String(input.longitude));
-  formData.append('offeredAmount', String(input.offeredAmount));
+  if (input.offeredAmount !== undefined) {
+    formData.append('offeredAmount', String(input.offeredAmount));
+  }
   formData.append('requestType', input.requestType || 'NORMAL');
   if (input.priority) {
     formData.append('priority', input.priority);
   }
 
-  if (input.photos && input.photos.length > 0) {
-    input.photos.forEach((photo, idx) => {
-      formData.append('photos', {
-        uri: photo.uri,
-        name: photo.name || `photo_${idx}.jpg`,
-        type: photo.mimeType || 'image/jpeg',
-      } as any);
+  for (const [idx, photo] of (input.photos ?? []).entries()) {
+    await appendUploadFile(formData, 'photos', {
+      uri: photo.uri,
+      name: photo.name || `photo_${idx}.jpg`,
+      type: photo.mimeType || 'image/jpeg',
     });
   }
 
   if (input.video?.uri) {
-    formData.append('video', {
+    await appendUploadFile(formData, 'video', {
       uri: input.video.uri,
       name: input.video.name || 'video.mp4',
       type: input.video.mimeType || 'video/mp4',
-    } as any);
+    });
   }
 
   return apiUpload<BackendJob>(path, formData);
@@ -286,6 +322,17 @@ export async function previewMatchingTechnicians(
     longitude: String(longitude),
   });
   return apiRequest<MatchingTechnicianItem[]>(`/api/v1/jobs/matching-technicians?${query.toString()}`, {
+    authenticated: true,
+  });
+}
+
+/**
+ * Sends an unanswered request on to the best eligible technician who has not
+ * been asked about this job yet (backend auto-routing).
+ */
+export async function retryJobDispatch(jobId: string): Promise<BackendJob> {
+  return apiRequest<BackendJob>(`/api/v1/jobs/mine/${jobId}/retry-dispatch`, {
+    method: 'POST',
     authenticated: true,
   });
 }

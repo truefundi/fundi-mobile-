@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { unregisterPushNotifications } from '@/lib/push-notifications';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { normaliseName, PHONE_RULE } from '@/constants/auth';
 import { DEFAULT_LOCATION } from '@/constants/profile';
@@ -237,6 +238,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     try {
+      // Stop push alerts to this device while the session can still authenticate.
+      await unregisterPushNotifications();
       await logoutApi();
     } finally {
       setAccount(null);

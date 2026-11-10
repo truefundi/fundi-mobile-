@@ -16,6 +16,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { usePushNotifications } from '@/lib/push-notifications';
 import { FundiProvider } from '@/context/FundiContext';
 import { ProfileProvider } from '@/context/ProfileContext';
 import { WorkProvider } from '@/context/WorkContext';
@@ -94,6 +95,7 @@ function RootLayoutNav() {
   const { account, isHydrated } = useAuth();
   const { isDark } = useTheme();
   const colors = useColors();
+  usePushNotifications(isHydrated && !!account);
 
   useEffect(() => {
     if (isHydrated) SplashScreen.hideAsync();
