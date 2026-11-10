@@ -96,10 +96,21 @@ export default function ChatTabScreen() {
         } else {
           snippet = room.job.description ? `Job: ${room.job.description}` : 'Say hello to start coordinating';
         }
+        // Negotiation state for the same job, shown as a cue on the row.
+        const negotiation = threads.find((t) => t.jobId === room.jobId);
+        const pendingOffer = negotiation?.messages.find((m) => m.priceOffer?.status === 'PENDING')?.priceOffer;
+        const negotiationTag: RowModel['statusTag'] = negotiation?.agreedPrice
+          ? { label: `Agreed RWF ${negotiation.agreedPrice.toLocaleString()}`, tone: 'muted' }
+          : pendingOffer
+            ? { label: `Offer RWF ${pendingOffer.amount.toLocaleString()}`, tone: 'warning' }
+            : negotiation && !negotiation.isAccepted && !negotiation.isEnded
+              ? { label: 'Awaiting acceptance', tone: 'warning' }
+              : undefined;
         const statusTag =
           ROOM_STATUS_TAG[room.status] ??
           (room.assignment.endedAt ? { label: 'Reassigned', tone: 'warning' as const } : undefined) ??
-          (job?.type === 'SOS' ? { label: 'SOS Priority', tone: 'sos' as const } : undefined);
+          (job?.type === 'SOS' ? { label: 'SOS Priority', tone: 'sos' as const } : undefined) ??
+          negotiationTag;
         return {
           key: `room-${room.id}`,
           name,
@@ -114,7 +125,7 @@ export default function ChatTabScreen() {
           onPress: () => router.push({ pathname: '/chat/[id]', params: { id: room.id } }),
         };
       }),
-    [rooms.summaries, isTechnician, getJob, account?.id, router],
+    [rooms.summaries, threads, isTechnician, getJob, account?.id, router],
   );
 
   // Negotiations whose job has no chat room yet (once assigned, the job chat takes over).
@@ -138,7 +149,7 @@ export default function ChatTabScreen() {
             timeLabel: formatChatTime(thread.lastMessageTime),
             unreadLabel: null,
             statusTag: thread.isEnded ? { label: 'Closed', tone: 'muted' as const } : { label: 'Pricing', tone: 'warning' as const },
-            onPress: () => router.push({ pathname: '/negotiation/[id]', params: { id: thread.id, requestId: thread.jobId } }),
+            onPress: () => router.push({ pathname: '/chat/[id]', params: { id: thread.id, requestId: thread.jobId } }),
           };
         }),
     [threads, roomJobIds, router],
@@ -280,7 +291,7 @@ export default function ChatTabScreen() {
 
         {negotiationRows.length > 0 ? (
           <>
-            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Price negotiations</Text>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Other requests</Text>
             <View style={styles.listWrap}>{negotiationRows.map(renderRow)}</View>
           </>
         ) : null}

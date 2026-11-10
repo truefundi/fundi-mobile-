@@ -156,6 +156,45 @@ export function markChatRoomRead(roomId: string, messageId: string): Promise<Cha
   });
 }
 
+// ── Job actions scoped to the room's current assignment ───────────────────
+// Each returns the updated job (shape of `BackendJob` in lib/jobs-api.ts),
+// except a technician cancellation, which returns `{ message }` because it
+// goes to administrator review.
+
+export type JobProgressValue = 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+
+/** Confirms cooperation for the caller's side (after the price is agreed). */
+export function confirmRoomCooperation<T = unknown>(roomId: string): Promise<T> {
+  return apiRequest<T>(`${ROOMS}/${roomId}/cooperation/confirm`, { method: 'POST', authenticated: true });
+}
+
+/** Pulls out of the assignment. Allowed for either side before mutual cooperation confirmation. */
+export function denyRoomPartnership<T = unknown>(roomId: string, reason: string): Promise<T> {
+  return apiRequest<T>(`${ROOMS}/${roomId}/cooperation/deny`, {
+    method: 'POST',
+    authenticated: true,
+    body: { reason },
+  });
+}
+
+/** Customer: cancels the job immediately. Technician: submits a cancellation for admin review. */
+export function cancelJobFromRoom<T = unknown>(roomId: string, reason: string): Promise<T> {
+  return apiRequest<T>(`${ROOMS}/${roomId}/cancel`, {
+    method: 'POST',
+    authenticated: true,
+    body: { reason },
+  });
+}
+
+/** Records the caller's progress on the job (PENDING → STARTED → IN_PROGRESS → COMPLETED). */
+export function updateRoomProgress<T = unknown>(roomId: string, status: JobProgressValue): Promise<T> {
+  return apiRequest<T>(`${ROOMS}/${roomId}/progress`, {
+    method: 'PATCH',
+    authenticated: true,
+    body: { status },
+  });
+}
+
 /** Whether the backend would accept a new message in this room right now. */
 export function isChatRoomWritable(room: BackendChatRoom): boolean {
   return (

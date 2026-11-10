@@ -1,18 +1,36 @@
 import { apiRequest } from '@/lib/api';
 
-export type ConversationStatus =
-  | 'WAITING_FOR_TECHNICIAN'
-  | 'NEGOTIATING'
-  | 'AGREED'
-  | 'DECLINED'
-  | 'EXPIRED'
-  | 'CANCELLED';
+/**
+ * Client for the price negotiation endpoints (`/api/v1/conversations`).
+ * Types mirror `ConversationsService.toResponse` in the backend.
+ *
+ * Backend rules worth knowing in the UI:
+ * - A conversation starts PENDING until the assigned technician accepts the
+ *   job request (-> NEGOTIATING) or declines it (-> DECLINED).
+ * - Posting an offer supersedes the outstanding one (a counter-offer).
+ * - Accepting an offer -> AGREED; declining an offer -> DECLINED (closed).
+ * - Each side may post at most 3 offers, 6 in total; offers expire after 24h.
+ */
+
+export type ConversationStatus = 'PENDING' | 'NEGOTIATING' | 'AGREED' | 'DECLINED' | 'EXPIRED';
+export type ConversationSender = 'CUSTOMER' | 'TECHNICIAN' | 'SYSTEM';
+export type ConversationMessageType =
+  | 'SERVICE_REQUEST'
+  | 'TEXT'
+  | 'PRICE_OFFER'
+  | 'SYSTEM'
+  | 'TECHNICIAN_RESPONSE';
+export type PriceOfferStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'SUPERSEDED' | 'EXPIRED';
+
+export const CONVERSATION_MAX_OFFERS_PER_SIDE = 3;
+export const CONVERSATION_MAX_TOTAL_OFFERS = 6;
+export const CONVERSATION_MAX_MESSAGE_LENGTH = 500;
+export const CONVERSATION_MAX_AMOUNT = 2_000_000_000;
 
 export interface ConversationParty {
   id: string;
   fullName: string;
   phoneNumber?: string;
-  role?: string;
   avatarUrl?: string;
   profilePictureUrl?: string;
 }
@@ -29,27 +47,24 @@ export interface PriceOfferItem {
   id: string;
   amount: number;
   currency: string;
-  notes?: string | null;
-  status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'SUPERSEDED' | 'EXPIRED';
-  offeredById: string;
-  offeredByRole?: string;
+  senderRole: 'CUSTOMER' | 'TECHNICIAN';
+  status: PriceOfferStatus;
+  notes: string | null;
+  expiresAt: string | null;
+  respondedAt: string | null;
   createdAt: string;
-  respondedAt?: string | null;
 }
 
 export interface ConversationMessageItem {
   id: string;
-  conversationId: string;
-  senderId?: string;
-  sender?: {
-    id: string;
-    fullName: string;
-    role: 'CUSTOMER' | 'TECHNICIAN' | 'ADMIN';
-  };
-  type: 'REQUEST_DETAILS' | 'MESSAGE' | 'PRICE_OFFER' | 'ACCEPTANCE' | 'DECLINE';
-  text: string;
-  offer?: PriceOfferItem | null;
+  senderId: string | null;
+  senderRole: ConversationSender;
+  type: ConversationMessageType;
+  text: string | null;
+  /** SERVICE_REQUEST snapshot, or `{ decision, reason }` for TECHNICIAN_RESPONSE. */
+  metadata: Record<string, unknown> | null;
   createdAt: string;
+  offer: PriceOfferItem | null;
 }
 
 export interface BackendConversation {
@@ -79,6 +94,15 @@ export interface PaginatedConversations {
     total: number;
     totalPages: number;
   };
+}
+
+/** True when the technician declined the job request (as opposed to an offer). */
+export function wasJobRequestDeclined(conversation: BackendConversation): boolean {
+  for (let i = conversation.messages.length - 1; i >= 0; i -= 1) {
+    const message = conversation.messages[i];
+    if (message.type === 'TECHNICIAN_RESPONSE') return message.metadata?.decision === 'DECLINED';
+  }
+  return false;
 }
 
 // ─── Conversations API ───────────────────────────────────────────────────
