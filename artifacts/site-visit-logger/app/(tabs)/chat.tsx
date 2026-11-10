@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
-  Image,
+  ActivityIndicator,
   Platform,
   Pressable,
+  RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -13,214 +15,49 @@ import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useChat, type ChatThread } from '@/context/ChatContext';
 import { useFundi } from '@/context/FundiContext';
+import { useAuth } from '@/context/AuthContext';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { PageHeading } from '@/components/ui/PageHeading';
-import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
-import { useAuth } from '@/context/AuthContext';
-import { extractFirstName } from '@/lib/cancellation';
 import { ProfileAvatar, computeParticipantInitials } from '@/components/ui/ProfileAvatar';
 import { getServiceIcon } from '@/lib/categories-api';
+import { describeChatMessage } from '@/lib/chat-rooms-api';
+import { useChatRooms, type ChatRoomSummary } from '@/hooks/useChatRooms';
 
 export { computeParticipantInitials as getParticipantInitial };
 
-/**
- * Smart relative timestamp for the conversation preview row.
- */
+/** Smart relative timestamp for a conversation row. */
 function formatChatTime(isoString: string): string {
   const date = new Date(isoString);
   if (isNaN(date.getTime())) return '';
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays < 0 || diffDays === 0) {
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  }
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const diffDays = Math.floor((startOfToday - new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()) / 86_400_000);
+  if (diffDays <= 0) return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   if (diffDays === 1) return 'Yesterday';
-  if (diffDays <= 7) {
-    return date.toLocaleDateString(undefined, { weekday: 'short' });
-  }
+  if (diffDays < 7) return date.toLocaleDateString(undefined, { weekday: 'short' });
   return date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-type ConversationPreview = {
-  thread: ChatThread;
+function truncate(text: string, max = 55) {
+  return text.length > max ? `${text.slice(0, max).trim()}…` : text;
+}
+
+type RowModel = {
+  key: string;
   name: string;
-  serviceName?: string;
-  avatarInitial: string;
   avatarUri?: string;
-  knownInitials?: string;
+  serviceName?: string;
   snippet: string;
   timeLabel: string;
-  unreadCount: number;
-  isSos: boolean;
-  navigatesToSelectTechnician: boolean;
-  selectTechnicianParams?: {
-    jobId?: string;
-    category?: string;
-    service?: string;
-    description?: string;
-    problem?: string;
-    location?: string;
-    address?: string;
-    latitude?: string;
-    longitude?: string;
-  };
+  unreadLabel: string | null;
+  statusTag?: { label: string; tone: 'muted' | 'warning' | 'sos' };
+  onPress: () => void;
 };
 
-function getConversationPreview(
-  thread: ChatThread,
-  currentUserId?: string,
-  currentUserRole: 'client' | 'technician' = 'client',
-  currentUserName?: string,
-  getJob?: (id: string) => any,
-): ConversationPreview {
-  const isMe = (senderId?: string, senderRole?: string) =>
-    Boolean((senderId && currentUserId && senderId === currentUserId) || (senderRole && senderRole === currentUserRole));
-
-  const associatedJob = thread.jobId && getJob ? getJob(thread.jobId) : undefined;
-  const displayName =
-    (thread.otherParticipantName && thread.otherParticipantName.trim()) ||
-    associatedJob?.technician?.name ||
-    thread.technicianName ||
-    thread.clientName ||
-    'Specialist';
-  const otherFirstName = extractFirstName(displayName);
-
-  // Determine SOS status for clean badge
-  const isSos = Boolean(
-    thread.messages.some((m) => m.serviceRequest?.type === 'SOS') ||
-    associatedJob?.type === 'SOS' ||
-    thread.jobId?.toLowerCase().includes('sos')
-  );
-
-  // Person avatar URL only (repair job photos of damaged pipes must not be used as profile avatars)
-  const avatarUri =
-    (associatedJob?.technician as any)?.avatarUrl ||
-    (associatedJob?.technician as any)?.photoUri ||
-    thread.otherParticipantAvatarUrl ||
-    (associatedJob as any)?.clientAvatarUrl ||
-    undefined;
-  const knownInitials = associatedJob?.technician?.initials || undefined;
-  const avatarInitial = computeParticipantInitials(displayName, knownInitials);
-
-  // Smart Last Message Preview Logic
-  const sortedMessages = [...thread.messages].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
-  const lastMsg = sortedMessages[sortedMessages.length - 1];
-
-  const latestRequest = [...thread.messages]
-    .filter((m) => m.serviceRequest)
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.serviceRequest;
-
-  const serviceName = latestRequest?.serviceName || associatedJob?.service || undefined;
-
-  const requestStatus = latestRequest?.status;
-  const isCancelled = requestStatus === 'CANCELLED';
-  const isDeclined = requestStatus === 'DECLINED';
-
-  let snippet = '';
-  let navigatesToSelectTechnician = false;
-  let selectTechnicianParams: ConversationPreview['selectTechnicianParams'];
-
-  if (isDeclined) {
-    const declinedByMe =
-      isMe(latestRequest?.cancelledById) ||
-      thread.cancelledByRole === currentUserRole ||
-      (thread.cancelledByName && currentUserName && thread.cancelledByName.trim().toLowerCase() === currentUserName.trim().toLowerCase());
-    snippet = declinedByMe ? 'Request declined by you' : `Request declined by ${otherFirstName}`;
-    navigatesToSelectTechnician = true;
-    if (latestRequest) {
-      selectTechnicianParams = {
-        category: latestRequest.serviceName,
-        service: latestRequest.serviceName,
-        description: latestRequest.problem,
-        problem: latestRequest.problem,
-        location: latestRequest.address,
-        address: latestRequest.address,
-        ...(latestRequest.latitude !== undefined ? { latitude: String(latestRequest.latitude) } : {}),
-        ...(latestRequest.longitude !== undefined ? { longitude: String(latestRequest.longitude) } : {}),
-      };
-    }
-  } else if (isCancelled) {
-    const cancelledByMe =
-      isMe(latestRequest?.cancelledById) ||
-      thread.cancelledByRole === currentUserRole ||
-      (thread.cancelledByName && currentUserName && thread.cancelledByName.trim().toLowerCase() === currentUserName.trim().toLowerCase());
-    snippet = cancelledByMe ? 'Request cancelled by you' : `Request cancelled by ${otherFirstName}`;
-    navigatesToSelectTechnician = true;
-    if (latestRequest) {
-      selectTechnicianParams = {
-        category: latestRequest.serviceName,
-        service: latestRequest.serviceName,
-        description: latestRequest.problem,
-        problem: latestRequest.problem,
-        location: latestRequest.address,
-        address: latestRequest.address,
-        ...(latestRequest.latitude !== undefined ? { latitude: String(latestRequest.latitude) } : {}),
-        ...(latestRequest.longitude !== undefined ? { longitude: String(latestRequest.longitude) } : {}),
-      };
-    }
-  } else if (lastMsg?.priceOffer) {
-    // Offer preview: display currency/money and offered value
-    const offer = lastMsg.priceOffer;
-    const currency = offer.currency || 'RWF';
-    const amountStr = `${currency} ${offer.amount.toLocaleString()}`;
-    if (offer.status === 'ACCEPTED') {
-      snippet = `Offer accepted: ${amountStr}`;
-    } else if (offer.status === 'DECLINED') {
-      snippet = `Offer declined: ${amountStr}`;
-    } else {
-      const isMyOffer = isMe(lastMsg.senderId, lastMsg.senderRole);
-      snippet = isMyOffer ? `Offer sent: ${amountStr}` : `Offer received: ${amountStr}`;
-    }
-  } else if (lastMsg?.serviceRequest) {
-    // Job details preview: render concise job summary description
-    const req = lastMsg.serviceRequest;
-    const serviceName = req.serviceName || 'Service';
-    const desc = req.problem?.trim();
-    snippet = desc ? `Job details: ${serviceName} · ${desc}` : `Job details: ${serviceName}`;
-  } else if (lastMsg) {
-    // Regular text message or photo
-    if (lastMsg.imageUri && !lastMsg.text) {
-      snippet = isMe(lastMsg.senderId, lastMsg.senderRole) ? 'You sent a photo' : 'Sent a photo';
-    } else {
-      const prefix = isMe(lastMsg.senderId, lastMsg.senderRole) ? 'You: ' : '';
-      snippet = `${prefix}${lastMsg.text.trim()}`;
-    }
-  } else if (thread.agreedPrice) {
-    snippet = `Agreed price: RWF ${thread.agreedPrice.toLocaleString()}`;
-  } else {
-    snippet = thread.lastMessage || 'Conversation started';
-  }
-
-  // Safe truncation so message previews don't break the layout
-  const MAX_SAFE_LENGTH = 55;
-  if (snippet.length > MAX_SAFE_LENGTH) {
-    snippet = `${snippet.slice(0, MAX_SAFE_LENGTH).trim()}...`;
-  }
-
-  // Calculate unread count
-  const unreadCount =
-    typeof thread.unreadCount === 'number'
-      ? thread.unreadCount
-      : thread.messages.filter((m) => !isMe(m.senderId, m.senderRole) && m.read === false).length;
-
-  return {
-    thread,
-    name: displayName,
-    serviceName,
-    avatarInitial,
-    avatarUri,
-    snippet,
-    timeLabel: formatChatTime(thread.lastMessageTime),
-    unreadCount,
-    isSos,
-    navigatesToSelectTechnician,
-    selectTechnicianParams,
-  };
-}
+const ROOM_STATUS_TAG: Record<string, RowModel['statusTag']> = {
+  COMPLETED: { label: 'Completed', tone: 'muted' },
+  DISABLED: { label: 'Chat closed', tone: 'warning' },
+};
 
 export default function ChatTabScreen() {
   const colors = useColors();
@@ -228,173 +65,243 @@ export default function ChatTabScreen() {
   const router = useRouter();
   const { threadId: requestedThreadId } = useLocalSearchParams<{ threadId?: string }>();
   const { account } = useAuth();
-  const { threads } = useChat();
   const { getJob } = useFundi();
+  const { threads, refreshConversations, error: negotiationError } = useChat();
+  const rooms = useChatRooms();
+  const isTechnician = account?.role === 'TECHNICIAN';
 
-  const userRole = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
-
-  // If a threadId is passed into the tab screen, redirect immediately to the dedicated chat screen
+  // Deep links into the tab with a thread id open the conversation directly.
   useEffect(() => {
     if (requestedThreadId) {
-      router.replace({
-        pathname: `/chat/${requestedThreadId}` as any,
-      });
+      router.replace({ pathname: '/chat/[id]', params: { id: requestedThreadId } });
     }
   }, [requestedThreadId, router]);
 
-  const sortedThreads = useMemo(() => {
-    return [...threads].sort(
-      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime(),
-    );
-  }, [threads]);
+  const roomJobIds = useMemo(() => new Set(rooms.summaries.map((s) => s.room.jobId)), [rooms.summaries]);
 
-  const threadPreviews = useMemo(() => {
-    return sortedThreads.map((thread) =>
-      getConversationPreview(thread, account?.id, userRole, account?.name, getJob),
-    );
-  }, [sortedThreads, account?.id, userRole, account?.name, getJob]);
+  const roomRows = useMemo<RowModel[]>(
+    () =>
+      rooms.summaries.map((summary: ChatRoomSummary) => {
+        const { room, lastMessage } = summary;
+        const other = isTechnician ? room.job.customer : room.job.technician;
+        const name = other?.fullName?.trim() || (isTechnician ? 'Client' : 'Technician');
+        const job = getJob(room.jobId);
+        const avatarUri = !isTechnician
+          ? job?.technician?.avatarUrl || job?.technician?.photoUri || undefined
+          : undefined;
+        let snippet: string;
+        if (lastMessage) {
+          const mine = lastMessage.senderId === account?.id;
+          snippet = `${mine ? 'You: ' : ''}${describeChatMessage(lastMessage)}`;
+        } else {
+          snippet = room.job.description ? `Job: ${room.job.description}` : 'Say hello to start coordinating';
+        }
+        const statusTag =
+          ROOM_STATUS_TAG[room.status] ??
+          (room.assignment.endedAt ? { label: 'Reassigned', tone: 'warning' as const } : undefined) ??
+          (job?.type === 'SOS' ? { label: 'SOS Priority', tone: 'sos' as const } : undefined);
+        return {
+          key: `room-${room.id}`,
+          name,
+          avatarUri,
+          serviceName: room.job.service ?? undefined,
+          snippet: truncate(snippet),
+          timeLabel: formatChatTime(summary.activityAt),
+          unreadLabel: summary.unreadCount > 0
+            ? summary.unreadCapped || summary.unreadCount > 99 ? '99+' : String(summary.unreadCount)
+            : null,
+          statusTag,
+          onPress: () => router.push({ pathname: '/chat/[id]', params: { id: room.id } }),
+        };
+      }),
+    [rooms.summaries, isTechnician, getJob, account?.id, router],
+  );
 
-  const handlePreviewPress = (preview: ConversationPreview) => {
-    if (preview.navigatesToSelectTechnician && preview.selectTechnicianParams) {
-      router.push({
-        pathname: '/select-technician',
-        params: preview.selectTechnicianParams,
-      });
-      return;
-    }
-    router.push({
-      pathname: `/chat/${preview.thread.id}` as any,
-      params: { requestId: preview.thread.jobId },
-    });
+  // Negotiations whose job has no chat room yet (once assigned, the job chat takes over).
+  const negotiationRows = useMemo<RowModel[]>(
+    () =>
+      threads
+        .filter((t: ChatThread) => !t.jobId || !roomJobIds.has(t.jobId))
+        .map((thread) => {
+          const request = thread.messages.find((m) => m.serviceRequest)?.serviceRequest;
+          const lastOffer = [...thread.messages].reverse().find((m) => m.priceOffer)?.priceOffer;
+          let snippet = thread.lastMessage;
+          if (thread.isEnded) snippet = 'Request closed';
+          else if (thread.agreedPrice) snippet = `Agreed price: RWF ${thread.agreedPrice.toLocaleString()}`;
+          else if (lastOffer?.status === 'PENDING') snippet = `Offer pending: ${lastOffer.currency} ${lastOffer.amount.toLocaleString()}`;
+          return {
+            key: `neg-${thread.id}`,
+            name: thread.otherParticipantName || 'Specialist',
+            avatarUri: thread.otherParticipantAvatarUrl,
+            serviceName: request?.serviceName,
+            snippet: truncate(snippet || 'Negotiation started'),
+            timeLabel: formatChatTime(thread.lastMessageTime),
+            unreadLabel: null,
+            statusTag: thread.isEnded ? { label: 'Closed', tone: 'muted' as const } : { label: 'Pricing', tone: 'warning' as const },
+            onPress: () => router.push({ pathname: '/negotiation/[id]', params: { id: thread.id, requestId: thread.jobId } }),
+          };
+        }),
+    [threads, roomJobIds, router],
+  );
+
+  const onRefresh = () => {
+    void rooms.refresh();
+    void refreshConversations();
   };
+
+  const tagColors = (tone: 'muted' | 'warning' | 'sos') =>
+    tone === 'sos'
+      ? { bg: 'rgba(239, 68, 68, 0.08)', border: 'rgba(239, 68, 68, 0.25)', fg: '#ef4444' }
+      : tone === 'warning'
+        ? { bg: colors.warning + '14', border: colors.warning + '40', fg: colors.warning }
+        : { bg: colors.muted + '40', border: colors.border, fg: colors.mutedForeground };
+
+  const renderRow = (row: RowModel) => (
+    <Pressable
+      key={row.key}
+      onPress={row.onPress}
+      testID={row.key}
+      style={({ pressed }) => [
+        styles.threadCard,
+        { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 },
+      ]}
+    >
+      <View style={styles.avatarWrap}>
+        <ProfileAvatar uri={row.avatarUri} name={row.name} size={48} testID={`avatar-${row.key}`} />
+        {row.serviceName ? (
+          <View style={[styles.avatarServiceBadge, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <MaterialCommunityIcons name={getServiceIcon(row.serviceName) as any} size={11} color={colors.primary} />
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.cardContent}>
+        <View style={styles.nameRow}>
+          <Text style={[styles.previewName, { color: colors.foreground }]} numberOfLines={1}>{row.name}</Text>
+          {row.serviceName ? (
+            <View style={[styles.serviceTag, { backgroundColor: colors.secondary }]}>
+              <Text style={[styles.serviceTagText, { color: colors.primary }]} numberOfLines={1}>{row.serviceName}</Text>
+            </View>
+          ) : null}
+        </View>
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.previewSnippet,
+            {
+              color: row.unreadLabel ? colors.foreground : colors.mutedForeground,
+              fontFamily: row.unreadLabel ? 'Inter_600SemiBold' : 'Inter_400Regular',
+            },
+          ]}
+        >
+          {row.snippet}
+        </Text>
+        {row.statusTag ? (
+          <View style={styles.tagRow}>
+            {(() => {
+              const c = tagColors(row.statusTag.tone);
+              return (
+                <View style={[styles.statusTag, { backgroundColor: c.bg, borderColor: c.border }]}>
+                  <Text style={[styles.statusTagText, { color: c.fg }]}>{row.statusTag.label}</Text>
+                </View>
+              );
+            })()}
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.metaCol}>
+        <Text style={[styles.previewTime, { color: colors.mutedForeground }]}>{row.timeLabel}</Text>
+        {row.unreadLabel ? (
+          <View style={[styles.unreadBadge, { backgroundColor: colors.primary }]} testID={`unread-badge-${row.key}`}>
+            <Text style={[styles.unreadBadgeText, { color: colors.primaryForeground }]}>{row.unreadLabel}</Text>
+          </View>
+        ) : (
+          <View style={styles.metaSpacer} />
+        )}
+      </View>
+    </Pressable>
+  );
+
+  const nothingYet = !rooms.isLoading && roomRows.length === 0 && negotiationRows.length === 0;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <AppHeader />
-      <KeyboardAwareScrollViewCompat
+      <ScrollView
         contentContainerStyle={[
           styles.content,
           { paddingTop: Platform.OS === 'web' ? 24 : 16, paddingBottom: bottomPadding + 20 },
         ]}
+        refreshControl={
+          <RefreshControl refreshing={rooms.isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+        }
       >
         <PageHeading
-          eyebrow="Negotiation"
-          title="Service Chats"
-          subtitle="Settle service pricing and review requests directly with clients and specialists."
+          eyebrow="Messages"
+          title="Chats"
+          subtitle={
+            isTechnician
+              ? 'Coordinate with clients on your assigned jobs and settle pricing.'
+              : 'Message your assigned technician and settle the repair price.'
+          }
         />
 
-        {sortedThreads.length === 0 ? (
+        {rooms.socketStatus === 'disconnected' && !rooms.isLoading ? (
+          <View style={[styles.inlineBanner, { backgroundColor: colors.warning + '14', borderColor: colors.warning + '40' }]}>
+            <Ionicons name="cloud-offline-outline" size={14} color={colors.warning} />
+            <Text style={[styles.inlineBannerText, { color: colors.foreground }]}>
+              Live updates paused. Reconnecting…
+            </Text>
+          </View>
+        ) : null}
+
+        {rooms.error && !rooms.summaries.length ? (
+          <View style={[styles.emptyContainer, { borderColor: colors.border, backgroundColor: colors.card }]}>
+            <Ionicons name="alert-circle-outline" size={28} color={colors.destructive} />
+            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>Couldn't load your chats</Text>
+            <Text style={[styles.emptySubtitle, { color: colors.mutedForeground }]}>{rooms.error}</Text>
+            <Pressable onPress={onRefresh} style={[styles.retryBtn, { borderColor: colors.primary }]}>
+              <Text style={[styles.retryText, { color: colors.primary }]}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {rooms.isLoading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : null}
+
+        {roomRows.length > 0 ? (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Job chats</Text>
+            <View style={styles.listWrap}>{roomRows.map(renderRow)}</View>
+          </>
+        ) : null}
+
+        {negotiationRows.length > 0 ? (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Price negotiations</Text>
+            <View style={styles.listWrap}>{negotiationRows.map(renderRow)}</View>
+          </>
+        ) : null}
+        {negotiationError && !threads.length ? (
+          <Text style={[styles.sectionError, { color: colors.mutedForeground }]}>
+            Negotiations unavailable: {negotiationError}
+          </Text>
+        ) : null}
+
+        {nothingYet && !rooms.error ? (
           <View style={[styles.emptyContainer, { borderColor: colors.border, backgroundColor: colors.card }]}>
             <View style={[styles.emptyIconWrap, { backgroundColor: colors.secondary }]}>
               <Ionicons name="chatbubbles-outline" size={32} color={colors.primary} />
             </View>
             <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No conversations yet</Text>
             <Text style={[styles.emptySubtitle, { color: colors.mutedForeground }]}>
-              When you connect with a technician or receive service requests, your price settlement chats will show up here.
+              Once a technician is assigned to a job, your chat with them shows up here.
             </Text>
           </View>
-        ) : (
-          <View style={styles.listWrap}>
-            {threadPreviews.map((preview) => (
-              <Pressable
-                key={preview.thread.id}
-                onPress={() => handlePreviewPress(preview)}
-                style={({ pressed }) => [
-                  styles.threadCard,
-                  {
-                    backgroundColor: colors.card,
-                    borderColor: colors.border,
-                    opacity: pressed ? 0.85 : 1,
-                  },
-                ]}
-              >
-                {/* Circular Profile Avatar with service icon badge */}
-                <View style={styles.avatarWrap}>
-                  <ProfileAvatar
-                    uri={preview.avatarUri}
-                    name={preview.name}
-                    knownInitials={preview.knownInitials}
-                    size={48}
-                    testID={`avatar-${preview.thread.id}`}
-                  />
-                  {preview.serviceName ? (
-                    <View
-                      style={[
-                        styles.avatarServiceBadge,
-                        { backgroundColor: colors.card, borderColor: colors.border },
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={getServiceIcon(preview.serviceName) as any}
-                        size={11}
-                        color={colors.primary}
-                      />
-                    </View>
-                  ) : null}
-                </View>
-
-                {/* Main Content: Name, Service Tag, Smart Snippet, SOS Label beneath */}
-                <View style={styles.cardContent}>
-                  <View style={styles.nameRow}>
-                    <Text style={[styles.previewName, { color: colors.foreground }]} numberOfLines={1} ellipsizeMode="tail">
-                      {preview.name}
-                    </Text>
-                    {preview.serviceName ? (
-                      <View style={[styles.serviceTag, { backgroundColor: colors.secondary }]}>
-                        <MaterialCommunityIcons
-                          name={getServiceIcon(preview.serviceName) as any}
-                          size={11}
-                          color={colors.primary}
-                        />
-                        <Text style={[styles.serviceTagText, { color: colors.primary }]} numberOfLines={1}>
-                          {preview.serviceName}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={[
-                      styles.previewSnippet,
-                      {
-                        color: preview.unreadCount > 0 ? colors.foreground : colors.mutedForeground,
-                        fontFamily: preview.unreadCount > 0 ? 'Inter_600SemiBold' : 'Inter_400Regular',
-                      },
-                    ]}
-                  >
-                    {preview.snippet}
-                  </Text>
-                  {preview.isSos && (
-                    <View style={styles.sosTagRow}>
-                      <View style={styles.sosTag} testID={`sos-tag-${preview.thread.id}`}>
-                        <View style={styles.sosDot} />
-                        <Text style={styles.sosTagText}>SOS Priority</Text>
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Right Meta Column: Timestamp & Unread Badge Directly Underneath */}
-                <View style={styles.metaCol}>
-                  <Text style={[styles.previewTime, { color: colors.mutedForeground }]}>
-                    {preview.timeLabel}
-                  </Text>
-                  {preview.unreadCount > 0 ? (
-                    <View style={[styles.unreadBadge, { backgroundColor: colors.primary }]} testID={`unread-badge-${preview.thread.id}`}>
-                      <Text style={[styles.unreadBadgeText, { color: colors.primaryForeground }]}>
-                        {preview.unreadCount > 99 ? '99+' : preview.unreadCount}
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={styles.metaSpacer} />
-                  )}
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </KeyboardAwareScrollViewCompat>
+        ) : null}
+      </ScrollView>
     </View>
   );
 }
@@ -402,64 +309,35 @@ export default function ChatTabScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { paddingHorizontal: 20 },
-  emptyContainer: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    marginTop: 24,
-  },
-  emptyIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  emptyTitle: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 16,
-    marginBottom: 6,
-  },
-  emptySubtitle: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  listWrap: {
-    gap: 10,
-    marginTop: 16,
-  },
-  threadCard: {
+  loadingWrap: { paddingVertical: 32, alignItems: 'center' },
+  inlineBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
-    borderRadius: 16,
+    gap: 6,
     borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 12,
   },
-  avatarBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    borderWidth: 1,
+  inlineBannerText: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+  sectionTitle: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 20,
   },
-  avatarImage: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-  },
-  avatarInitial: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 18,
-  },
-  avatarWrap: {
-    position: 'relative',
-  },
+  sectionError: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 12 },
+  emptyContainer: { borderWidth: 1, borderRadius: 16, padding: 24, alignItems: 'center', marginTop: 24 },
+  emptyIconWrap: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  emptyTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 16, marginBottom: 6, marginTop: 6 },
+  emptySubtitle: { fontFamily: 'Inter_400Regular', fontSize: 13, textAlign: 'center', lineHeight: 18 },
+  retryBtn: { marginTop: 12, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 6 },
+  retryText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  listWrap: { gap: 10, marginTop: 10 },
+  threadCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, borderWidth: 1 },
+  avatarWrap: { position: 'relative' },
   avatarServiceBadge: {
     position: 'absolute',
     bottom: -2,
@@ -471,79 +349,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardContent: {
-    flex: 1,
-    marginLeft: 12,
-    justifyContent: 'center',
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-    flexWrap: 'wrap',
-  },
-  serviceTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 6,
-    flexShrink: 0,
-  },
-  serviceTagText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 10.5,
-  },
-  previewName: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 15,
-    flexShrink: 1,
-  },
-  sosTagRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  sosTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.25)',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 6,
-  },
-  sosDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#ef4444',
-  },
-  sosTagText: {
-    color: '#ef4444',
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 10,
-    letterSpacing: 0.4,
-  },
-  previewSnippet: {
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  metaCol: {
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    alignSelf: 'stretch',
-    marginLeft: 10,
-    paddingVertical: 2,
-  },
-  previewTime: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 12,
-  },
+  cardContent: { flex: 1, marginLeft: 12, justifyContent: 'center' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  previewName: { fontFamily: 'Inter_600SemiBold', fontSize: 15, flexShrink: 1 },
+  serviceTag: { paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 6, flexShrink: 0, maxWidth: 120 },
+  serviceTagText: { fontFamily: 'Inter_600SemiBold', fontSize: 10.5 },
+  previewSnippet: { fontSize: 13, lineHeight: 18 },
+  tagRow: { flexDirection: 'row', marginTop: 4 },
+  statusTag: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1.5 },
+  statusTagText: { fontFamily: 'Inter_600SemiBold', fontSize: 10, letterSpacing: 0.4 },
+  metaCol: { alignItems: 'flex-end', justifyContent: 'space-between', alignSelf: 'stretch', marginLeft: 10, paddingVertical: 2 },
+  previewTime: { fontFamily: 'Inter_400Regular', fontSize: 12 },
   unreadBadge: {
     minWidth: 20,
     height: 20,
@@ -553,13 +369,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 4,
   },
-  unreadBadgeText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 11,
-    textAlign: 'center',
-  },
-  metaSpacer: {
-    height: 20,
-    marginTop: 4,
-  },
+  unreadBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 11, textAlign: 'center' },
+  metaSpacer: { height: 20, marginTop: 4 },
 });

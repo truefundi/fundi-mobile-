@@ -1,12 +1,17 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+/**
+ * Price negotiation threads backed by `/api/v1/conversations`.
+ *
+ * This context only covers the structured pre-assignment negotiation
+ * (request card, technician accept/decline, price offers). General job chat
+ * between a customer and the assigned technician lives in `/api/v1/chat/rooms`
+ * and is handled by `hooks/useChatRooms.ts` and `hooks/useChatRoom.ts`.
+ *
+ * All state is fetched from the backend; nothing is persisted locally.
+ */
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useFundi } from '@/context/FundiContext';
-import { useNotifications } from '@/context/NotificationContext';
-import { useWork } from '@/context/WorkContext';
-import { jobsKey } from '@/constants/storage';
-import { getServiceBookingFee } from '@/constants/services';
-import type { BookingFee, JobStatus, RequestLifecycleStatus, RequestType, ServiceRequest } from '@/constants/jobs';
+import type { BookingFee, RequestLifecycleStatus, RequestType } from '@/constants/jobs';
 import type { Coordinates } from '@/lib/location';
 import {
   acceptJobRequestInConversation,
@@ -18,7 +23,6 @@ import {
   sendConversationMessage,
   sendPriceOffer as apiSendPriceOffer,
   type BackendConversation,
-  type PriceOfferItem,
 } from '@/lib/conversations-api';
 
 export type { ServiceRequest } from '@/constants/jobs';
@@ -179,11 +183,15 @@ export function mapBackendConversationToThread(
 }
 
 type ChatContextValue = {
+  /** Negotiation threads from `/conversations`, newest activity first. */
   threads: ChatThread[];
+  isLoading: boolean;
+  error: string | null;
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
   refreshConversations: () => Promise<void>;
   openConversation: (jobId: string) => Promise<string>;
+  findThreadForJob: (jobId: string) => ChatThread | undefined;
   sendMessage: (threadId: string, text: string, imageUri?: string) => Promise<void>;
   markThreadAsRead: (threadId: string) => Promise<void>;
   updateRequestStatus: (threadId: string, requestId: string, status: RequestLifecycleStatus, reason?: string) => Promise<void>;
@@ -191,6 +199,11 @@ type ChatContextValue = {
   respondToOffer: (threadId: string, offerId: string, status: 'ACCEPTED' | 'DECLINED') => Promise<void>;
   acceptRequestThread: (threadId: string) => Promise<void>;
   endRequestThread: (threadId: string) => Promise<void>;
+  /**
+   * Returns the id to navigate to (`/chat/<id>`) for a job: the existing
+   * negotiation thread when known, otherwise the job id itself, which the chat
+   * screen resolves to the job's chat room or negotiation.
+   */
   createOrGetThread: (
     otherName: string,
     role: 'client' | 'technician',
@@ -203,886 +216,156 @@ type ChatContextValue = {
 
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
 
-const CHAT_STORAGE_KEY = '@fundi/chats';
-
-function phonesMatch(a?: string | null, b?: string | null): boolean {
-  if (!a || !b) return false;
-  if (a === b) return true;
-  const digitsA = a.replace(/\D/g, '');
-  const digitsB = b.replace(/\D/g, '');
-  if (!digitsA || !digitsB) return false;
-  return digitsA.slice(-9) === digitsB.slice(-9);
-}
-
-function recipientPhones(thread: ChatThread): string[] {
-  return [thread.clientPhone, thread.technicianPhone].filter((phone): phone is string => !!phone);
+function sortThreads(list: ChatThread[]): ChatThread[] {
+  return [...list].sort(
+    (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime(),
+  );
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
-  const { getJob, acceptOffer, cancelJob, findAnotherTechnician, updateJob } = useFundi();
-  const { addNotification } = useNotifications();
-  const { addOrUpdateJob } = useWork();
+  const { updateJob } = useFundi();
   const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const role = account?.role;
 
-  const storageKey = account ? `${CHAT_STORAGE_KEY}/${account.phone}` : null;
+  const upsert = useCallback(
+    (conversation: BackendConversation) => {
+      const mapped = mapBackendConversationToThread(conversation, role);
+      setThreads((current) => sortThreads([mapped, ...current.filter((t) => t.id !== mapped.id)]));
+      return mapped;
+    },
+    [role],
+  );
 
   const refreshConversations = useCallback(async () => {
     if (!account) return;
+    setIsLoading(true);
     try {
-      const serverConvs = await listConversations();
-      const mappedThreads = serverConvs.map((conv) => mapBackendConversationToThread(conv, account.role));
-      setThreads((current) => {
-        const serverIds = new Set(mappedThreads.map((t) => t.id));
-        const localOnly = current.filter((t) => !serverIds.has(t.id));
-        return [...mappedThreads, ...localOnly];
-      });
-    } catch {
-      // Backend fetch failure is non-fatal: offline storage continues
+      const conversations = await listConversations();
+      setThreads(sortThreads(conversations.map((c) => mapBackendConversationToThread(c, role))));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load negotiations.');
+    } finally {
+      setIsLoading(false);
     }
-  }, [account]);
-
-  const openConversation = useCallback(
-    async (jobId: string): Promise<string> => {
-      const backendConv = await openJobConversation(jobId);
-      const mapped = mapBackendConversationToThread(backendConv, account?.role);
-      setThreads((current) => [mapped, ...current.filter((t) => t.id !== mapped.id)]);
-      return backendConv.id;
-    },
-    [account?.role],
-  );
+  }, [account, role]);
 
   useEffect(() => {
-    if (!storageKey) {
-      setThreads([]);
-      return;
-    }
-    let mounted = true;
     setThreads([]);
-    const loadThreads = async () => {
-      try {
-        const sharedRaw = await AsyncStorage.getItem(CHAT_STORAGE_KEY);
-        const raw = sharedRaw ?? (await AsyncStorage.getItem(storageKey));
-        const parsed = raw ? (JSON.parse(raw) as ChatThread[]) : [];
-        const stored = sharedRaw === null
-          ? parsed.map((thread) => ({ ...thread, ownerPhone: account?.phone }))
-          : parsed;
-        const owned = stored
-          .filter(
-            (thread) =>
-              phonesMatch(thread.clientPhone, account?.phone) ||
-              phonesMatch(thread.technicianPhone, account?.phone) ||
-              phonesMatch(thread.ownerPhone, account?.phone) ||
-              (Boolean(thread.jobId) && Boolean(getJob(thread.jobId!))),
-          )
-          .map((thread) => {
-            const messages = thread.messages.map((message) => {
-              if (!message.serviceRequest) return message;
-              const oldStatus = message.serviceRequest.status as string;
-              const status: RequestLifecycleStatus =
-                oldStatus === 'PENDING' ? 'PENDING_RESPONSE' :
-                oldStatus === 'COMPLETED' ? 'ACCEPTED' :
-                oldStatus as RequestLifecycleStatus;
-              return {
-                ...message,
-                serviceRequest: { ...message.serviceRequest, status },
-              };
-            });
-            const hadCompletedRequest = thread.messages.some(
-              (message) => (message.serviceRequest?.status as string | undefined) === 'COMPLETED',
-            );
-            if (phonesMatch(thread.clientPhone, account?.phone) || (!phonesMatch(thread.technicianPhone, account?.phone) && account?.role !== 'TECHNICIAN')) {
-              return {
-                ...thread,
-                messages,
-                isEnded: thread.isEnded || hadCompletedRequest,
-                otherParticipantName: thread.technicianName ?? thread.otherParticipantName,
-                otherParticipantRole: 'technician' as const,
-              };
-            }
-            if (phonesMatch(thread.technicianPhone, account?.phone) || account?.role === 'TECHNICIAN') {
-              return {
-                ...thread,
-                messages,
-                isEnded: thread.isEnded || hadCompletedRequest,
-                otherParticipantName: thread.clientName ?? thread.otherParticipantName,
-                otherParticipantRole: 'client' as const,
-              };
-            }
-            return { ...thread, messages, isEnded: thread.isEnded || hadCompletedRequest, ownerPhone: account?.phone };
-          });
-        if (mounted) {
-          setThreads(owned);
-          void refreshConversations();
-        }
-      } catch (error) {
-        console.error('Unable to load chat threads.', error);
-        if (mounted) setThreads([]);
-      }
-    };
-    void loadThreads();
-    return () => {
-      mounted = false;
-    };
-  }, [storageKey, account?.phone, refreshConversations]);
+    setError(null);
+    if (account) void refreshConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.id]);
 
-  const persistThreads = async (updated: ChatThread[]) => {
-    setThreads(updated);
-    if (storageKey && account) {
-      try {
-        const raw = await AsyncStorage.getItem(CHAT_STORAGE_KEY);
-        const allThreads = raw ? (JSON.parse(raw) as ChatThread[]) : [];
-        const updatedById = new Map(updated.map((thread) => [thread.id, thread]));
-        const merged = allThreads.map((thread) => updatedById.get(thread.id) ?? thread);
-        const knownIds = new Set(allThreads.map((thread) => thread.id));
-        for (const thread of updated) {
-          if (!knownIds.has(thread.id)) merged.push(thread);
-        }
-        await AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(merged));
-      } catch (sharedStorageError) {
-        console.warn('Shared chat storage is unavailable; using account-scoped storage.', sharedStorageError);
-        try {
-          await AsyncStorage.setItem(storageKey, JSON.stringify(updated));
-        } catch (accountStorageError) {
-          console.error('Unable to persist chat threads.', accountStorageError);
-          throw accountStorageError;
-        }
-      }
-    }
-  };
-
-  const sendMessage = useCallback(
-    async (threadId: string, text: string, imageUri?: string) => {
-      if (!account) return;
-      if (text.trim()) {
-        try {
-          await sendConversationMessage(threadId, text.trim());
-        } catch (err) {
-          console.warn('Backend sendConversationMessage error (non-fatal):', err);
-        }
-      }
-      const now = new Date().toISOString();
-      const newMessage: ChatMessage = {
-        id: 'msg-' + Date.now(),
-        senderId: account.id,
-        senderName: account.name,
-        senderRole: account.role === 'TECHNICIAN' ? 'technician' : 'client',
-        text: text || (imageUri ? 'Photo attachment' : ''),
-        imageUri,
-        timestamp: now,
-        read: false,
-      };
-
-      const lastSnippet = text || (imageUri ? '📷 Photo attachment' : '');
-
-      const updated = threads.map((thread) => {
-        if (thread.id === threadId) {
-          return {
-            ...thread,
-            lastMessage: lastSnippet,
-            lastMessageTime: now,
-            unreadCount: (thread.unreadCount ?? 0) + 1,
-            messages: [...thread.messages, newMessage],
-          };
-        }
-        return thread;
-      });
-
-      await persistThreads(updated);
-    },
-    [account, threads],
-  );
-
-  const markThreadAsRead = useCallback(
-    async (threadId: string) => {
-      let changed = false;
-      const updated = threads.map((thread) => {
-        if (thread.id === threadId) {
-          const hasUnread =
-            (thread.unreadCount !== undefined && thread.unreadCount > 0) ||
-            thread.messages.some((m) => m.read === false);
-          if (hasUnread) {
-            changed = true;
-            return {
-              ...thread,
-              unreadCount: 0,
-              messages: thread.messages.map((m) => (m.read === false ? { ...m, read: true } : m)),
-            };
-          }
-        }
-        return thread;
-      });
-      if (changed) {
-        await persistThreads(updated);
-      }
-    },
+  const findThreadForJob = useCallback(
+    (jobId: string) =>
+      threads.find((t) => t.jobId === jobId && !t.isEnded) ?? threads.find((t) => t.jobId === jobId),
     [threads],
   );
 
-  const updateRequestStatus = useCallback(
-    async (threadId: string, requestId: string, status: RequestLifecycleStatus, reason?: string) => {
-      const now = new Date().toISOString();
-      const sourceThread = threads.find((thread) => thread.id === threadId);
-      const sourceRequest = sourceThread?.messages.find((message) => message.serviceRequest?.id === requestId)?.serviceRequest;
-      if (!sourceThread || !sourceRequest) throw new Error('This service request is no longer available.');
-      if (sourceThread.isAccepted || sourceRequest.status === 'ACCEPTED') {
-        if (status !== 'CANCELLED') return;
+  const openConversation = useCallback(
+    async (jobId: string): Promise<string> => upsert(await openJobConversation(jobId)).id,
+    [upsert],
+  );
+
+  const sendMessage = useCallback(
+    async (threadId: string, text: string, imageUri?: string) => {
+      const body = text.trim();
+      if (!body) {
+        if (imageUri) throw new Error('Photos can be shared in the job chat once a technician is assigned.');
+        return;
       }
-      if (sourceThread.isEnded) return;
-      if (sourceRequest.status === status) return;
-      if (status === 'DECLINED' && !reason?.trim()) throw new Error('Provide a reason for declining this request.');
-
-      const reasonText = reason?.trim();
-      const initiatorRole: 'technician' | 'client' = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
-      const initiatorName = account?.name ?? (initiatorRole === 'technician' ? 'Technician' : 'Client');
-      const initiatorId = account?.id;
-      const cancelledRole: 'technician' | 'client' | undefined = status === 'DECLINED' ? 'technician' : status === 'CANCELLED' ? initiatorRole : undefined;
-      const cancelledName = status === 'DECLINED' ? (initiatorRole === 'technician' ? initiatorName : sourceThread.technicianName ?? 'Technician') : status === 'CANCELLED' ? initiatorName : undefined;
-      const cancelledId = status === 'DECLINED' ? (initiatorRole === 'technician' ? initiatorId : undefined) : status === 'CANCELLED' ? initiatorId : undefined;
-
-      const allowedTransitions: Record<RequestLifecycleStatus, RequestLifecycleStatus[]> = {
-        REQUEST_RECEIVED: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
-        PENDING_RESPONSE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
-        OFFER_MADE: ['OFFER_MADE', 'ACCEPTED', 'DECLINED', 'CANCELLED'],
-        ACCEPTED: ['PAYMENT_PENDING', 'PAID', 'DISPATCHED', 'NEGOTIATING', 'ACTIVE', 'CANCELLED'],
-        PAYMENT_PENDING: ['PAID', 'DISPATCHED', 'CANCELLED', 'ACTIVE'],
-        PAID: ['DISPATCHED', 'NEGOTIATING', 'COOPERATION_CONFIRMED', 'CANCELLED', 'ACTIVE'],
-        DISPATCHED: ['NEGOTIATING', 'COOPERATION_CONFIRMED', 'CANCELLED', 'ACTIVE'],
-        NEGOTIATING: ['COOPERATION_CONFIRMED', 'CANCELLED', 'ACTIVE', 'IN_PROGRESS'],
-        COOPERATION_CONFIRMED: ['ACTIVE', 'IN_PROGRESS', 'CANCELLED'],
-        ACTIVE: ['CANCELLED', 'IN_PROGRESS'],
-        IN_PROGRESS: ['CANCELLED', 'ACTIVE'],
-        DECLINED: [],
-        CANCELLED: [],
-      };
-      if (!allowedTransitions[sourceRequest.status]?.includes(status)) return;
-      const statusText =
-        status === 'ACCEPTED' ? 'The technician accepted this service request.' :
-        status === 'PAID' ? 'The Service Booking Fee has been paid.' :
-        status === 'DISPATCHED' ? 'A technician has been dispatched.' :
-        status === 'NEGOTIATING' ? 'Price negotiation is now active.' :
-        status === 'COOPERATION_CONFIRMED' ? 'Cooperation has been confirmed by both parties.' :
-        status === 'DECLINED' ? `The technician declined this request${reasonText ? `: ${reasonText}` : '.'}` :
-        status === 'CANCELLED' ? (initiatorRole === 'client' ? 'The client cancelled this service request.' : 'The technician cancelled this service request.') :
-        status === 'OFFER_MADE' ? 'A service offer was made.' :
-        'The request is waiting for a technician response.';
-      const updated: ChatThread[] = threads.map((thread) => {
-        if (thread.id !== threadId) return thread;
-        const updatedMessages: ChatMessage[] = thread.messages.map((message) =>
-          message.serviceRequest?.id === requestId
-            ? {
-                ...message,
-                serviceRequest: {
-                  ...message.serviceRequest,
-                  status,
-                  ...(status === 'DECLINED' && reasonText ? { declineReason: reasonText } : {}),
-                  ...(cancelledRole ? { cancelledByRole: cancelledRole, cancelledByName: cancelledName, cancelledById: cancelledId } : {}),
-                },
-              }
-            : message,
-        );
-        const newMsg: ChatMessage = {
-          id: `msg-status-${Date.now()}`,
-          senderId: 'system',
-          senderName: 'System',
-          senderRole: initiatorRole,
-          cancelledByRole: cancelledRole,
-          cancelledByName: cancelledName,
-          cancelledById: cancelledId,
-          text: statusText,
-          timestamp: now,
-        };
-        return {
-          ...thread,
-          isAccepted: status === 'ACCEPTED' ? true : status === 'CANCELLED' || status === 'DECLINED' ? false : thread.isAccepted,
-          isEnded: status === 'CANCELLED' || status === 'DECLINED' ? true : status === 'ACCEPTED' ? false : thread.isEnded,
-          ...(cancelledRole ? { cancelledByRole: cancelledRole, cancelledByName: cancelledName, cancelledById: cancelledId } : {}),
-          lastMessage: statusText,
-          lastMessageTime: now,
-          messages: [
-            ...updatedMessages,
-            newMsg,
-          ],
-        };
-      });
-      await persistThreads(updated);
-
-      const jobId = sourceThread.jobId;
-      const relatedJob = jobId ? getJob(jobId) : undefined;
-      const updatesJob = !!relatedJob && (relatedJob.status === 'OFFERED' || relatedJob.status === 'PAID' || relatedJob.status === 'VISIT_PAID' || relatedJob.status === 'PAYMENT_PENDING') &&
-        (status === 'ACCEPTED' || status === 'DECLINED');
-      const cancelsJob = !!relatedJob && ['REQUESTED', 'MATCHING', 'OFFERED', 'ACTIVE', 'IN_PROGRESS', 'PAID', 'VISIT_PAID'].includes(relatedJob.status) &&
-        status === 'CANCELLED';
-      if ((updatesJob || cancelsJob) && jobId) {
-        if (status === 'ACCEPTED') {
-          updateJob(jobId, { status: 'ACTIVE' }, recipientPhones(sourceThread));
-        }
-        else if (status === 'DECLINED') findAnotherTechnician(jobId);
-        else if (cancelsJob) {
-          const job = getJob(jobId);
-          if (job && job.status !== 'CANCELLED') cancelJob(jobId, reasonText, recipientPhones(sourceThread));
-        }
-      }
-
-      // When the technician ACCEPTS a request, add an Active job to the technician's Jobs tab
-      if (status === 'ACCEPTED') {
-        const refId = sourceThread.jobId ?? `JOB-${Date.now()}`;
-        const fee = sourceRequest.bookingFee?.amount ?? getServiceBookingFee(sourceRequest.serviceName);
-        void addOrUpdateJob({
-          id: refId,
-          reference: `FND-${refId.slice(-4).toUpperCase()}`,
-          service: sourceRequest.serviceName,
-          problem: sourceRequest.problem,
-          urgency: 'Today',
-          locationLabel: sourceRequest.address ?? 'Location not specified',
-          locationLatitude: sourceRequest.latitude,
-          locationLongitude: sourceRequest.longitude,
-          status: 'ACTIVE',
-          statusSince: now,
-          createdAt: now,
-          clientName: sourceThread.clientName ?? sourceThread.otherParticipantName,
-          clientPhone: sourceThread.clientPhone,
-          agreedPrice: sourceThread.agreedPrice,
-          chatThreadId: threadId,
-          type: sourceRequest.type ?? 'STANDARD',
-          bookingFee: sourceRequest.bookingFee ?? {
-            amount: fee,
-            currency: 'RWF',
-            status: 'PAID',
-          },
-          events: [
-            {
-              id: `evt-accepted-${Date.now()}`,
-              status: 'ACTIVE',
-              title: 'Request accepted',
-              text: 'Technician accepted the service request.',
-              at: now,
-            },
-          ],
-        }, sourceThread.technicianPhone);
-
-        // Also sync client's persistent job store so the client immediately sees ACTIVE in Activity tab
-        if (sourceThread.clientPhone) {
-          const clientKey = jobsKey(sourceThread.clientPhone);
-          void AsyncStorage.getItem(clientKey).then((raw) => {
-            if (!raw) return;
-            try {
-              const list: any[] = JSON.parse(raw);
-              const updatedList = list.map((j) =>
-                j.id === refId
-                  ? {
-                      ...j,
-                      status: 'ACTIVE',
-                      statusSince: now,
-                      technician: j.technician ?? {
-                        id: account?.id ?? 'tech-assigned',
-                        name: account?.name ?? sourceThread.technicianName ?? 'Technician',
-                        phone: sourceThread.technicianPhone ?? account?.phone ?? '',
-                        service: sourceRequest.serviceName,
-                        rating: 4.9,
-                        completedJobs: 18,
-                      },
-                    }
-                  : j,
-              );
-              void AsyncStorage.setItem(clientKey, JSON.stringify(updatedList));
-            } catch {}
-          });
-        }
-      }
-
-      const title =
-        status === 'ACCEPTED' ? 'Technician accepted your request' :
-        status === 'DECLINED' ? 'Technician declined your request' :
-        status === 'CANCELLED' ? 'Request cancelled' :
-        status === 'OFFER_MADE' ? 'Technician sent an offer' :
-        'Request is awaiting a response';
-      if (!(updatesJob && status === 'ACCEPTED') && !cancelsJob) {
-        addNotification({
-          id: `request-${threadId}-${Date.now()}`,
-          jobId: sourceThread.jobId,
-          threadId,
-          status,
-          service: sourceRequest.serviceName,
-          title,
-          text: statusText,
-          at: now,
-          recipientPhones: recipientPhones(sourceThread),
-        });
-      }
+      upsert(await sendConversationMessage(threadId, body));
     },
-    [acceptOffer, account?.role, addNotification, addOrUpdateJob, cancelJob, findAnotherTechnician, getJob, threads],
+    [upsert],
+  );
+
+  const markThreadAsRead = useCallback(async (threadId: string) => {
+    setThreads((current) =>
+      current.some((t) => t.id === threadId && t.unreadCount)
+        ? current.map((t) => (t.id === threadId ? { ...t, unreadCount: 0 } : t))
+        : current,
+    );
+  }, []);
+
+  const updateRequestStatus = useCallback(
+    async (threadId: string, _requestId: string, status: RequestLifecycleStatus, reason?: string) => {
+      if (status === 'ACCEPTED') {
+        upsert(await acceptJobRequestInConversation(threadId));
+        return;
+      }
+      if (status === 'DECLINED') {
+        const reasonText = reason?.trim();
+        if (!reasonText) throw new Error('Provide a reason for declining this request.');
+        upsert(await declineJobRequestInConversation(threadId, reasonText));
+        return;
+      }
+      // Other lifecycle states are driven by the backend; just resync.
+      await refreshConversations();
+    },
+    [upsert, refreshConversations],
   );
 
   const sendPriceOffer = useCallback(
-    async (threadId: string, amount: number, notes?: string, senderRoleOverride?: 'client' | 'technician') => {
-      if (!account) return;
+    async (threadId: string, amount: number, notes?: string) => {
       if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter an offer amount greater than zero.');
-      const sourceThread = threads.find((thread) => thread.id === threadId);
-      if (!sourceThread) throw new Error('This conversation is no longer available.');
-      if (
-        sourceThread.messages.some((message) => message.priceOffer?.status === 'ACCEPTED')
-      ) {
-        throw new Error('An offer has already been accepted. No further offers can be made.');
-      }
-      if (sourceThread.isEnded) throw new Error('This request has ended and cannot receive new offers.');
-
-      try {
-        await apiSendPriceOffer(threadId, amount, notes);
-      } catch (err) {
-        console.warn('Backend sendPriceOffer error (non-fatal):', err);
-      }
-
-      const now = new Date().toISOString();
-      const senderRole = senderRoleOverride ?? (account.role === 'TECHNICIAN' ? 'technician' : 'client');
-      
-      const newOffer: ServiceOffer = {
-        id: 'offer-' + Date.now(),
-        amount,
-        currency: 'RWF',
-        status: 'PENDING',
-        senderRole,
-        notes,
-        createdAt: now,
-      };
-
-      const newMessage: ChatMessage = {
-        id: 'msg-offer-' + Date.now(),
-        senderId: account.id,
-        senderName: account.name,
-        senderRole,
-        text: `Proposed service cost: RWF ${amount.toLocaleString()}`,
-        timestamp: now,
-        priceOffer: newOffer,
-      };
-
-      const updated = threads.map((thread) => {
-        if (thread.id === threadId) {
-          // Supersede previous pending offers
-          const updatedMessages = thread.messages.map((msg) => {
-            if (msg.priceOffer && msg.priceOffer.status === 'PENDING') {
-              return {
-                ...msg,
-                priceOffer: { ...msg.priceOffer, status: 'SUPERSEDED' as const },
-              };
-            }
-            return msg;
-          });
-
-          return {
-            ...thread,
-            lastMessage: `Service offer: RWF ${amount.toLocaleString()}`,
-            lastMessageTime: now,
-            messages: updatedMessages.map((message) =>
-              message.serviceRequest
-                ? { ...message, serviceRequest: { ...message.serviceRequest, status: 'OFFER_MADE' as const } }
-                : message,
-            ).concat(newMessage),
-          };
-        }
-        return thread;
-      });
-
-      await persistThreads(updated);
-
-      // Propagate proposedPrice to job records so Activity tab and Jobs tab show the proposal immediately
-      if (sourceThread.jobId) {
-        updateJob(sourceThread.jobId, { proposedPrice: amount }, recipientPhones(sourceThread));
-      }
-      if (sourceThread.clientPhone) {
-        const clientKey = jobsKey(sourceThread.clientPhone);
-        void AsyncStorage.getItem(clientKey).then((raw) => {
-          if (!raw) return;
-          try {
-            const list: any[] = JSON.parse(raw);
-            const updatedClientList = list.map((j) =>
-              j.id === sourceThread.jobId ? { ...j, proposedPrice: amount } : j,
-            );
-            void AsyncStorage.setItem(clientKey, JSON.stringify(updatedClientList));
-          } catch {}
-        });
-      }
-      if (sourceThread.technicianPhone) {
-        const techKey = `@fundi/technician-jobs/${sourceThread.technicianPhone}`;
-        void AsyncStorage.getItem(techKey).then((raw) => {
-          if (!raw) return;
-          try {
-            const list: any[] = JSON.parse(raw);
-            const updatedTechList = list.map((j) =>
-              j.id === sourceThread.jobId ? { ...j, proposedPrice: amount } : j,
-            );
-            void AsyncStorage.setItem(techKey, JSON.stringify(updatedTechList));
-          } catch {}
-        });
-      }
-
-      const request = sourceThread.messages.find((message) => message.serviceRequest)?.serviceRequest;
-      addNotification({
-        id: `request-${threadId}-${Date.now()}`,
-        jobId: sourceThread.jobId,
-        threadId,
-        status: 'OFFER_MADE',
-        service: request?.serviceName ?? (sourceThread.jobId ? getJob(sourceThread.jobId)?.service : undefined) ?? 'Service offer',
-        title: 'A service offer was made',
-        text: `A service offer of RWF ${amount.toLocaleString()} is ready to review.`,
-        at: now,
-        recipientPhones: recipientPhones(sourceThread),
-      });
+      const thread = threads.find((t) => t.id === threadId);
+      if (thread?.isEnded) throw new Error('This request has ended and cannot receive new offers.');
+      upsert(await apiSendPriceOffer(threadId, amount, notes?.trim() || undefined));
     },
-    [account, addNotification, getJob, threads],
+    [threads, upsert],
   );
 
   const respondToOffer = useCallback(
     async (threadId: string, offerId: string, status: 'ACCEPTED' | 'DECLINED') => {
-      try {
-        if (status === 'ACCEPTED') {
-          await apiAcceptPriceOffer(threadId, offerId);
-        } else {
-          await apiDeclinePriceOffer(threadId, offerId);
-        }
-      } catch (err) {
-        console.warn('Backend respondToOffer non-fatal:', err);
-      }
-
-      const now = new Date().toISOString();
-      const sourceThread = threads.find((thread) => thread.id === threadId);
-      const sourceOffer = sourceThread?.messages.find((message) => message.priceOffer?.id === offerId)?.priceOffer;
-      if (!sourceThread || !sourceOffer || sourceOffer.status !== 'PENDING') return;
-      if (
-        status === 'ACCEPTED' &&
-        sourceThread.messages.some((message) => message.priceOffer?.status === 'ACCEPTED')
-      ) return;
-
-      const updated = threads.map((thread) => {
-        if (thread.id === threadId) {
-          const targetAmount = sourceOffer.amount;
-          const updatedMessages = thread.messages.map((msg) => {
-            if (msg.priceOffer && msg.priceOffer.id === offerId) {
-              return {
-                ...msg,
-                priceOffer: { ...msg.priceOffer, status },
-              };
-            }
-            if (status === 'ACCEPTED' && msg.serviceRequest) {
-              return { ...msg, serviceRequest: { ...msg.serviceRequest, status: 'ACCEPTED' as const } };
-            }
-            return msg;
-          });
-
-          return {
-            ...thread,
-            isAccepted: status === 'ACCEPTED' ? true : thread.isAccepted,
-            isEnded: status === 'ACCEPTED' ? false : thread.isEnded,
-            agreedPrice: status === 'ACCEPTED' ? targetAmount : thread.agreedPrice,
-            lastMessage: status === 'ACCEPTED' ? `Offer accepted: RWF ${targetAmount.toLocaleString()}` : 'Offer declined',
-            lastMessageTime: now,
-            messages: updatedMessages,
-          };
-        }
-        return thread;
-      });
-
-      await persistThreads(updated);
-      if (status === 'ACCEPTED') {
-        const request = sourceThread.messages.find((message) => message.serviceRequest)?.serviceRequest;
-        addNotification({
-          id: `request-${threadId}-${Date.now()}`,
-          jobId: sourceThread.jobId,
-          threadId,
-          status: 'ACCEPTED',
-          service: request?.serviceName ?? (sourceThread.jobId ? getJob(sourceThread.jobId)?.service : undefined) ?? 'Service offer',
-          title: 'Service offer accepted',
-          text: `The service offer of RWF ${sourceOffer.amount.toLocaleString()} was accepted.`,
-          at: now,
-          recipientPhones: recipientPhones(sourceThread),
-        });
-
-        // Update the agreed price on the technician's job and client's job
-        const refId = sourceThread.jobId ?? `JOB-${Date.now()}`;
-        const existingServiceName = request?.serviceName ?? (sourceThread.jobId ? getJob(sourceThread.jobId)?.service : undefined) ?? 'Service';
-        updateJob(refId, { agreedPrice: sourceOffer.amount }, recipientPhones(sourceThread));
-        void addOrUpdateJob({
-          id: refId,
-          reference: `FND-${refId.slice(-4).toUpperCase()}`,
-          service: existingServiceName,
-          problem: request?.problem ?? '',
-          urgency: 'Today',
-          locationLabel: request?.address ?? 'Location not specified',
-          locationLatitude: request?.latitude,
-          locationLongitude: request?.longitude,
-          status: 'ACTIVE',
-          statusSince: now,
-          createdAt: now,
-          clientName: sourceThread.clientName ?? sourceThread.otherParticipantName,
-          clientPhone: sourceThread.clientPhone,
-          agreedPrice: sourceOffer.amount,
-          chatThreadId: threadId,
-          type: request?.type ?? 'STANDARD',
-          bookingFee: request?.bookingFee ?? {
-            amount: getServiceBookingFee(request?.serviceName),
-            currency: 'RWF',
-            status: 'PAID',
-          },
-          events: [
-            {
-              id: `evt-offer-accepted-${Date.now()}`,
-              status: 'ACTIVE',
-              title: 'Price agreed',
-              text: `Service offer of RWF ${sourceOffer.amount.toLocaleString()} was accepted.`,
-              at: now,
-            },
-          ],
-        }, sourceThread.technicianPhone);
-
-        if (sourceThread.clientPhone) {
-          const clientKey = jobsKey(sourceThread.clientPhone);
-          void AsyncStorage.getItem(clientKey).then((raw) => {
-            if (!raw) return;
-            try {
-              const list: any[] = JSON.parse(raw);
-              const updatedList = list.map((j) =>
-                j.id === refId ? { ...j, agreedPrice: sourceOffer.amount } : j,
-              );
-              void AsyncStorage.setItem(clientKey, JSON.stringify(updatedList));
-            } catch {}
-          });
-        }
+      const conversation =
+        status === 'ACCEPTED'
+          ? await apiAcceptPriceOffer(threadId, offerId)
+          : await apiDeclinePriceOffer(threadId, offerId);
+      const mapped = upsert(conversation);
+      if (status === 'ACCEPTED' && mapped.jobId && mapped.agreedPrice) {
+        updateJob(mapped.jobId, { agreedPrice: mapped.agreedPrice });
       }
     },
-    [addNotification, addOrUpdateJob, getJob, threads],
+    [upsert, updateJob],
   );
 
   const acceptRequestThread = useCallback(
     async (threadId: string) => {
-      try {
-        await acceptJobRequestInConversation(threadId);
-      } catch (err) {
-        console.warn('Backend acceptJobRequestInConversation non-fatal:', err);
-      }
-
-      const request = threads
-        .find((thread) => thread.id === threadId)
-        ?.messages.find((message) => message.serviceRequest)?.serviceRequest;
-      if (request) {
-        await updateRequestStatus(threadId, request.id, 'ACCEPTED');
-        return;
-      }
-      const now = new Date().toISOString();
-      const updated = threads.map((item) =>
-        item.id === threadId
-          ? {
-              ...item,
-              isAccepted: true,
-              lastMessage: 'Request accepted.',
-              lastMessageTime: now,
-              messages: [
-                ...item.messages,
-                {
-                  id: `msg-accepted-${Date.now()}`,
-                  senderId: 'system',
-                  senderName: 'System',
-                  senderRole: 'technician' as const,
-                  text: 'The technician accepted this service request.',
-                  timestamp: now,
-                },
-              ],
-            }
-          : item,
-      );
-      await persistThreads(updated);
+      upsert(await acceptJobRequestInConversation(threadId));
     },
-    [threads, updateRequestStatus],
+    [upsert],
   );
 
   const endRequestThread = useCallback(
     async (threadId: string) => {
-      try {
-        await declineJobRequestInConversation(threadId, 'Request ended');
-      } catch (err) {
-        console.warn('Backend declineJobRequestInConversation non-fatal:', err);
-      }
-
-      const now = new Date().toISOString();
-      const initiatorRole: 'technician' | 'client' = account?.role === 'TECHNICIAN' ? 'technician' : 'client';
-      const initiatorName = account?.name ?? (initiatorRole === 'technician' ? 'Technician' : 'Client');
-      const initiatorId = account?.id;
-      const endText = initiatorRole === 'technician' ? 'The technician ended this service request.' : 'The client ended this service request.';
-      const updated: ChatThread[] = threads.map((item) =>
-        item.id === threadId
-          ? {
-              ...item,
-              isEnded: true,
-              cancelledByRole: initiatorRole,
-              cancelledByName: initiatorName,
-              cancelledById: initiatorId,
-              lastMessage: endText,
-              lastMessageTime: now,
-              messages: [
-                ...item.messages,
-                {
-                  id: `msg-ended-${Date.now()}`,
-                  senderId: 'system',
-                  senderName: 'System',
-                  senderRole: initiatorRole,
-                  cancelledByRole: initiatorRole,
-                  cancelledByName: initiatorName,
-                  cancelledById: initiatorId,
-                  text: endText,
-                  timestamp: now,
-                },
-              ],
-            }
-          : item,
-      );
-      await persistThreads(updated);
+      upsert(await declineJobRequestInConversation(threadId, 'Request ended'));
     },
-    [account, threads],
+    [upsert],
   );
 
-  const createOrGetThread = useCallback(
-    (
-      otherName: string,
-      role: 'client' | 'technician',
-      jobId?: string,
-      requestDetails?: ServiceRequestDetails,
-      otherPhone?: string,
-      technicianLocation?: Coordinates,
-    ) => {
-      const existing = jobId
-        ? threads.find((thread) => thread.jobId === jobId && !thread.isEnded)
-        : threads.find((thread) => thread.otherParticipantName === otherName);
-      if (existing) {
-        if (requestDetails?.bookingFee?.status === 'PAID') {
-          const updated = threads.map((t) => {
-            if (t.id === existing.id) {
-              return {
-                ...t,
-                messages: t.messages.map((m) =>
-                  m.serviceRequest
-                    ? {
-                        ...m,
-                        serviceRequest: {
-                          ...m.serviceRequest,
-                          bookingFee: requestDetails.bookingFee,
-                          status:
-                            m.serviceRequest.status === 'PENDING_RESPONSE'
-                              ? 'REQUEST_RECEIVED'
-                              : m.serviceRequest.status,
-                        },
-                      }
-                    : m,
-                ),
-              };
-            }
-            return t;
-          });
-          void persistThreads(updated);
-        }
-        return existing.id;
-      }
-
-      const newThreadId = 'thread-' + Date.now();
-      const now = new Date().toISOString();
-
-      const initialMessage: ChatMessage = requestDetails ? {
-        id: 'msg-req-' + Date.now(),
-        senderId: account?.id ?? 'client',
-        senderName: account?.name ?? 'Client',
-        senderRole: 'client',
-        text: `Service request submitted for ${requestDetails.serviceName}`,
-        timestamp: now,
-        serviceRequest: requestDetails,
-      } : {
-        id: 'msg-init-' + Date.now(),
-        senderId: 'system',
-        senderName: 'System',
-        senderRole: 'client',
-        text: 'Connected successfully. You can now chat and settle the service price.',
-        timestamp: now,
-      };
-
-      const newThread: ChatThread = {
-        id: newThreadId,
-        jobId,
-        ownerPhone: account?.phone,
-        clientPhone: account?.role === 'TECHNICIAN' ? otherPhone : account?.phone,
-        technicianPhone: account?.role === 'TECHNICIAN' ? account.phone : otherPhone,
-        clientName: account?.role === 'TECHNICIAN' ? otherName : account?.name,
-        technicianName: account?.role === 'TECHNICIAN' ? account.name : otherName,
-        technicianLocation,
-        isAccepted: requestDetails?.status === 'ACCEPTED',
-        isEnded: false,
-        otherParticipantName: otherName,
-        otherParticipantRole: role,
-        lastMessage: requestDetails ? `Service request: ${requestDetails.serviceName}` : 'Conversation started.',
-        lastMessageTime: now,
-        messages: [initialMessage],
-      };
-
-      void persistThreads([...threads, newThread]).catch((error: unknown) => {
-        console.error('Unable to persist the new chat thread.', error);
-      });
-      if (requestDetails?.status === 'ACCEPTED') {
-        const refId = jobId ?? `JOB-${Date.now()}`;
-        const fee = requestDetails.bookingFee?.amount ?? 75;
-        void addOrUpdateJob({
-          id: refId,
-          reference: `FND-${refId.slice(-4).toUpperCase()}`,
-          service: requestDetails.serviceName,
-          problem: requestDetails.problem,
-          urgency: requestDetails.type === 'SOS' ? 'Emergency' : 'Today',
-          locationLabel: requestDetails.address ?? 'Location not specified',
-          locationLatitude: requestDetails.latitude,
-          locationLongitude: requestDetails.longitude,
-          status: 'ACTIVE',
-          statusSince: now,
-          createdAt: now,
-          clientName: account?.role === 'TECHNICIAN' ? otherName : account?.name,
-          clientPhone: account?.role === 'TECHNICIAN' ? otherPhone : account?.phone,
-          chatThreadId: newThreadId,
-          type: requestDetails.type ?? 'STANDARD',
-          bookingFee: requestDetails.bookingFee ?? {
-            amount: fee,
-            currency: 'RWF',
-            status: 'PAID',
-          },
-          events: [
-            {
-              id: `evt-accepted-${Date.now()}`,
-              status: 'ACTIVE',
-              title: 'Request accepted',
-              text: 'Technician accepted the service request.',
-              at: now,
-            },
-          ],
-        }, account?.role === 'TECHNICIAN' ? account.phone : otherPhone);
-      }
-      if (requestDetails?.status === 'REQUEST_RECEIVED' || requestDetails?.status === 'PENDING_RESPONSE') {
-        addNotification({
-          id: `request-${newThreadId}-pending`,
-          jobId,
-          threadId: newThreadId,
-          status: requestDetails.status,
-          service: requestDetails.serviceName,
-          title: 'Request received by technician',
-          text: 'Your request is waiting in the selected technician’s chat.',
-          at: now,
-          recipientPhones: recipientPhones(newThread),
-        });
-      }
-      return newThreadId;
+  const createOrGetThread = useCallback<ChatContextValue['createOrGetThread']>(
+    (_otherName, _role, jobId) => {
+      if (!jobId) return threads[0]?.id ?? '';
+      return findThreadForJob(jobId)?.id ?? jobId;
     },
-    [threads, account, addNotification],
+    [threads, findThreadForJob],
   );
 
-  const value = useMemo(
+  const value = useMemo<ChatContextValue>(
     () => ({
       threads,
+      isLoading,
+      error,
       activeThreadId,
       setActiveThreadId,
       refreshConversations,
       openConversation,
+      findThreadForJob,
       sendMessage,
       markThreadAsRead,
       updateRequestStatus,
@@ -1094,9 +377,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }),
     [
       threads,
+      isLoading,
+      error,
       activeThreadId,
       refreshConversations,
       openConversation,
+      findThreadForJob,
       sendMessage,
       markThreadAsRead,
       updateRequestStatus,

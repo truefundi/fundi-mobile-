@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -10,932 +10,632 @@ import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
-  StyleProp,
   StyleSheet,
   Text,
   TextInput,
   View,
-  type ImageStyle,
-  type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useColors } from '@/hooks/useColors';
-import { useChat, type ChatMessage, type ServiceRequestDetails } from '@/context/ChatContext';
-import { useFundi } from '@/context/FundiContext';
 import { useAuth } from '@/context/AuthContext';
-import { useRequestMediaUri } from '@/hooks/useRequestMediaUri';
-import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
-import { isCancellationEvent } from '@/lib/cancellation';
-import { STATUS_LABEL } from '@/constants/jobs';
+import { useChat } from '@/context/ChatContext';
+import { useFundi } from '@/context/FundiContext';
+import { useChatRoom, type ChatTimelineMessage } from '@/hooks/useChatRoom';
+import { fetchCustomerJob } from '@/lib/jobs-api';
+import { CHAT_TEXT_MAX_LENGTH, type BackendChatRoom } from '@/lib/chat-rooms-api';
 import { getServiceIcon } from '@/lib/categories-api';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
-/** Helper to reliably render request thumbnails and gallery images with fallback */
-function StableRequestImage({
-  uri,
-  style,
-  fallbackStyle,
-  serviceName,
-}: {
-  uri: string;
-  style: StyleProp<ImageStyle>;
-  fallbackStyle: StyleProp<ViewStyle>;
-  serviceName?: string;
-}) {
-  const colors = useColors();
-  const resolvedUri = useRequestMediaUri(uri);
-  const source = useMemo(() => (resolvedUri ? { uri: resolvedUri } : null), [resolvedUri]);
-  const [failed, setFailed] = useState(false);
+/**
+ * Job chat between a customer and the technician assigned to the job
+ * (`/api/v1/chat/rooms` + the `/chat` Socket.IO namespace).
+ *
+ * The route id may be a chat room id or a job id (with an optional
+ * `requestId` job hint). When no chat room exists yet, the screen hands off to
+ * the price negotiation (`/negotiation/[id]`) if one exists for the job.
+ *
+ * Access rules: customers can only send once the job's booking fee is PAID;
+ * technicians can send as soon as they are the assigned member. The backend
+ * enforces the room's own writability (active room, current assignment,
+ * ASSIGNED/PAUSED job).
+ */
 
-  if (!source || failed) {
-    return (
-      <View style={[fallbackStyle, { backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }]}>
-        <MaterialCommunityIcons
-          name={getServiceIcon(serviceName) as any}
-          size={28}
-          color={colors.primary}
-        />
-      </View>
-    );
-  }
+type FeeStatus = 'checking' | 'PAID' | 'UNPAID' | 'unknown';
 
-  return (
-    <Image
-      source={source}
-      style={style}
-      resizeMode="cover"
-      onError={() => setFailed(true)}
-    />
-  );
+/** Verifies a customer's booking fee for the job, preferring backend truth over cached state. */
+function useBookingFeeStatus(jobId: string | undefined, isTechnician: boolean) {
+  const { getJob } = useFundi();
+  const cached = jobId ? getJob(jobId) : undefined;
+  const cachedPaid = cached?.bookingFee?.status === 'PAID';
+  const [status, setStatus] = useState<FeeStatus>(isTechnician || cachedPaid ? 'PAID' : 'checking');
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (isTechnician || cachedPaid) {
+      setStatus('PAID');
+      return;
+    }
+    if (!jobId) return;
+    let cancelled = false;
+    setStatus('checking');
+    fetchCustomerJob(jobId)
+      .then((job) => {
+        if (!cancelled) setStatus(job.bookingPayment ? 'PAID' : 'UNPAID');
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('unknown');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, isTechnician, cachedPaid, attempt]);
+
+  return { status, amount: cached?.bookingFee?.amount, retry: () => setAttempt((n) => n + 1) };
 }
 
-function getDateSeparatorLabel(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
+function dateLabel(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
   const yesterday = new Date();
   yesterday.setDate(now.getDate() - 1);
-  const isYesterday = date.toDateString() === yesterday.toDateString();
-
-  if (isToday) return 'Today';
-  if (isYesterday) return 'Yesterday';
+  if (date.toDateString() === now.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
   return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-export default function StandaloneChatScreen() {
+function formatBytes(bytes: number | null) {
+  if (!bytes) return '';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const JOB_STATUS_TEXT: Record<string, string> = {
+  OPEN: 'Awaiting assignment',
+  ASSIGNED: 'Technician assigned',
+  IN_PROGRESS: 'Work in progress',
+  PAUSED: 'Job paused',
+  COMPLETED: 'Job completed',
+  CANCELLED: 'Job cancelled',
+  FAILED: 'Job closed',
+};
+
+/** Explains why a room is read-only, or null when it accepts messages. */
+function readOnlyReason(room: BackendChatRoom): string | null {
+  if (room.currentMember?.blockedAt) return 'You can no longer send messages in this chat.';
+  if (room.status === 'COMPLETED') return 'This job is complete. The chat is now read-only.';
+  if (room.status === 'DISABLED') {
+    return room.disabledReason ? `Chat disabled: ${room.disabledReason}` : 'This chat has been disabled.';
+  }
+  if (room.assignment.endedAt) return 'This technician is no longer assigned to the job.';
+  if (room.job.status !== 'ASSIGNED' && room.job.status !== 'PAUSED') {
+    return `${JOB_STATUS_TEXT[room.job.status] ?? 'Job closed'}. New messages are turned off.`;
+  }
+  return null;
+}
+
+export default function JobChatScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { account } = useAuth();
-  const {
-    threads,
-    sendMessage,
-    markThreadAsRead,
-    sendPriceOffer,
-    respondToOffer,
-    updateRequestStatus,
-    createOrGetThread,
-  } = useChat();
-  const { getJob, linkChatThread } = useFundi();
-
-  const {
-    id: routeId,
-    requestId,
-    firstMessage,
-    type: typeParam,
-  } = useLocalSearchParams<{
+  const { getJob } = useFundi();
+  const { threads, findThreadForJob, isLoading: negotiationsLoading } = useChat();
+  const { id: routeId, requestId, firstMessage } = useLocalSearchParams<{
     id?: string;
     requestId?: string;
     firstMessage?: string;
-    type?: string;
   }>();
 
-  // Find target thread by thread ID or associated job/request ID
-  const thread = useMemo(() => {
-    if (routeId) {
-      const match =
-        threads.find((t) => t.id === routeId) ??
-        threads.find((t) => t.jobId === routeId);
-      if (match) return match;
-    }
-    if (requestId) {
-      const match = threads.find((t) => t.jobId === requestId);
-      if (match) return match;
-    }
-    return !routeId && !requestId ? threads[0] : undefined;
-  }, [routeId, requestId, threads]);
-
-  const targetJobId = thread?.jobId || requestId || routeId;
-  const job = targetJobId ? getJob(targetJobId) : undefined;
-  const otherName = thread?.otherParticipantName ?? (job?.technician?.name || 'Technician');
-
-  // Auto-instantiate thread if opening a paid job directly
-  useEffect(() => {
-    if (!thread && job) {
-      const techName = job.technician?.name || 'Technician';
-      const techPhone = job.technician?.phone;
-      const techLocation = job.technician?.location;
-      const createdThreadId = createOrGetThread(
-        techName,
-        'technician',
-        job.id,
-        {
-          id: job.id,
-          serviceName: job.service,
-          problem: job.problem,
-          address: job.locationLabel,
-          thumbnailUri: job.photoUris?.[0] ?? job.photoUri,
-          photos: job.photoUris ?? (job.photoUri ? [job.photoUri] : []),
-          videos: job.videoUris ?? (job.videoUri ? [job.videoUri] : []),
-          createdAt: job.createdAt,
-          status: 'REQUEST_RECEIVED',
-          type: job.type || 'STANDARD',
-          bookingFee: job.bookingFee,
-        },
-        techPhone,
-        techLocation,
-      );
-      if (job.bookingFee?.status === 'PAID') {
-        linkChatThread(job.id, createdThreadId);
-      }
-    }
-  }, [thread, job, createOrGetThread, linkChatThread]);
-
-  const threadServiceRequest = useMemo(() => {
-    return thread?.messages.find((m) => Boolean(m.serviceRequest))?.serviceRequest;
-  }, [thread?.messages]);
-
-  const isSos = typeParam === 'SOS' || job?.type === 'SOS' || threadServiceRequest?.type === 'SOS';
+  const chat = useChatRoom(routeId, requestId);
+  const { room } = chat;
   const isTechnician = account?.role === 'TECHNICIAN';
+  const jobId = room?.jobId ?? requestId ?? undefined;
+  const fee = useBookingFeeStatus(room ? room.jobId : undefined, isTechnician);
+  const localJob = jobId ? getJob(jobId) : undefined;
 
-  // Check booking fee gatekeeping status - technicians NEVER pay booking fee
-  const hasAssociatedBooking = Boolean(job || threadServiceRequest?.bookingFee || thread?.jobId);
-  const isBookingFeePaid =
-    isTechnician ||
-    (hasAssociatedBooking
-      ? job
-        ? job.bookingFee?.status === 'PAID'
-        : threadServiceRequest?.bookingFee
-          ? threadServiceRequest.bookingFee.status === 'PAID'
-          : false
-      : true);
+  const [draft, setDraft] = useState('');
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
 
-  const isThreadTerminated =
-    Boolean(thread?.isEnded) ||
-    threadServiceRequest?.status === 'CANCELLED' ||
-    threadServiceRequest?.status === 'DECLINED' ||
-    Boolean(thread?.messages.some((m) => isCancellationEvent(m.text)));
+  // ── Hand-off to negotiation when there is no chat room for this id ──────
+  const negotiation = useMemo(() => {
+    if (room) return room.jobId ? findThreadForJob(room.jobId) : undefined;
+    const byId = threads.find((t) => t.id === routeId);
+    if (byId) return byId;
+    return [routeId, requestId]
+      .filter((v): v is string => Boolean(v))
+      .map((value) => findThreadForJob(value))
+      .find(Boolean);
+  }, [room, threads, routeId, requestId, findThreadForJob]);
 
-  const [messageText, setMessageText] = useState('');
-  const [showOfferModal, setShowOfferModal] = useState(false);
-  const [offerAmount, setOfferAmount] = useState('');
-  const [offerNotes, setOfferNotes] = useState('');
-  const [selectedRequestDetails, setSelectedRequestDetails] = useState<ServiceRequestDetails | null>(null);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-
-  const [showDeclineModal, setShowDeclineModal] = useState(false);
-  const [declineRequestId, setDeclineRequestId] = useState<string | null>(null);
-  const [declineReasonText, setDeclineReasonText] = useState('');
-
-
-
-  // Inject existing request card into message feed if not already present
-  const displayMessages = useMemo(() => {
-    const list = [...(thread?.messages ?? [])];
-    const hasRequestCard = list.some((m) => Boolean(m.serviceRequest));
-
-    if (!hasRequestCard && job) {
-      const intakeMessage: ChatMessage = {
-        id: `msg-req-intake-${job.id}`,
-        senderId: account?.id ?? 'client',
-        senderName: account?.name ?? 'Client',
-        senderRole: 'client',
-        text: `Service request submitted for ${job.service}`,
-        timestamp: job.createdAt || new Date().toISOString(),
-        serviceRequest: {
-          id: job.id,
-          serviceName: job.service,
-          problem: job.problem,
-          address: job.locationLabel,
-          latitude: job.locationLatitude,
-          longitude: job.locationLongitude,
-          thumbnailUri: job.photoUris?.[0] ?? job.photoUri,
-          photos: job.photoUris ?? (job.photoUri ? [job.photoUri] : []),
-          videos: job.videoUris ?? (job.videoUri ? [job.videoUri] : []),
-          createdAt: job.createdAt,
-          status: (job.status as any) || 'ACCEPTED',
-          type: job.type || 'STANDARD',
-          bookingFee: job.bookingFee,
-        },
-      };
-      return [intakeMessage, ...list];
+  useEffect(() => {
+    if (chat.resolution === 'not-found' && negotiation) {
+      router.replace({ pathname: '/negotiation/[id]', params: { id: negotiation.id, requestId: negotiation.jobId } });
     }
-    return list;
-  }, [thread?.messages, job, account?.id, account?.name]);
+  }, [chat.resolution, negotiation, router]);
 
-  const handleSend = async () => {
-    if (!thread || !messageText.trim() || !isBookingFeePaid || isThreadTerminated) return;
-    const textToSend = messageText.trim();
-    setMessageText('');
-    await sendMessage(thread.id, textToSend);
-  };
-
-  const handlePickImage = async () => {
-    if (!isBookingFeePaid || !thread || isThreadTerminated) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets[0]?.uri) {
-      await sendMessage(thread.id, '', result.assets[0].uri);
-    }
-  };
-
-  const handleSendOffer = async () => {
-    if (!thread || !offerAmount || isThreadTerminated) return;
-    const amountNum = parseFloat(offerAmount);
-    if (isNaN(amountNum) || amountNum <= 0) return;
-    try {
-      await sendPriceOffer(
-        thread.id,
-        amountNum,
-        offerNotes,
-        account?.role === 'TECHNICIAN' ? 'technician' : 'client',
-      );
-      setShowOfferModal(false);
-      setOfferAmount('');
-      setOfferNotes('');
-    } catch (err) {
-      Alert.alert('Offer Error', err instanceof Error ? err.message : 'Could not send price proposal.');
-    }
-  };
-
-  const handleDeclineRequestSubmit = async () => {
-    if (!thread || !declineRequestId) return;
-    await updateRequestStatus(thread.id, declineRequestId, 'DECLINED', declineReasonText.trim() || undefined);
-    setShowDeclineModal(false);
-    setDeclineRequestId(null);
-    setDeclineReasonText('');
-  };
-
-  const handleBack = () => {
-    // Block returning into payment/checkout screens; always redirect to chat listings
-    router.replace('/(tabs)/chat');
-  };
-
-  // Intercept Android hardware back button to prevent returning into payment screens
+  // ── Navigation guards: never return into checkout screens ───────────────
+  const goToList = useCallback(() => router.replace('/(tabs)/chat'), [router]);
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      router.replace('/(tabs)/chat');
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      goToList();
       return true;
     });
-    return () => backSub.remove();
-  }, [router]);
+    return () => sub.remove();
+  }, [goToList]);
 
-  // Intercept web browser back button to prevent returning into payment screens
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  // ── Derived display state ───────────────────────────────────────────────
+  const other = room ? (isTechnician ? room.job.customer : room.job.technician) : null;
+  const otherName = other?.fullName || (isTechnician ? 'Client' : 'Technician');
+  const otherAvatar = !isTechnician
+    ? localJob?.technician?.avatarUrl || localJob?.technician?.photoUri || undefined
+    : undefined;
+  const otherPhone = !isTechnician ? localJob?.technician?.phone : undefined;
+  const serviceName = room?.job.service || localJob?.service;
+  const lockReason = room ? readOnlyReason(room) : null;
+  const feeBlocksClient = !isTechnician && fee.status !== 'PAID';
+  const canSend = Boolean(room && chat.canWrite && !feeBlocksClient);
+
+  const statusLine = chat.otherTyping
+    ? 'typing…'
+    : room
+      ? JOB_STATUS_TEXT[room.job.status] ?? room.job.status
+      : '';
+
+  const inputPlaceholder = lockReason
+    ? 'Messaging is turned off'
+    : feeBlocksClient
+      ? fee.status === 'checking'
+        ? 'Verifying booking fee…'
+        : 'Pay the booking fee to message your technician'
+      : 'Type a message…';
+
+  // Inverted list: newest first.
+  const timeline = useMemo(() => [...chat.messages].reverse(), [chat.messages]);
+
+  // ── Actions ─────────────────────────────────────────────────────────────
+  const handleSend = () => {
+    if (!canSend) return;
+    const text = draft.trim();
+    if (!text) return;
     try {
-      window.history.pushState({ fundiChat: true }, '', window.location.href);
-    } catch {}
-
-    const handleWebPop = () => {
-      router.replace('/(tabs)/chat');
-    };
-
-    window.addEventListener('popstate', handleWebPop);
-    return () => window.removeEventListener('popstate', handleWebPop);
-  }, [router]);
-
-  // Mark thread as read when viewed
-  useEffect(() => {
-    if (thread?.id) {
-      void markThreadAsRead(thread.id);
-    }
-  }, [thread?.id, markThreadAsRead]);
-
-  const technicianPhone = thread?.technicianPhone || job?.technician?.phone;
-
-  const handleCallTechnician = () => {
-    if (technicianPhone) {
-      Linking.openURL(`tel:${technicianPhone}`);
+      chat.sendText(text);
+      setDraft('');
+    } catch (err) {
+      Alert.alert('Message not sent', err instanceof Error ? err.message : 'Please try again.');
     }
   };
 
-  const targetLat = job?.locationLatitude ?? threadServiceRequest?.latitude;
-  const targetLng = job?.locationLongitude ?? threadServiceRequest?.longitude;
-  const targetAddress = job?.locationLabel ?? threadServiceRequest?.address;
-  const canNavigate = Boolean(
-    canOpenMapNavigation({ latitude: targetLat, longitude: targetLng, address: targetAddress })
+  const handleChangeDraft = (value: string) => {
+    setDraft(value);
+    if (canSend) chat.setTyping(value.trim().length > 0);
+  };
+
+  const pickImage = async () => {
+    if (!canSend) return;
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+    const asset = result.canceled ? undefined : result.assets[0];
+    if (!asset?.uri) return;
+    chat.sendMedia('IMAGE', {
+      uri: asset.uri,
+      name: asset.fileName ?? undefined,
+      mimeType: asset.mimeType ?? 'image/jpeg',
+      sizeBytes: asset.fileSize ?? undefined,
+    });
+  };
+
+  const pickDocument = async () => {
+    if (!canSend) return;
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
+    const asset = result.canceled ? undefined : result.assets[0];
+    if (!asset?.uri) return;
+    chat.sendMedia('FILE', {
+      uri: asset.uri,
+      name: asset.name,
+      mimeType: asset.mimeType ?? undefined,
+      sizeBytes: asset.size ?? undefined,
+    });
+  };
+
+  const handleAttach = () => {
+    if (!canSend) return;
+    Alert.alert('Share with your ' + (isTechnician ? 'client' : 'technician'), undefined, [
+      { text: 'Photo', onPress: () => void pickImage() },
+      { text: 'Document', onPress: () => void pickDocument() },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const handleFailedPress = (message: ChatTimelineMessage) => {
+    Alert.alert('Message not sent', message.deliveryError ?? 'The message could not be delivered.', [
+      { text: 'Retry', onPress: () => chat.retryMessage(message.id) },
+      { text: 'Delete', style: 'destructive', onPress: () => chat.discardMessage(message.id) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const openAttachment = (message: ChatTimelineMessage) => {
+    const url = message.downloadUrl;
+    if (!url) return;
+    if (message.type === 'IMAGE') {
+      setPreviewUri(url);
+      return;
+    }
+    Linking.openURL(url).catch(() => Alert.alert('Unable to open attachment', 'Try again in a moment.'));
+  };
+
+  const openNegotiation = () => {
+    if (!negotiation) return;
+    router.push({ pathname: '/negotiation/[id]', params: { id: negotiation.id, requestId: negotiation.jobId } });
+  };
+
+  // ── Non-room states ─────────────────────────────────────────────────────
+  if (chat.resolution !== 'found' || !room) {
+    const waitingForHandOff = chat.resolution === 'not-found' && (negotiation || negotiationsLoading);
+    return (
+      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+        <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 14 : insets.top + 8, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
+          <BackButton onPress={goToList} />
+          <Text style={[styles.headerName, { color: colors.foreground, marginLeft: 10 }]}>Chat</Text>
+        </View>
+        <View style={styles.centerState}>
+          {chat.resolution === 'resolving' || waitingForHandOff ? (
+            <>
+              <ActivityIndicator color={colors.primary} size="large" />
+              <Text style={[styles.centerText, { color: colors.mutedForeground }]}>Opening conversation…</Text>
+            </>
+          ) : chat.resolution === 'error' ? (
+            <>
+              <Ionicons name="cloud-offline-outline" size={40} color={colors.mutedForeground} />
+              <Text style={[styles.centerTitle, { color: colors.foreground }]}>Can't reach chat right now</Text>
+              <Text style={[styles.centerText, { color: colors.mutedForeground }]}>
+                {chat.resolveError ?? 'Check your connection and try again.'}
+              </Text>
+              <Button label="Try again" size="small" onPress={chat.retryResolve} style={{ marginTop: 14 }} />
+            </>
+          ) : (
+            <>
+              <Ionicons name="chatbubbles-outline" size={40} color={colors.mutedForeground} />
+              <Text style={[styles.centerTitle, { color: colors.foreground }]}>Chat not open yet</Text>
+              <Text style={[styles.centerText, { color: colors.mutedForeground }]}>
+                The job chat opens once a technician is assigned to your request.
+              </Text>
+              {jobId ? (
+                <Button
+                  label="Track job"
+                  size="small"
+                  variant="outline"
+                  icon="arrow-forward"
+                  onPress={() => router.push(`/job/${jobId}` as any)}
+                  style={{ marginTop: 14 }}
+                />
+              ) : null}
+            </>
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  // ── Message rendering ───────────────────────────────────────────────────
+  const renderMessage = ({ item, index }: { item: ChatTimelineMessage; index: number }) => {
+    const older = timeline[index + 1];
+    const showDate = !older || new Date(older.createdAt).toDateString() !== new Date(item.createdAt).toDateString();
+    const separator = showDate ? (
+      <View style={styles.dateSeparatorWrap}>
+        <View style={[styles.dateSeparatorPill, { backgroundColor: colors.muted + '40' }]}>
+          <Text style={[styles.dateSeparatorText, { color: colors.mutedForeground }]}>{dateLabel(item.createdAt)}</Text>
+        </View>
+      </View>
+    ) : null;
+
+    if (item.type === 'SYSTEM' || item.senderRole === 'SYSTEM' || item.senderRole === 'ADMIN') {
+      return (
+        <View>
+          {separator}
+          <View style={styles.systemWrap}>
+            <View style={[styles.systemBanner, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+              <Ionicons
+                name={item.senderRole === 'ADMIN' ? 'shield-checkmark-outline' : 'information-circle-outline'}
+                size={14}
+                color={colors.primary}
+              />
+              <Text style={[styles.systemText, { color: colors.secondaryForeground }]}>
+                {item.senderRole === 'ADMIN' ? `Fundi support: ${item.text ?? ''}` : item.text ?? 'Update'}
+              </Text>
+            </View>
+            <Text style={[styles.systemTime, { color: colors.mutedForeground }]}>{formatTime(item.createdAt)}</Text>
+          </View>
+        </View>
+      );
+    }
+
+    const isMe = item.senderId === account?.id;
+    const bubbleColor = isMe ? colors.primary : colors.card;
+    const textColor = isMe ? colors.primaryForeground : colors.foreground;
+    const metaColor = isMe ? colors.primaryForeground + 'B3' : colors.mutedForeground;
+    const hidden = item.isTombstone || item.isBlocked;
+    const imageUri = item.type === 'IMAGE' ? item.localUri ?? item.downloadUrl : null;
+
+    const deliveryIcon = !isMe ? null : item.delivery === 'sending' ? (
+      <Ionicons name="time-outline" size={12} color={metaColor} />
+    ) : item.delivery === 'failed' ? (
+      <Ionicons name="alert-circle" size={13} color={colors.destructive} />
+    ) : (
+      <Ionicons name={item.readByOtherSide ? 'checkmark-done' : 'checkmark'} size={13} color={metaColor} />
+    );
+
+    let content: React.ReactNode;
+    if (hidden) {
+      content = (
+        <Text style={[styles.bubbleText, styles.hiddenText, { color: metaColor }]}>
+          {item.isTombstone ? 'This message was deleted' : 'This message was removed by a moderator'}
+        </Text>
+      );
+    } else if (imageUri) {
+      content = (
+        <Pressable onPress={() => openAttachment(item)} disabled={!item.downloadUrl}>
+          <Image source={{ uri: imageUri }} style={styles.chatPhoto} resizeMode="cover" />
+        </Pressable>
+      );
+    } else if (item.type === 'FILE' || item.type === 'VIDEO' || item.type === 'VOICE_NOTE') {
+      const icon = item.type === 'VIDEO' ? 'video-outline' : item.type === 'VOICE_NOTE' ? 'microphone-outline' : 'file-document-outline';
+      const label = item.type === 'VOICE_NOTE' ? 'Voice note' : item.fileName || (item.type === 'VIDEO' ? 'Video' : 'Document');
+      const detail = item.type === 'VOICE_NOTE' && item.durationSeconds
+        ? `${Math.round(item.durationSeconds)}s`
+        : formatBytes(item.sizeBytes);
+      content = (
+        <Pressable onPress={() => openAttachment(item)} disabled={!item.downloadUrl} style={styles.attachmentRow}>
+          <MaterialCommunityIcons name={icon as any} size={22} color={textColor} />
+          <View style={{ flexShrink: 1 }}>
+            <Text numberOfLines={1} style={[styles.attachmentName, { color: textColor }]}>{label}</Text>
+            {detail ? <Text style={[styles.attachmentDetail, { color: metaColor }]}>{detail}</Text> : null}
+          </View>
+        </Pressable>
+      );
+    } else {
+      content = <Text style={[styles.bubbleText, { color: textColor }]}>{item.text}</Text>;
+    }
+
+    return (
+      <View>
+        {separator}
+        <View style={[styles.msgWrapper, isMe ? styles.msgRight : styles.msgLeft]}>
+          <Pressable
+            disabled={item.delivery !== 'failed'}
+            onPress={() => handleFailedPress(item)}
+            style={[
+              styles.chatBubble,
+              isMe ? styles.bubbleMe : [styles.bubbleOther, { borderColor: colors.border }],
+              { backgroundColor: bubbleColor, opacity: item.delivery === 'sending' ? 0.7 : 1 },
+            ]}
+          >
+            {content}
+            <View style={styles.bubbleMeta}>
+              {item.editedAt && !hidden ? <Text style={[styles.bubbleTime, { color: metaColor }]}>edited · </Text> : null}
+              <Text style={[styles.bubbleTime, { color: metaColor }]}>{formatTime(item.createdAt)}</Text>
+              {deliveryIcon}
+            </View>
+          </Pressable>
+          {item.delivery === 'failed' ? (
+            <Text style={[styles.failedText, { color: colors.destructive }]}>Not sent · tap to retry</Text>
+          ) : null}
+        </View>
+      </View>
+    );
+  };
+
+  // Rich job card shown at the start of the conversation (footer of an inverted list).
+  const jobCard = (
+    <View>
+      {chat.hasOlder ? (
+        <Pressable onPress={() => void chat.loadOlder()} style={styles.loadOlder} disabled={chat.isLoadingOlder}>
+          {chat.isLoadingOlder ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={[styles.loadOlderText, { color: colors.primary }]}>Load earlier messages</Text>
+          )}
+        </Pressable>
+      ) : null}
+      <View style={[styles.requestCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.reqCardHeader}>
+          <View style={[styles.reqHeaderIconTile, { backgroundColor: colors.secondary }]}>
+            <MaterialCommunityIcons name={getServiceIcon(serviceName) as any} size={16} color={colors.primary} />
+          </View>
+          <Text style={[styles.reqCardTitle, { color: colors.foreground }]} numberOfLines={1}>
+            {serviceName ? `${serviceName} job` : 'Service job'}
+          </Text>
+          <View style={[styles.reqStatusBadge, { backgroundColor: (fee.status === 'PAID' ? colors.success : colors.warning) + '1A' }]}>
+            <Text style={[styles.reqStatusBadgeText, { color: fee.status === 'PAID' ? colors.success : colors.warning }]}>
+              {fee.status === 'PAID' ? 'Booking fee paid' : fee.status === 'checking' ? 'Checking payment' : 'Payment pending'}
+            </Text>
+          </View>
+        </View>
+        {room.job.description ? (
+          <Text numberOfLines={4} style={[styles.reqProblem, { color: colors.foreground }]}>{room.job.description}</Text>
+        ) : null}
+        {localJob?.locationLabel ? (
+          <Text numberOfLines={1} style={[styles.reqAddress, { color: colors.mutedForeground }]}>📍 {localJob.locationLabel}</Text>
+        ) : null}
+        <View style={[styles.reqActionRow, { borderTopColor: colors.border }]}>
+          <Pressable onPress={() => router.push(`/job/${room.jobId}` as any)} style={styles.reqActionBtn}>
+            <Ionicons name="time-outline" size={14} color={colors.primary} />
+            <Text style={[styles.reqActionBtnText, { color: colors.primary }]}>Track job</Text>
+          </Pressable>
+          {negotiation ? (
+            <Pressable onPress={openNegotiation} style={styles.reqActionBtn} testID="chat-open-negotiation">
+              <Ionicons name="pricetag-outline" size={14} color={colors.primary} />
+              <Text style={[styles.reqActionBtnText, { color: colors.primary }]}>
+                {negotiation.agreedPrice ? `Agreed RWF ${negotiation.agreedPrice.toLocaleString()}` : 'Price agreement'}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    </View>
   );
-
-  const handleOpenMap = () => {
-    if (canNavigate) {
-      openMapNavigation({ latitude: targetLat, longitude: targetLng, address: targetAddress });
-    }
-  };
-
-  const avatarUri =
-    (job?.technician as any)?.avatarUrl ||
-    (job?.technician as any)?.photoUri ||
-    thread?.otherParticipantAvatarUrl ||
-    (job as any)?.clientAvatarUrl ||
-    undefined;
-
-  const targetServiceName = job?.service || threadServiceRequest?.serviceName;
-
-  const jobStatusText = useMemo(() => {
-    if (isThreadTerminated) return 'Request Inactive';
-    if (job?.status && STATUS_LABEL[job.status]) {
-      return STATUS_LABEL[job.status];
-    }
-    if (threadServiceRequest?.status) {
-      if (threadServiceRequest.status === 'ACCEPTED') return 'Accepted · Chat Active';
-      if (threadServiceRequest.status === 'DECLINED') return 'Declined';
-      if (threadServiceRequest.status === 'CANCELLED') return 'Cancelled';
-      if (threadServiceRequest.status === 'PENDING_RESPONSE') return 'Pending Response';
-    }
-    if (thread?.agreedPrice) {
-      return `Agreed: RWF ${thread.agreedPrice.toLocaleString()}`;
-    }
-    if (isBookingFeePaid || isTechnician) {
-      return 'Chat Active';
-    }
-    return 'Booking Fee Pending';
-  }, [isThreadTerminated, job?.status, threadServiceRequest?.status, thread?.agreedPrice, isBookingFeePaid, isTechnician]);
 
   return (
     <KeyboardAvoidingView
       style={[styles.screen, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={0}
     >
-      {/* Top Header */}
-      <View
-        style={[
-          styles.topBar,
-          {
-            paddingTop: Platform.OS === 'web' ? 14 : insets.top + 8,
-            borderBottomColor: colors.border,
-            backgroundColor: colors.card,
-          },
-        ]}
-      >
-        <BackButton onPress={handleBack} />
-
-        {/* Profile Avatar with Initial Fallback */}
-        <ProfileAvatar
-          uri={avatarUri}
-          name={otherName}
-          knownInitials={job?.technician?.initials}
-          size={38}
-          style={styles.headerAvatarWrap}
-          testID="chat-header-avatar"
-        />
-
-        {/* Header Name (safely truncated)& Job Status Subtitle*/}
+      {/* Header */}
+      <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 14 : insets.top + 8, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
+        <BackButton onPress={goToList} />
+        <ProfileAvatar uri={otherAvatar} name={otherName} size={38} style={styles.headerAvatarWrap} testID="chat-header-avatar" />
         <View style={styles.headerInfo}>
-          <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.headerName, { color: colors.foreground }]}>
-            {otherName}
-          </Text>
+          <Text numberOfLines={1} style={[styles.headerName, { color: colors.foreground }]}>{otherName}</Text>
           <View style={styles.headerSubRow}>
-            {targetServiceName ? (
+            {serviceName ? (
               <View style={[styles.headerServicePill, { backgroundColor: colors.secondary }]}>
-                <MaterialCommunityIcons
-                  name={getServiceIcon(targetServiceName) as any}
-                  size={11}
-                  color={colors.primary}
-                />
-                <Text numberOfLines={1} style={[styles.headerServiceText, { color: colors.primary }]}>
-                  {targetServiceName}
-                </Text>
+                <MaterialCommunityIcons name={getServiceIcon(serviceName) as any} size={11} color={colors.primary} />
+                <Text numberOfLines={1} style={[styles.headerServiceText, { color: colors.primary }]}>{serviceName}</Text>
               </View>
             ) : null}
-            <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.headerJobStatus, { color: colors.mutedForeground, flexShrink: 1 }]}>
-              {jobStatusText}
+            <Text
+              numberOfLines={1}
+              style={[styles.headerJobStatus, { color: chat.otherTyping ? colors.primary : colors.mutedForeground }]}
+            >
+              {statusLine}
             </Text>
           </View>
         </View>
-
-        {/* Clean Icon-Only Action Buttons */}
         <View style={styles.headerActionsRow}>
-          {technicianPhone ? (
+          {otherPhone ? (
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Call"
-              testID="chat-header-call-button"
-              onPress={handleCallTechnician}
-              style={({ pressed }) => [
-                styles.headerIconBtn,
-                {
-                  backgroundColor: colors.secondary,
-                  borderColor: colors.border,
-                  opacity: pressed ? 0.75 : 1,
-                },
-              ]}
+              onPress={() => Linking.openURL(`tel:${otherPhone}`)}
+              style={[styles.headerIconBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
             >
               <Ionicons name="call" size={17} color={colors.primary} />
             </Pressable>
           ) : null}
-
-          {canNavigate ? (
+          {negotiation ? (
             <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Navigate"
-              testID="chat-header-gps-button"
-              onPress={handleOpenMap}
-              style={({ pressed }) => [
-                styles.headerIconBtn,
-                {
-                  backgroundColor: colors.secondary,
-                  borderColor: colors.border,
-                  opacity: pressed ? 0.75 : 1,
-                },
-              ]}
+              accessibilityLabel="Price agreement"
+              testID="chat-header-negotiation-button"
+              onPress={openNegotiation}
+              style={[styles.headerIconBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
             >
-              <Ionicons name="navigate" size={17} color={colors.destructive} />
+              <Ionicons name="pricetag" size={17} color={colors.primary} />
             </Pressable>
           ) : null}
-
-          {targetJobId ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Job Details"
-              testID="chat-header-job-tracking-button"
-              onPress={() => router.push(`/job/${targetJobId}` as any)}
-              style={({ pressed }) => [
-                styles.headerIconBtn,
-                {
-                  backgroundColor: colors.secondary,
-                  borderColor: colors.border,
-                  opacity: pressed ? 0.75 : 1,
-                },
-              ]}
-            >
-              <Ionicons name="analytics" size={20} color={colors.tint} />
-            </Pressable>
-          ) : null}
+          <Pressable
+            accessibilityLabel="Job details"
+            testID="chat-header-job-tracking-button"
+            onPress={() => router.push(`/job/${room.jobId}` as any)}
+            style={[styles.headerIconBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
+          >
+            <Ionicons name="analytics" size={19} color={colors.tint} />
+          </Pressable>
         </View>
       </View>
 
-      {/* Cancellation / Termination Notice Banner */}
-      {isThreadTerminated && (
-        <View style={styles.bannerPadding}>
-          <Notice
-            tone="warning"
-            icon="alert-circle-outline"
-            text={
-              thread?.cancelledByName
-                ? `This service request was cancelled by ${thread.cancelledByName}.`
-                : 'This service request is no longer active.'
-            }
-          />
-          {account?.role !== 'TECHNICIAN' && (
-            <Button
-              label="Find Another Specialist"
-              variant="outline"
-              size="small"
-              icon="arrow-forward"
-              onPress={() =>
-                router.push({
-                  pathname: '/select-technician',
-                  params: {
-                    service: job?.service || threadServiceRequest?.serviceName,
-                    problem: job?.problem || threadServiceRequest?.problem,
-                    locationLabel: job?.locationLabel || threadServiceRequest?.address,
-                  },
-                })
-              }
-              style={{ marginTop: 8 }}
-            />
-          )}
+      {/* Connection state */}
+      {chat.socketStatus === 'disconnected' || chat.socketStatus === 'connecting' ? (
+        <View style={[styles.connectionBar, { backgroundColor: colors.warning + '1A' }]} testID="chat-connection-banner">
+          <ActivityIndicator size="small" color={colors.warning} />
+          <Text style={[styles.connectionText, { color: colors.foreground }]}>
+            {chat.socketStatus === 'connecting' ? 'Connecting…' : 'Reconnecting — messages will still sync.'}
+          </Text>
         </View>
-      )}
+      ) : null}
+      {chat.historyError ? (
+        <Pressable onPress={() => void chat.refresh()} style={[styles.connectionBar, { backgroundColor: colors.destructive + '14' }]}>
+          <Ionicons name="refresh" size={14} color={colors.destructive} />
+          <Text style={[styles.connectionText, { color: colors.foreground }]}>{chat.historyError} Tap to retry.</Text>
+        </Pressable>
+      ) : null}
 
-      {/* Booking Confirmed / First Message Banner */}
-      {firstMessage === 'true' && isBookingFeePaid && !isThreadTerminated && !isSos && (
+      {lockReason ? (
+        <View style={styles.bannerPadding}>
+          <Notice tone="warning" icon="lock-closed-outline" text={lockReason} />
+        </View>
+      ) : null}
+      {firstMessage === 'true' && canSend ? (
         <View style={styles.bannerPadding}>
           <Notice
             tone="success"
             icon="checkmark-circle-outline"
-            text={
-              isTechnician
-                ? "The client has paid the service booking fee. Review the request details below and accept the offer to coordinate the work."
-                : "Service Booking Fee paid successfully! You now have direct messaging with your technician to coordinate the visit and negotiate repair pricing."
-            }
+            text={isTechnician
+              ? 'You are assigned to this job. Coordinate the visit with your client here.'
+              : 'Booking fee paid. You can now message your technician directly.'}
           />
         </View>
-      )}
+      ) : null}
 
-      {/* Message List */}
       <FlatList
-        data={displayMessages}
+        inverted
+        data={timeline}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={[styles.messageList, { paddingBottom: 24 }]}
+        renderItem={renderMessage}
+        ListFooterComponent={jobCard}
+        contentContainerStyle={styles.messageList}
+        onEndReached={() => void chat.loadOlder()}
+        onEndReachedThreshold={0.2}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        renderItem={({ item, index }) => {
-          const isMe =
-            item.senderId === account?.id ||
-            item.senderRole === (account?.role === 'TECHNICIAN' ? 'technician' : 'client');
-          const time = new Date(item.timestamp).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-
-          const prevItem = index > 0 ? displayMessages[index - 1] : null;
-          const showDateSeparator =
-            !prevItem ||
-            new Date(item.timestamp).toDateString() !== new Date(prevItem.timestamp).toDateString();
-          const dateLabel = showDateSeparator ? getDateSeparatorLabel(item.timestamp) : null;
-
-          return (
-            <View key={item.id} style={styles.messageItemContainer}>
-              {/* Date Separator Pill */}
-              {dateLabel && (
-                <View style={styles.dateSeparatorWrap}>
-                  <View style={[styles.dateSeparatorPill, { backgroundColor: colors.muted + '40' }]}>
-                    <Text style={[styles.dateSeparatorText, { color: colors.mutedForeground }]}>
-                      {dateLabel}
-                    </Text>
-                  </View>
-                </View>
-              )}
-
-              <View style={[styles.msgWrapper, isMe ? styles.msgRight : styles.msgLeft]}>
-                {/* SERVICE REQUEST CARD (Existing Rich Card Model) */}
-                {item.serviceRequest && (
-                  <View
-                    style={[
-                      styles.requestCard,
-                      { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                  >
-                    <View style={styles.reqCardHeader}>
-                      <View style={styles.reqCardTitleWrap}>
-                        <View style={[styles.reqHeaderIconTile, { backgroundColor: colors.secondary }]}>
-                          <MaterialCommunityIcons
-                            name={getServiceIcon(item.serviceRequest.serviceName) as any}
-                            size={16}
-                            color={colors.primary}
-                          />
-                        </View>
-                        <Text style={[styles.reqCardTitle, { color: colors.foreground }]}>
-                          {item.serviceRequest.serviceName} Service Request
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.reqStatusBadge,
-                          {
-                            backgroundColor:
-                              item.serviceRequest.bookingFee?.status === 'PAID'
-                                ? colors.success + '1A'
-                                : colors.warning + '1A',
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.reqStatusBadgeText,
-                            {
-                              color:
-                                item.serviceRequest.bookingFee?.status === 'PAID'
-                                  ? colors.success
-                                  : colors.warning,
-                            },
-                          ]}
-                        >
-                          {item.serviceRequest.bookingFee?.status === 'PAID'
-                            ? 'Booking Fee Paid'
-                            : 'Payment Pending'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.reqCardBody}>
-                      {/* Thumbnail Image or Centered Service Icon */}
-                      {item.serviceRequest.thumbnailUri ? (
-                        <View style={styles.reqThumbFrame}>
-                          <StableRequestImage
-                            uri={item.serviceRequest.thumbnailUri}
-                            style={styles.reqThumb}
-                            fallbackStyle={styles.reqThumbFallback}
-                            serviceName={item.serviceRequest.serviceName}
-                          />
-                        </View>
-                      ) : (
-                        <View
-                          style={[
-                            styles.reqThumbFallback,
-                            { backgroundColor: colors.secondary },
-                          ]}
-                        >
-                          <MaterialCommunityIcons
-                            name={getServiceIcon(item.serviceRequest.serviceName) as any}
-                            size={28}
-                            color={colors.primary}
-                          />
-                        </View>
-                      )}
-
-                      <View style={styles.reqInfoWrap}>
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.reqAddress, { color: colors.mutedForeground }]}
-                        >
-                          📍 {item.serviceRequest.address || 'Address provided on request'}
-                        </Text>
-                        <Text
-                          numberOfLines={3}
-                          style={[styles.reqProblem, { color: colors.foreground }]}
-                        >
-                          {item.serviceRequest.problem}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Actionable Navigation Buttons */}
-                    <View style={[styles.reqActionRow, { borderTopColor: colors.border }]}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="View service details"
-                        onPress={() => setSelectedRequestDetails(item.serviceRequest!)}
-                        style={({ pressed }) => [
-                          styles.reqActionBtn,
-                          { opacity: pressed ? 0.7 : 1 },
-                        ]}
-                      >
-                        <Ionicons name="document-text-outline" size={14} color={colors.primary} />
-                        <Text style={[styles.reqActionBtnText, { color: colors.primary }]}>
-                          View Details
-                        </Text>
-                      </Pressable>
-
-                      {canOpenMapNavigation(item.serviceRequest) && (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Navigate to request location"
-                          onPress={() => void openMapNavigation(item.serviceRequest!)}
-                          style={({ pressed }) => [
-                            styles.reqActionBtn,
-                            { opacity: pressed ? 0.7 : 1 },
-                          ]}
-                        >
-                          <Feather name="navigation" size={13} color={colors.primary} />
-                          <Text style={[styles.reqActionBtnText, { color: colors.primary }]}>
-                            Navigate
-                          </Text>
-                        </Pressable>
-                      )}
-
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="View job tracking screen"
-                        onPress={() =>
-                          router.push(`/job/${item.serviceRequest!.id || targetJobId}` as any)
-                        }
-                        style={({ pressed }) => [
-                          styles.reqActionBtn,
-                          { opacity: pressed ? 0.7 : 1 },
-                        ]}
-                      >
-                        <Ionicons name="time-outline" size={14} color={colors.primary} />
-                        <Text style={[styles.reqActionBtnText, { color: colors.primary }]}>
-                          Track Job
-                        </Text>
-                      </Pressable>
-                    </View>
-
-                    {/* Technician Accept / Decline Request actions */}
-                    {account?.role === 'TECHNICIAN' &&
-                      ['REQUEST_RECEIVED', 'PENDING_RESPONSE'].includes(item.serviceRequest.status) &&
-                      !thread?.isEnded && (
-                        <View style={[styles.techRequestActionRow, { borderTopColor: colors.border }]}>
-                          <Button
-                            label="Accept Request"
-                            size="small"
-                            onPress={async () => {
-                              if (!thread) return;
-                              await updateRequestStatus(thread.id, item.serviceRequest!.id, 'ACCEPTED');
-                            }}
-                            style={{ flex: 1 }}
-                          />
-                          <Button
-                            label="Decline"
-                            variant="outline"
-                            size="small"
-                            onPress={() => {
-                              setDeclineRequestId(item.serviceRequest!.id);
-                              setShowDeclineModal(true);
-                            }}
-                            style={{ flex: 1, marginLeft: 8 }}
-                          />
-                        </View>
-                      )}
-                  </View>
-                )}
-
-                {/* Price Offer Card */}
-                {item.priceOffer && (
-                  <View
-                    style={[
-                      styles.offerCard,
-                      { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                  >
-                    <View style={styles.offerHeader}>
-                      <Ionicons name="pricetag-outline" size={16} color={colors.primary} />
-                      <Text style={[styles.offerLabel, { color: colors.mutedForeground }]}>
-                        Repair Price Proposal
-                      </Text>
-                    </View>
-                    <Text style={[styles.offerAmount, { color: colors.foreground }]}>
-                      {item.priceOffer.currency} {item.priceOffer.amount.toLocaleString()}
-                    </Text>
-                    {item.priceOffer.notes ? (
-                      <Text style={[styles.offerNotes, { color: colors.mutedForeground }]}>
-                        {item.priceOffer.notes}
-                      </Text>
-                    ) : null}
-
-                    <View
-                      style={[
-                        styles.offerStatusBadge,
-                        {
-                          backgroundColor:
-                            item.priceOffer.status === 'ACCEPTED'
-                              ? colors.success + '1A'
-                              : colors.primary + '18',
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.offerStatusText,
-                          {
-                            color:
-                              item.priceOffer.status === 'ACCEPTED'
-                                ? colors.success
-                                : colors.primary,
-                          },
-                        ]}
-                      >
-                        Status: {item.priceOffer.status}
-                      </Text>
-                    </View>
-
-                    {/* Accept / Decline actions if recipient and offer is pending */}
-                    {item.priceOffer.status === 'PENDING' &&
-                      !isThreadTerminated &&
-                      (item.priceOffer.senderRole
-                        ? (item.priceOffer.senderRole === 'technician' ? account?.role !== 'TECHNICIAN' : account?.role === 'TECHNICIAN')
-                        : account?.role !== 'TECHNICIAN') && (
-                      <View style={styles.offerActionRow}>
-                        <Button
-                          label="Accept Price"
-                          size="small"
-                          onPress={() => {
-                            if (thread) respondToOffer(thread.id, item.priceOffer!.id, 'ACCEPTED');
-                          }}
-                          style={{ flex: 1 }}
-                        />
-                        <Button
-                          label="Decline"
-                          variant="outline"
-                          size="small"
-                          onPress={() => {
-                            if (thread) respondToOffer(thread.id, item.priceOffer!.id, 'DECLINED');
-                          }}
-                          style={{ flex: 1, marginLeft: 8 }}
-                        />
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {/* Attached Image in Message */}
-                {item.imageUri ? (
-                  <Pressable
-                    onPress={() => setPreviewImage(item.imageUri!)}
-                    style={[
-                      styles.imageMsgFrame,
-                      { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                  >
-                    <StableRequestImage
-                      uri={item.imageUri}
-                      style={styles.chatPhoto}
-                      fallbackStyle={styles.chatPhotoFallback}
-                    />
-                    <Text style={[styles.bubbleTime, { color: colors.mutedForeground, marginTop: 4 }]}>
-                      {time}
-                    </Text>
-                  </Pressable>
-                ) : null}
-
-                {/* Regular Text Bubble */}
-                {item.text ? (
-                  <View
-                    style={[
-                      styles.chatBubble,
-                      isMe
-                        ? [styles.bubbleMe, { backgroundColor: colors.primary }]
-                        : [
-                            styles.bubbleOther,
-                            { backgroundColor: colors.card, borderColor: colors.border },
-                          ],
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.bubbleText,
-                        { color: isMe ? colors.primaryForeground : colors.foreground },
-                      ]}
-                    >
-                      {item.text}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.bubbleTime,
-                        { color: isMe ? colors.primaryForeground + 'B3' : colors.mutedForeground },
-                      ]}
-                    >
-                      {time}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-            </View>
-          );
-        }}
-        ListEmptyComponent={
-          <View style={styles.emptyWrap}>
-            <Ionicons name="chatbubbles-outline" size={40} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Send a message to start coordinating with your technician.
-            </Text>
-          </View>
-        }
       />
 
-      {/* Direct Settlement Explainer */}
-      <View style={[styles.settlementBar, { backgroundColor: colors.secondary }]}>
-        <Ionicons name="information-circle-outline" size={14} color={colors.primary} />
-        <Text style={[styles.settlementText, { color: colors.secondaryForeground }]}>
-          {isTechnician
-            ? "Negotiate and agree on the final repair and labor price directly with the client."
-            : "Final repair and labor price is negotiated and settled directly with your technician."}
-        </Text>
-      </View>
-
-      {/* GATEKEEPING: Locked overlay banner if booking fee is unpaid (Clients only - technicians NEVER pay booking fee) */}
-      {!isTechnician && !isBookingFeePaid && !isThreadTerminated && (
-        <View
-          style={[
-            styles.lockedBanner,
-            { backgroundColor: colors.card, borderTopColor: colors.border },
-          ]}
-        >
-          <View style={styles.lockedBannerTop}>
-            <View style={[styles.lockedIconCircle, { backgroundColor: colors.warning + '20' }]}>
-              <Ionicons name="lock-closed" size={18} color={colors.warning} />
+      {/* Booking fee gate (customers only) */}
+      {feeBlocksClient && !lockReason ? (
+        <View style={[styles.lockedBanner, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+          {fee.status === 'checking' ? (
+            <View style={styles.lockedBannerTop}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={[styles.lockedBannerTitle, { color: colors.foreground, marginLeft: 10 }]}>Verifying your booking fee…</Text>
             </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
+          ) : fee.status === 'unknown' ? (
+            <>
               <Text style={[styles.lockedBannerTitle, { color: colors.foreground }]}>
-                Booking fee pending. Complete payment to message this technician.
+                We couldn't confirm your booking fee payment.
               </Text>
-            </View>
-          </View>
-          <Button
-            label="Pay Booking Fee"
-            icon="arrow-forward"
-            onPress={() => {
-              router.push({
-                pathname: '/checkout/payment',
-                params: {
-                  requestId: targetJobId,
-                  technicianId: job?.technician?.id,
-                  service: job?.service,
-                  amount: (job?.bookingFee?.amount ?? 2500).toString(),
-                },
-              });
-            }}
-            style={{ marginTop: 10 }}
-            testID="chat-pay-booking-fee-button"
-          />
+              <Button label="Check again" size="small" variant="outline" onPress={fee.retry} style={{ marginTop: 10 }} />
+            </>
+          ) : (
+            <>
+              <View style={styles.lockedBannerTop}>
+                <View style={[styles.lockedIconCircle, { backgroundColor: colors.warning + '20' }]}>
+                  <Ionicons name="lock-closed" size={18} color={colors.warning} />
+                </View>
+                <Text style={[styles.lockedBannerTitle, { color: colors.foreground, flex: 1, marginLeft: 10 }]}>
+                  Booking fee pending. Complete payment to message this technician.
+                </Text>
+              </View>
+              <Button
+                label="Pay Booking Fee"
+                icon="arrow-forward"
+                testID="chat-pay-booking-fee-button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/checkout/payment',
+                    params: {
+                      requestId: room.jobId,
+                      service: serviceName ?? '',
+                      ...(fee.amount ? { amount: String(fee.amount) } : {}),
+                    },
+                  })
+                }
+                style={{ marginTop: 10 }}
+              />
+            </>
+          )}
         </View>
-      )}
+      ) : null}
 
-      {/* Bottom Message Input Bar */}
+      {/* Composer */}
       <View
         style={[
           styles.inputBar,
@@ -943,313 +643,52 @@ export default function StandaloneChatScreen() {
             backgroundColor: colors.card,
             borderTopColor: colors.border,
             paddingBottom: Math.max(insets.bottom, 12),
-            opacity: isBookingFeePaid && !isThreadTerminated ? 1 : 0.6,
+            opacity: canSend ? 1 : 0.6,
           },
         ]}
       >
-        {/* Price proposal button */}
         <Pressable
-          disabled={!isBookingFeePaid || isThreadTerminated}
-          onPress={() => setShowOfferModal(true)}
-          style={[
-            styles.actionIconBtn,
-            { backgroundColor: isBookingFeePaid && !isThreadTerminated ? colors.primary + '18' : colors.muted },
-          ]}
-          accessibilityLabel="Propose price offer"
+          disabled={!canSend}
+          onPress={handleAttach}
+          accessibilityLabel="Attach photo or document"
+          testID="chat-attach-button"
+          style={[styles.actionIconBtn, { backgroundColor: canSend ? colors.primary + '18' : colors.muted }]}
         >
-          <Feather
-            name="tag"
-            size={18}
-            color={isBookingFeePaid && !isThreadTerminated ? colors.primary : colors.mutedForeground}
-          />
+          <Feather name="paperclip" size={18} color={canSend ? colors.primary : colors.mutedForeground} />
         </Pressable>
-
-        {/* Media / photo upload attachment button */}
-        <Pressable
-          disabled={!isBookingFeePaid || isThreadTerminated}
-          onPress={handlePickImage}
-          style={[
-            styles.actionIconBtn,
-            {
-              backgroundColor: isBookingFeePaid && !isThreadTerminated ? colors.primary + '18' : colors.muted,
-              marginLeft: 8,
-            },
-          ]}
-          accessibilityLabel="Attach photo"
-          testID="chat-attach-photo-button"
-        >
-          <Feather
-            name="image"
-            size={18}
-            color={isBookingFeePaid && !isThreadTerminated ? colors.primary : colors.mutedForeground}
-          />
-        </Pressable>
-
         <TextInput
-          editable={isBookingFeePaid && !isThreadTerminated}
-          value={messageText}
-          onChangeText={setMessageText}
-          placeholder={
-            isThreadTerminated
-              ? 'Request is no longer active'
-              : isBookingFeePaid
-                ? 'Type a message...'
-                : 'Complete payment to message this technician...'
-          }
+          editable={canSend}
+          value={draft}
+          onChangeText={handleChangeDraft}
+          onBlur={() => chat.setTyping(false)}
+          maxLength={CHAT_TEXT_MAX_LENGTH}
+          multiline
+          placeholder={inputPlaceholder}
           placeholderTextColor={colors.mutedForeground}
-          style={[
-            styles.textInput,
-            {
-              backgroundColor: colors.background,
-              borderColor: colors.border,
-              color: isBookingFeePaid && !isThreadTerminated ? colors.foreground : colors.mutedForeground,
-            },
-          ]}
+          style={[styles.textInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+          testID="chat-message-input"
         />
-
         <Pressable
-          disabled={!messageText.trim() || !isBookingFeePaid || isThreadTerminated}
+          disabled={!canSend || !draft.trim()}
           onPress={handleSend}
-          style={[
-            styles.sendBtn,
-            {
-              backgroundColor:
-                messageText.trim() && isBookingFeePaid && !isThreadTerminated ? colors.primary : colors.muted,
-            },
-          ]}
+          accessibilityLabel="Send message"
+          testID="chat-send-button"
+          style={[styles.sendBtn, { backgroundColor: canSend && draft.trim() ? colors.primary : colors.muted }]}
         >
-          <Ionicons
-            name="send"
-            size={18}
-            color={
-              messageText.trim() && isBookingFeePaid && !isThreadTerminated
-                ? colors.primaryForeground
-                : colors.mutedForeground
-            }
-          />
+          <Ionicons name="send" size={18} color={canSend && draft.trim() ? colors.primaryForeground : colors.mutedForeground} />
         </Pressable>
       </View>
 
-      {/* Propose Price Offer Modal */}
-      {showOfferModal && (
-        <Modal visible transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View
-              style={[
-                styles.modalCard,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-            >
-              <View style={styles.modalTopRow}>
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-                  Propose Repair Price
-                </Text>
-                <Pressable onPress={() => setShowOfferModal(false)}>
-                  <Ionicons name="close" size={22} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
-
-              <Text style={[styles.modalHint, { color: colors.mutedForeground }]}>
-                Enter the agreed service amount to record the direct settlement.
-              </Text>
-
-              <TextInput
-                value={offerAmount}
-                onChangeText={setOfferAmount}
-                keyboardType="numeric"
-                placeholder="Amount in RWF (e.g. 25000)"
-                placeholderTextColor={colors.mutedForeground}
-                style={[
-                  styles.modalInput,
-                  {
-                    backgroundColor: colors.background,
-                    borderColor: colors.border,
-                    color: colors.foreground,
-                  },
-                ]}
-              />
-
-              <TextInput
-                value={offerNotes}
-                onChangeText={setOfferNotes}
-                placeholder="Notes (optional, e.g. includes parts)"
-                placeholderTextColor={colors.mutedForeground}
-                style={[
-                  styles.modalInput,
-                  {
-                    backgroundColor: colors.background,
-                    borderColor: colors.border,
-                    color: colors.foreground,
-                  },
-                ]}
-              />
-
-              <Button
-                label="Send Price Proposal"
-                onPress={handleSendOffer}
-                disabled={!offerAmount}
-                style={{ marginTop: 8 }}
-              />
-            </View>
-          </View>
-        </Modal>
-      )}
-
-      {/* Decline Request Modal for Technicians */}
-      {showDeclineModal && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowDeclineModal(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <View style={styles.modalTopRow}>
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Decline Service Request</Text>
-                <Pressable onPress={() => setShowDeclineModal(false)}>
-                  <Ionicons name="close" size={22} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
-              <Text style={[styles.modalHint, { color: colors.mutedForeground }]}>
-                Provide a brief reason so the client can find another technician.
-              </Text>
-              <TextInput
-                value={declineReasonText}
-                onChangeText={setDeclineReasonText}
-                placeholder="Reason (e.g. out of area, currently unavailable)"
-                placeholderTextColor={colors.mutedForeground}
-                style={[
-                  styles.modalInput,
-                  {
-                    backgroundColor: colors.background,
-                    borderColor: colors.border,
-                    color: colors.foreground,
-                  },
-                ]}
-              />
-              <Button
-                label="Confirm Decline"
-                variant="danger"
-                onPress={handleDeclineRequestSubmit}
-                style={{ marginTop: 8 }}
-              />
-            </View>
-          </View>
-        </Modal>
-      )}
-
-      {/* Existing Request Card Details Modal */}
-      {selectedRequestDetails && (
-        <Modal
-          visible
-          transparent
-          animationType="slide"
-          onRequestClose={() => setSelectedRequestDetails(null)}
-        >
-          <View style={styles.modalOverlay}>
-            <View
-              style={[
-                styles.modalDetailsCard,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-            >
-              <View style={styles.modalTopRow}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                  <View style={[styles.reqHeaderIconTile, { backgroundColor: colors.secondary }]}>
-                    <MaterialCommunityIcons
-                      name={getServiceIcon(selectedRequestDetails.serviceName) as any}
-                      size={18}
-                      color={colors.primary}
-                    />
-                  </View>
-                  <Text style={[styles.modalTitle, { color: colors.foreground }]} numberOfLines={1}>
-                    {selectedRequestDetails.serviceName} Details
-                  </Text>
-                </View>
-                <Pressable onPress={() => setSelectedRequestDetails(null)}>
-                  <Ionicons name="close" size={24} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
-
-              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 440 }}>
-                <Text style={[styles.detailSectionLabel, { color: colors.mutedForeground }]}>
-                  Problem Description
-                </Text>
-                <Text style={[styles.detailText, { color: colors.foreground }]}>
-                  {selectedRequestDetails.problem}
-                </Text>
-
-                <Text style={[styles.detailSectionLabel, { color: colors.mutedForeground }]}>
-                  Service Address
-                </Text>
-                <Text style={[styles.detailText, { color: colors.foreground }]}>
-                  📍 {selectedRequestDetails.address || 'Address provided on request'}
-                </Text>
-
-                {canOpenMapNavigation(selectedRequestDetails) && (
-                  <Button
-                    label="Open Location in Maps"
-                    variant="outline"
-                    size="small"
-                    featherIcon="navigation"
-                    onPress={() => void openMapNavigation(selectedRequestDetails)}
-                    style={{ marginTop: 10 }}
-                  />
-                )}
-
-                {/* Uploaded Photos Gallery */}
-                {selectedRequestDetails.photos && selectedRequestDetails.photos.length > 0 && (
-                  <>
-                    <Text style={[styles.detailSectionLabel, { color: colors.mutedForeground }]}>
-                      Attached Photos ({selectedRequestDetails.photos.length})
-                    </Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.galleryScroll}>
-                      {selectedRequestDetails.photos.map((photoUri, index) => (
-                        <Pressable
-                          key={`${photoUri}-${index}`}
-                          onPress={() => setPreviewImage(photoUri)}
-                          style={styles.galleryThumbWrap}
-                        >
-                          <StableRequestImage
-                            uri={photoUri}
-                            style={styles.galleryThumb}
-                            fallbackStyle={styles.galleryThumbFallback}
-                          />
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  </>
-                )}
-
-                <View style={[styles.detailsFooter, { borderTopColor: colors.border }]}>
-                  <Button
-                    label="Track Job Status"
-                    icon="arrow-forward"
-                    onPress={() => {
-                      setSelectedRequestDetails(null);
-                      router.push(`/job/${selectedRequestDetails.id || targetJobId}` as any);
-                    }}
-                  />
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-      )}
-
-      {/* Fullscreen Photo Preview Modal */}
-      {previewImage && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setPreviewImage(null)}>
-          <Pressable style={styles.fullscreenOverlay} onPress={() => setPreviewImage(null)}>
-            <Pressable onPress={(e) => e.stopPropagation()}>
-              <StableRequestImage
-                uri={previewImage}
-                style={styles.fullscreenImage}
-                fallbackStyle={styles.fullscreenImageFallback}
-              />
-            </Pressable>
-            <Pressable style={styles.closePreviewBtn} onPress={() => setPreviewImage(null)}>
+      {previewUri ? (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setPreviewUri(null)}>
+          <Pressable style={styles.fullscreenOverlay} onPress={() => setPreviewUri(null)}>
+            <Image source={{ uri: previewUri }} style={styles.fullscreenImage} resizeMode="contain" />
+            <Pressable style={styles.closePreviewBtn} onPress={() => setPreviewUri(null)}>
               <Feather name="x" size={24} color="#ffffff" />
             </Pressable>
           </Pressable>
         </Modal>
-      )}
+      ) : null}
     </KeyboardAvoidingView>
   );
 }
@@ -1263,97 +702,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 1,
   },
-  headerAvatarWrap: {
-    marginLeft: 6,
-    marginRight: 10,
-  },
-  headerAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    borderWidth: 1,
-    marginLeft: 6,
-    marginRight: 10,
-  },
-  headerAvatarImage: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-  },
-  headerAvatarInitial: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 15,
-  },
-  headerInfo: {
-    flex: 1,
-    justifyContent: 'center',
-    minWidth: 0,
-  },
-  headerName: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 15,
-  },
-  headerJobStatus: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 12,
-  },
-  headerSubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 2,
-    flexWrap: 'nowrap',
-  },
+  headerAvatarWrap: { marginLeft: 6, marginRight: 10 },
+  headerInfo: { flex: 1, justifyContent: 'center', minWidth: 0 },
+  headerName: { fontFamily: 'Inter_600SemiBold', fontSize: 15 },
+  headerSubRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
   headerServicePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
     paddingHorizontal: 6,
     paddingVertical: 1.5,
     borderRadius: 6,
+    maxWidth: 120,
   },
-  headerServiceText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 10.5,
-  },
-  headerSosRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
-  },
-  sosTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.25)',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-  },
-  sosDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#ef4444',
-  },
-  sosTagText: {
-    color: '#ef4444',
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 10,
-    letterSpacing: 0.4,
-  },
-  headerActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginLeft: 8,
-  },
+  headerServiceText: { fontFamily: 'Inter_600SemiBold', fontSize: 10.5 },
+  headerJobStatus: { fontFamily: 'Inter_400Regular', fontSize: 12, flexShrink: 1 },
+  headerActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 },
   headerIconBtn: {
     width: 36,
     height: 36,
@@ -1362,409 +726,95 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bannerPadding: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-  },
-  messageList: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    gap: 12,
-  },
-  messageItemContainer: {
-    marginBottom: 4,
-  },
-  dateSeparatorWrap: {
+  connectionBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 12,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-  dateSeparatorPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+  connectionText: { fontFamily: 'Inter_500Medium', fontSize: 12, flexShrink: 1 },
+  bannerPadding: { paddingHorizontal: 16, paddingTop: 10 },
+  centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  centerTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 16, marginTop: 12, textAlign: 'center' },
+  centerText: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 6, textAlign: 'center', lineHeight: 18 },
+  messageList: { paddingHorizontal: 16, paddingVertical: 16 },
+  loadOlder: { alignItems: 'center', paddingVertical: 10 },
+  loadOlderText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  dateSeparatorWrap: { alignItems: 'center', marginVertical: 10 },
+  dateSeparatorPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 },
+  dateSeparatorText: { fontFamily: 'Inter_500Medium', fontSize: 11 },
+  systemWrap: { alignItems: 'center', marginVertical: 6 },
+  systemBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
     borderRadius: 12,
-  },
-  dateSeparatorText: {
-    fontFamily: 'Inter_500Medium',
-    fontSize: 11,
-  },
-  msgWrapper: {
-    marginVertical: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     maxWidth: '90%',
   },
-  msgRight: {
-    alignSelf: 'flex-end',
-  },
-  msgLeft: {
-    alignSelf: 'flex-start',
-  },
-  chatBubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
-  },
-  bubbleMe: {
-    borderBottomRightRadius: 4,
-  },
-  bubbleOther: {
-    borderBottomLeftRadius: 4,
-    borderWidth: 1,
-  },
-  bubbleText: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  bubbleTime: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 10,
-    alignSelf: 'flex-end',
-    marginTop: 4,
-  },
-  imageMsgFrame: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 6,
-    maxWidth: 240,
-  },
-  chatPhoto: {
-    width: 220,
-    height: 160,
-    borderRadius: 10,
-  },
-  chatPhotoFallback: {
-    width: 220,
-    height: 160,
-    borderRadius: 10,
-  },
-  requestCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 8,
-    width: '100%',
-  },
-  reqCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  reqCardTitleWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flex: 1,
-  },
-  reqHeaderIconTile: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  reqCardTitle: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 14,
-    flex: 1,
-  },
-  reqStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  reqStatusBadgeText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 11,
-  },
-  reqCardBody: {
-    flexDirection: 'row',
-    paddingHorizontal: 14,
-    paddingBottom: 12,
-    gap: 12,
-  },
-  reqThumbFrame: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  reqThumb: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-  },
-  reqThumbFallback: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  reqInfoWrap: {
-    flex: 1,
-    justifyContent: 'center',
-    gap: 4,
-  },
-  reqAddress: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 12,
-  },
-  reqProblem: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  reqActionRow: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    gap: 10,
-    justifyContent: 'flex-end',
-  },
-  techRequestActionRow: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  reqActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  reqActionBtnText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 12,
-  },
-  offerCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
-    gap: 8,
-    marginBottom: 6,
-    minWidth: 220,
-  },
-  offerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  offerLabel: {
-    fontFamily: 'Inter_500Medium',
-    fontSize: 12,
-  },
-  offerAmount: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 20,
-  },
-  offerNotes: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 13,
-  },
-  offerStatusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  offerStatusText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 11,
-  },
-  offerActionRow: {
-    flexDirection: 'row',
-    marginTop: 6,
-  },
-  emptyWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 40,
-    gap: 10,
-  },
-  emptyText: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingHorizontal: 32,
-  },
-  settlementBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  settlementText: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 11,
-    flex: 1,
-  },
-  lockedBanner: {
-    borderTopWidth: 1,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  lockedBannerTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  lockedIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lockedBannerTitle: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 14,
-  },
+  systemText: { fontFamily: 'Inter_500Medium', fontSize: 12, flexShrink: 1 },
+  systemTime: { fontFamily: 'Inter_400Regular', fontSize: 10, marginTop: 2 },
+  msgWrapper: { marginVertical: 3, maxWidth: '82%' },
+  msgRight: { alignSelf: 'flex-end', alignItems: 'flex-end' },
+  msgLeft: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  chatBubble: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
+  bubbleMe: { borderBottomRightRadius: 4 },
+  bubbleOther: { borderBottomLeftRadius: 4, borderWidth: 1 },
+  bubbleText: { fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
+  hiddenText: { fontStyle: 'italic' },
+  bubbleMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 3 },
+  bubbleTime: { fontFamily: 'Inter_400Regular', fontSize: 10 },
+  failedText: { fontFamily: 'Inter_500Medium', fontSize: 11, marginTop: 2 },
+  chatPhoto: { width: 200, height: 200, borderRadius: 10 },
+  attachmentRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 160 },
+  attachmentName: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  attachmentDetail: { fontFamily: 'Inter_400Regular', fontSize: 11 },
+  requestCard: { borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 12 },
+  reqCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  reqHeaderIconTile: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  reqCardTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14, flex: 1 },
+  reqStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  reqStatusBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 10.5 },
+  reqProblem: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18, marginTop: 10 },
+  reqAddress: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 6 },
+  reqActionRow: { flexDirection: 'row', borderTopWidth: 1, marginTop: 10, paddingTop: 8, gap: 16 },
+  reqActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 },
+  reqActionBtnText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  lockedBanner: { borderTopWidth: 1, paddingHorizontal: 16, paddingVertical: 12 },
+  lockedBannerTop: { flexDirection: 'row', alignItems: 'center' },
+  lockedIconCircle: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  lockedBannerTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 13, lineHeight: 18 },
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     paddingHorizontal: 12,
-    paddingTop: 8,
+    paddingTop: 10,
     borderTopWidth: 1,
+    gap: 8,
   },
-  actionIconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  actionIconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   textInput: {
     flex: 1,
     minHeight: 40,
-    maxHeight: 100,
-    borderRadius: 20,
+    maxHeight: 120,
     borderWidth: 1,
+    borderRadius: 20,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginHorizontal: 8,
+    paddingTop: 10,
+    paddingBottom: 10,
     fontFamily: 'Inter_400Regular',
     fontSize: 14,
   },
-  sendBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  modalCard: {
-    width: '100%',
-    borderRadius: 20,
-    borderWidth: 1,
-    padding: 20,
-    gap: 14,
-  },
-  modalDetailsCard: {
-    width: '100%',
-    maxHeight: '85%',
-    borderRadius: 20,
-    borderWidth: 1,
-    padding: 20,
-  },
-  modalTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  modalTitle: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 17,
-  },
-  modalHint: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 13,
-  },
-  modalInput: {
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    fontFamily: 'Inter_400Regular',
-    fontSize: 14,
-  },
-  detailSectionLabel: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 12,
-    textTransform: 'uppercase',
-    marginTop: 14,
-    marginBottom: 4,
-  },
-  detailText: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  galleryScroll: {
-    marginTop: 6,
-  },
-  galleryThumbWrap: {
-    marginRight: 10,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  galleryThumb: {
-    width: 90,
-    height: 90,
-    borderRadius: 10,
-  },
-  galleryThumbFallback: {
-    width: 90,
-    height: 90,
-    borderRadius: 10,
-  },
-  detailsFooter: {
-    borderTopWidth: 1,
-    marginTop: 20,
-    paddingTop: 16,
-  },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   fullscreenOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.92)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  fullscreenImage: {
-    width: 340,
-    height: 440,
-    resizeMode: 'contain',
-  },
-  fullscreenImageFallback: {
-    width: 340,
-    height: 440,
-  },
-  closePreviewBtn: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  fullscreenImage: { width: '100%', height: '80%' },
+  closePreviewBtn: { position: 'absolute', top: 48, right: 20, padding: 8 },
 });
