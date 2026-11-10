@@ -137,6 +137,17 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
     completedAt: backendJob.completedAt ?? undefined,
     cancellationReason: backendJob.cancellationReason ?? undefined,
     technician: tech,
+    routedTechnician: (() => {
+      const routed = backendJob.activeOffer ?? backendJob.lastOffer;
+      return routed
+        ? {
+            id: routed.technicianId,
+            name: routed.technicianName,
+            avatarUrl: routed.technicianProfilePictureUrl ?? undefined,
+            pending: Boolean(backendJob.activeOffer),
+          }
+        : undefined;
+    })(),
     type: backendJob.requestType === 'SOS' ? 'SOS' : 'STANDARD',
     agreedPrice: backendJob.offeredAmount || undefined,
     cooperationStatus: backendJob.cooperationStatus,

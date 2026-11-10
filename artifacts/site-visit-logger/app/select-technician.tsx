@@ -8,10 +8,11 @@ import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
 import { fetchPublicTechnicians } from '@/lib/technicians-api';
+import { previewMatchingTechnicians } from '@/lib/jobs-api';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { distanceMeters, formatDistance } from '@/lib/location';
-import { getServiceIcon } from '@/lib/categories-api';
+import { getServiceIcon, resolveServiceCategoryId } from '@/lib/categories-api';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
 export default function SelectTechnicianScreen() {
@@ -41,7 +42,7 @@ export default function SelectTechnicianScreen() {
     latitude?: string;
     longitude?: string;
   }>();
-  const { getJob, selectTechnician, linkChatThread, addRequest } = useFundi();
+  const { getJob, selectTechnician, linkChatThread, addRequest, proposeTechnicianToJob } = useFundi();
   const { createOrGetThread } = useChat();
   const requestJob = jobId ? getJob(jobId) : undefined;
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -56,6 +57,32 @@ export default function SelectTechnicianScreen() {
     requestJob?.locationLatitude ?? (latParam ? parseFloat(latParam) : undefined);
   const locationLongitude =
     requestJob?.locationLongitude ?? (lngParam ? parseFloat(lngParam) : undefined);
+
+  // The backend only accepts a request for technicians it considers eligible for this job
+  // (right service, within range, online). Ask it for that list so the client can't pick
+  // someone the request would never reach.
+  const categoryHint = requestJob?.serviceCategoryId || categoryId;
+  const [eligibleIds, setEligibleIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!service || locationLatitude === undefined || locationLongitude === undefined) {
+      setEligibleIds(null);
+      return;
+    }
+    let mounted = true;
+    resolveServiceCategoryId(service, categoryHint)
+      .then((serviceCategoryId) => previewMatchingTechnicians(serviceCategoryId, locationLatitude, locationLongitude))
+      .then((matches) => {
+        if (mounted) setEligibleIds(new Set(matches.map((match) => match.technicianId)));
+      })
+      .catch((err) => {
+        // Fall back to the public list; the chat reports it if routing then fails.
+        console.warn('Could not load eligible technicians:', err);
+        if (mounted) setEligibleIds(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [service, categoryHint, locationLatitude, locationLongitude]);
 
   useEffect(() => {
     let mounted = true;
@@ -105,6 +132,25 @@ export default function SelectTechnicianScreen() {
       return false;
     };
 
+    if (eligibleIds) {
+      // Backend-eligible technicians only; no loose fallback that the request could never reach.
+      return apiTechnicians
+        .filter((tech) => eligibleIds.has(tech.id) && (!availableOnly || tech.isAvailable))
+        .map((technician) => ({
+          technician,
+          distance:
+            locationLatitude !== undefined && locationLongitude !== undefined
+              ? distanceMeters({ latitude: locationLatitude, longitude: locationLongitude }, technician.location)
+              : null,
+        }))
+        .sort((a, b) => {
+          if (sortBy === 'rating') return b.technician.rating - a.technician.rating;
+          if (a.distance === null) return b.distance === null ? 0 : 1;
+          if (b.distance === null) return -1;
+          return a.distance - b.distance;
+        });
+    }
+
     const directFiltered = apiTechnicians.filter(
       (tech) => (!availableOnly || tech.isAvailable) && matchesService(tech),
     );
@@ -131,7 +177,7 @@ export default function SelectTechnicianScreen() {
         if (b.distance === null) return -1;
         return a.distance - b.distance;
       });
-  }, [apiTechnicians, availableOnly, locationLatitude, locationLongitude, service, sortBy]);
+  }, [apiTechnicians, eligibleIds, availableOnly, locationLatitude, locationLongitude, service, sortBy]);
 
   const handleSelectTech = async (tech: MarketplaceTechnician) => {
     let targetJob = requestJob;
@@ -160,12 +206,23 @@ export default function SelectTechnicianScreen() {
 
     selectTechnician(targetJob.id, toJobTechnician(tech, distKm));
 
-    // Intercept call to navigate to payment screens if payment has already been settled
+    // Already paid: route the request straight to this technician's inbox (no second payment)
+    // and continue in the chat, which shows the delivery status.
     if (targetJob.bookingFee?.status === 'PAID') {
-      const destChat = targetJob.chatThreadId || targetJob.chatId || targetJob.id;
+      let proposalError: string | undefined;
+      try {
+        await proposeTechnicianToJob(targetJob.id, tech.id);
+      } catch (err) {
+        proposalError = err instanceof Error ? err.message : 'The request could not be sent to this technician.';
+      }
       router.replace({
-        pathname: `/chat/${destChat}` as any,
-        params: { requestId: targetJob.id },
+        pathname: '/chat/[id]',
+        params: {
+          id: targetJob.id,
+          requestId: targetJob.id,
+          technicianId: tech.id,
+          ...(proposalError ? { proposalError } : {}),
+        },
       });
       return;
     }

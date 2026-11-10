@@ -154,7 +154,10 @@ export function deriveLifecycle(input: {
       ? 'The technician declined this request.'
       : 'You declined this request.';
   } else if (!hasAssignment) {
-    headline = 'Looking for a technician for this request.';
+    headline =
+      job?.dispatchStatus === 'OFFERED'
+        ? 'Request delivered. Waiting for the technician to accept.'
+        : 'Not accepted yet. Send it again or choose another technician.';
   } else if (!isPriceAgreed && negotiationEnded) {
     headline =
       (convStatus === 'EXPIRED' ? 'The negotiation expired.' : 'The price negotiation ended without agreement.') +
