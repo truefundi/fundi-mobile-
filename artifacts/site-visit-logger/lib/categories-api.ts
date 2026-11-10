@@ -157,8 +157,91 @@ export function mapDatabaseCategoryToService(dbCategory: DatabaseCategory): Serv
 /** In-memory cache of currently loaded categories */
 let inMemoryCategories: Service[] | null = null;
 
+// Pre-load cached categories from AsyncStorage into memory
+AsyncStorage.getItem(CATEGORIES_STORAGE_KEY)
+  .then((cached) => {
+    if (cached && !inMemoryCategories) {
+      try {
+        const parsed = JSON.parse(cached) as Service[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          inMemoryCategories = parsed;
+        }
+      } catch {}
+    }
+  })
+  .catch(() => {});
+
 export function getCachedCategories(): Service[] | null {
   return inMemoryCategories;
+}
+
+/** Finds a category by its ID, slug, or label from cache or default catalog */
+export function findCategoryByService(serviceNameOrSlug?: string): Service | undefined {
+  if (!serviceNameOrSlug) return undefined;
+  const normalized = serviceNameOrSlug.toLowerCase().trim();
+  const slugified = normalized.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const cached = getCachedCategories();
+  if (cached && cached.length > 0) {
+    const match = cached.find(
+      (c) =>
+        (c.id && c.id.toLowerCase() === normalized) ||
+        (c.slug && c.slug.toLowerCase() === slugified) ||
+        (c.label && c.label.toLowerCase() === normalized) ||
+        (c.label && c.label.toLowerCase().includes(normalized)) ||
+        (c.keywords && c.keywords.toLowerCase().includes(normalized)),
+    );
+    if (match) return match;
+  }
+  return undefined;
+}
+
+/** Resolves the exact backend category UUID for a given service or fallback */
+export async function resolveServiceCategoryId(
+  serviceNameOrSlug?: string,
+  providedCategoryId?: string,
+): Promise<string> {
+  const isUuid = (val?: string) =>
+    Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val));
+
+  if (isUuid(providedCategoryId)) {
+    return providedCategoryId!;
+  }
+
+  // Check cache / local catalog first
+  const localMatch = findCategoryByService(serviceNameOrSlug || providedCategoryId);
+  if (localMatch?.id && isUuid(localMatch.id)) {
+    return localMatch.id;
+  }
+
+  // Fetch live categories from backend if not yet in memory or if ID is missing
+  try {
+    const liveCategories = await fetchCategories();
+    if (liveCategories && liveCategories.length > 0) {
+      if (serviceNameOrSlug || providedCategoryId) {
+        const query = (serviceNameOrSlug || providedCategoryId)!.toLowerCase().trim();
+        const querySlug = query.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        const matched = liveCategories.find(
+          (c) =>
+            (c.id && c.id.toLowerCase() === query) ||
+            (c.slug && c.slug.toLowerCase() === querySlug) ||
+            (c.label && c.label.toLowerCase() === query) ||
+            (c.label && c.label.toLowerCase().includes(query)),
+        );
+        if (matched?.id && isUuid(matched.id)) {
+          return matched.id;
+        }
+      }
+      // Return first live category's valid UUID as resilient fallback
+      if (liveCategories[0]?.id && isUuid(liveCategories[0].id)) {
+        return liveCategories[0].id;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to resolve live category ID:', err);
+  }
+
+  // Fallback to known live database UUID (Plumbing) if absolutely unreachable
+  return '4492816c-7a62-47d3-8019-987419a8c69e';
 }
 
 /** Fetches real categories from the database API with caching */

@@ -23,7 +23,9 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { useAuth } from '@/context/AuthContext';
-import { getCachedCategories } from '@/lib/categories-api';
+import { getCachedCategories, resolveServiceCategoryId } from '@/lib/categories-api';
+import { cleanAndNormalizePhone } from '@/lib/auth-api';
+import { useCountdown } from '@/hooks/useCountdown';
 import { type MarketplaceTechnician } from '@/constants/technicians';
 import {
   FLAT_BOOKING_FEE,
@@ -87,6 +89,9 @@ export default function CheckoutPaymentScreen() {
     service?: string;
     amount?: string;
     currency?: string;
+    categoryId?: string;
+    phoneVerificationId?: string;
+    verifiedPhone?: string;
   }>();
 
   const job = params.requestId ? getJob(params.requestId) : undefined;
@@ -115,7 +120,9 @@ export default function CheckoutPaymentScreen() {
   const bookingCurrency = job?.bookingFee?.currency ?? params.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
   const [selectedChannel, setSelectedChannel] = useState<PaymentChannel>('MTN_MOMO');
-  const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '0788123456');
+  const [phoneNumber, setPhoneNumber] = useState(
+    cleanAndNormalizePhone(params.verifiedPhone || account?.phone || '0788123456'),
+  );
   const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242');
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -125,10 +132,17 @@ export default function CheckoutPaymentScreen() {
 
   // Phone verification state
   const [showOtpModal, setShowOtpModal] = useState(false);
-  const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
+  const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(
+    params.phoneVerificationId || null,
+  );
   const [otpCode, setOtpCode] = useState('');
   const [otpError, setOtpError] = useState<string | null>(null);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpSentAt, setOtpSentAt] = useState(() => new Date().toISOString());
+  const [isResendingOtp, setIsResendingOtp] = useState(false);
+
+  const { remainingSeconds: resendSeconds } = useCountdown(otpSentAt, 60 * 1000);
+  const canResendOtp = resendSeconds === 0 && !isResendingOtp;
 
   const isAlreadyPaid = job?.bookingFee?.status === 'PAID';
   const destinationChatId = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
@@ -236,18 +250,18 @@ export default function CheckoutPaymentScreen() {
     setPaymentError(null);
 
     const targetRequestId = params.requestId || job!.id;
-    const targetServiceCategoryId =
-      job?.serviceCategoryId ||
-      getCachedCategories()?.find((c) => c.label.toLowerCase() === (targetService || '').toLowerCase())?.id ||
-      getCachedCategories()?.[0]?.id ||
-      'default-category-id';
+    const targetServiceCategoryId = await resolveServiceCategoryId(
+      targetService,
+      params.categoryId || job?.serviceCategoryId,
+    );
+    const normalizedPhone = cleanAndNormalizePhone(phoneNumber);
 
     try {
       // 1. Create booking payment via real payment endpoint
       const bookingPayment = await createBookingPayment(
         targetServiceCategoryId,
         job?.type === 'SOS' ? 'SOS' : 'NORMAL',
-        phoneNumber,
+        normalizedPhone,
       );
 
       // 2. Create customer job on real backend
@@ -535,6 +549,37 @@ export default function CheckoutPaymentScreen() {
                 },
               ]}
             />
+            {/* Resend Code Button & Countdown */}
+            <View style={{ alignItems: 'center', marginTop: 12 }}>
+              {canResendOtp ? (
+                <Pressable
+                  onPress={async () => {
+                    setIsResendingOtp(true);
+                    setOtpError(null);
+                    setOtpCode('');
+                    try {
+                      const res = await requestPhoneVerification(cleanAndNormalizePhone(phoneNumber));
+                      setPhoneVerificationId(res.verificationId);
+                      setOtpSentAt(new Date().toISOString());
+                    } catch (e: any) {
+                      setOtpError(e?.message || 'Failed to resend verification code.');
+                    } finally {
+                      setIsResendingOtp(false);
+                    }
+                  }}
+                  disabled={isResendingOtp}
+                >
+                  <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>
+                    {isResendingOtp ? 'Resending...' : 'Resend Code'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                  Resend code in {resendSeconds}s
+                </Text>
+              )}
+            </View>
+
             <View style={{ flexDirection: 'row', gap: 10, width: '100%', marginTop: 14 }}>
               <Button
                 label="Cancel"

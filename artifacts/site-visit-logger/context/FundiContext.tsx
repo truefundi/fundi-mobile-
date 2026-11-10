@@ -188,7 +188,7 @@ type FundiContextValue = {
   completeRepair: (id: string) => void;
   // Real backend workflow methods
   createBackendJob: (input: CreateJobInput) => Promise<BackendJob>;
-  requestPhoneVerification: () => Promise<PhoneVerificationRequestResponse>;
+  requestPhoneVerification: (phoneNumber?: string) => Promise<PhoneVerificationRequestResponse>;
   verifyPhoneOtp: (verificationId: string, otp: string) => Promise<VerifyPhoneResponse>;
   createBookingPayment: (serviceCategoryId: string, requestType?: 'NORMAL' | 'SOS', phoneNumber?: string) => Promise<CreateBookingPaymentResponse>;
   proposeTechnicianToJob: (jobId: string, technicianId: string) => Promise<BackendJob>;
@@ -477,6 +477,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
         id,
         reference: data.reference ?? makeReference(),
         service: data.service ?? (data.type === 'SOS' ? 'Emergency SOS' : 'General Maintenance'),
+        serviceCategoryId: data.serviceCategoryId,
         problem: data.problem ?? '',
         urgency,
         locationLabel: data.locationLabel ?? 'Current Location',
@@ -713,8 +714,8 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     return backendJob;
   }, [storageKey]);
 
-  const requestPhoneVerification = useCallback(async (): Promise<PhoneVerificationRequestResponse> => {
-    return requestJobPhoneVerification();
+  const requestPhoneVerification = useCallback(async (phoneNumber?: string): Promise<PhoneVerificationRequestResponse> => {
+    return requestJobPhoneVerification(phoneNumber);
   }, []);
 
   const verifyPhoneOtp = useCallback(async (verificationId: string, otp: string): Promise<VerifyPhoneResponse> => {

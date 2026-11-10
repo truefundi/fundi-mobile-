@@ -28,9 +28,11 @@ export default function SelectTechnicianScreen() {
     address: addressParam,
     latitude: latParam,
     longitude: lngParam,
+    categoryId,
   } = useLocalSearchParams<{
     jobId?: string;
     category?: string;
+    categoryId?: string;
     service?: string;
     description?: string;
     problem?: string;
@@ -168,12 +170,14 @@ export default function SelectTechnicianScreen() {
       return;
     }
 
+    // Dedicated phone verification flow triggers after selecting technician and before booking fee
     router.push({
-      pathname: '/checkout/booking-fee',
+      pathname: '/checkout/verify-phone',
       params: {
         requestId: targetJob.id,
         technicianId: tech.id,
         service: targetJob.service,
+        categoryId: targetJob.serviceCategoryId || categoryId,
       },
     });
   };

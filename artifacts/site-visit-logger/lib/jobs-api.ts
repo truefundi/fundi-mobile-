@@ -1,4 +1,5 @@
 import { apiRequest, apiUpload } from '@/lib/api';
+import { cleanAndNormalizePhone } from '@/lib/auth-api';
 import type { RequestType } from '@/constants/jobs';
 
 export interface BackendJobMedia {
@@ -167,10 +168,12 @@ export interface CreateJobInput {
 
 // ─── Customer Phone Verification ──────────────────────────────────────────
 
-export async function requestJobPhoneVerification(): Promise<PhoneVerificationRequestResponse> {
+export async function requestJobPhoneVerification(phoneNumber?: string): Promise<PhoneVerificationRequestResponse> {
+  const normalizedPhone = phoneNumber ? cleanAndNormalizePhone(phoneNumber) : undefined;
   return apiRequest<PhoneVerificationRequestResponse>('/api/v1/jobs/phone-verification/request', {
     method: 'POST',
     authenticated: true,
+    ...(normalizedPhone ? { body: { phoneNumber: normalizedPhone } } : {}),
   });
 }
 

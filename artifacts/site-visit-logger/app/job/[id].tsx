@@ -193,7 +193,7 @@ export default function JobScreen() {
                       });
                       return;
                     }
-                    router.push({ pathname: '/checkout/booking-fee', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service } });
+                    router.push({ pathname: '/checkout/verify-phone', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service, categoryId: job.serviceCategoryId } });
                   }}
                   testID="review-booking-fee-button"
                 />
@@ -331,8 +331,8 @@ export default function JobScreen() {
                       return;
                     }
                     router.push({
-                      pathname: '/checkout/booking-fee',
-                      params: { requestId: job.id, technicianId: job.technician?.id, service: job.service },
+                      pathname: '/checkout/verify-phone',
+                      params: { requestId: job.id, technicianId: job.technician?.id, service: job.service, categoryId: job.serviceCategoryId },
                     });
                   }}
                   testID="pay-booking-fee-pending-button"

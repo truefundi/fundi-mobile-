@@ -48,6 +48,7 @@ export default function TechnicianProfileScreen() {
     techAvailable?: string;
     techAvatarUrl?: string;
     techLocation?: string;
+    categoryId?: string;
   }>();
 
   const technicianId = params.id;
@@ -145,13 +146,14 @@ export default function TechnicianProfileScreen() {
       return;
     }
 
-    // Route to Booking Fee review screen
+    // Dedicated phone verification flow triggers after selecting technician and before booking fee
     router.push({
-      pathname: '/checkout/booking-fee',
+      pathname: '/checkout/verify-phone',
       params: {
         requestId: finalRequestId,
         technicianId: tech?.id,
         service: targetService,
+        categoryId: targetJob?.serviceCategoryId || params.categoryId,
       },
     });
   };
