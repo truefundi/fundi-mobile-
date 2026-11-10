@@ -121,14 +121,14 @@ export function mapBackendConversationToThread(
         amount: m.offer.amount,
         currency: m.offer.currency,
         status: m.offer.status as any,
-        senderRole: m.offer.offeredByRole === 'TECHNICIAN' ? 'technician' : 'client',
+        senderRole: m.offer.senderRole === 'TECHNICIAN' ? 'technician' : 'client',
         notes: m.offer.notes ?? undefined,
         createdAt: m.offer.createdAt,
       };
     }
 
     let serviceRequest: ServiceRequestDetails | undefined = undefined;
-    if (m.type === 'REQUEST_DETAILS' && conv.request) {
+    if (m.type === 'SERVICE_REQUEST' && conv.request) {
       serviceRequest = {
         id: conv.jobId,
         serviceName: conv.request.service || 'Service Request',
@@ -139,19 +139,20 @@ export function mapBackendConversationToThread(
         photos: [],
         videos: [],
         createdAt: m.createdAt,
-        status: conv.status === 'WAITING_FOR_TECHNICIAN' ? 'REQUEST_RECEIVED' : conv.status === 'DECLINED' ? 'DECLINED' : 'ACCEPTED',
+        status: conv.status === 'PENDING' ? 'REQUEST_RECEIVED' : conv.status === 'DECLINED' ? 'DECLINED' : 'ACCEPTED',
         type: 'STANDARD',
       };
     }
 
-    const senderRole = m.sender?.role === 'TECHNICIAN' ? 'technician' : 'client';
+    const senderRole = m.senderRole === 'TECHNICIAN' ? 'technician' : 'client';
+    const senderParty = m.senderRole === 'TECHNICIAN' ? conv.technician : m.senderRole === 'CUSTOMER' ? conv.customer : null;
 
     return {
       id: m.id,
-      senderId: m.senderId || m.sender?.id || '',
-      senderName: m.sender?.fullName || (senderRole === 'technician' ? 'Technician' : 'Client'),
+      senderId: m.senderId ?? 'system',
+      senderName: senderParty?.fullName || (m.senderRole === 'SYSTEM' ? 'System' : senderRole === 'technician' ? 'Technician' : 'Client'),
       senderRole,
-      text: m.text,
+      text: m.text ?? '',
       timestamp: m.createdAt,
       priceOffer,
       serviceRequest,
@@ -170,11 +171,11 @@ export function mapBackendConversationToThread(
     technicianName: conv.technician?.fullName,
     technicianPhone: conv.technician?.phoneNumber,
     isAccepted: conv.status === 'AGREED' || conv.status === 'NEGOTIATING',
-    isEnded: conv.status === 'DECLINED' || conv.status === 'EXPIRED' || conv.status === 'CANCELLED',
+    isEnded: conv.status === 'DECLINED' || conv.status === 'EXPIRED',
     otherParticipantName: otherName,
     otherParticipantRole: otherRole,
     otherParticipantAvatarUrl: otherAvatar,
-    lastMessage: lastMsg?.text || (conv.status === 'WAITING_FOR_TECHNICIAN' ? 'Waiting for technician to accept' : 'Conversation active'),
+    lastMessage: lastMsg?.text || (conv.status === 'PENDING' ? 'Waiting for technician to accept' : 'Conversation active'),
     lastMessageTime: conv.lastMessageAt || conv.startedAt,
     agreedPrice: conv.agreedAmount ?? undefined,
     messages: mappedMessages,

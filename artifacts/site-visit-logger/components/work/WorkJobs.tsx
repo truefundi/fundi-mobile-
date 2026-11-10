@@ -72,7 +72,7 @@ export function WorkJobs() {
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Open Chat',
-            onPress: () => handleChatClient(job.chatThreadId),
+            onPress: () => handleChatClient(job),
           },
         ],
       );
@@ -92,9 +92,12 @@ export function WorkJobs() {
   const handleAcceptOffer = async (job: Job) => {
     const offerId = job.offerId || job.id;
     try {
-      await acceptOffer(offerId);
-      Alert.alert('Offer Accepted', 'The job has been assigned to you. You can coordinate and start work.');
+      const accepted = await acceptOffer(offerId);
       setTab('In Progress');
+      Alert.alert('Offer Accepted', 'The job is assigned to you. Review the request and agree on a price with the client in chat.', [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Open chat', onPress: () => handleChatClient({ id: accepted.id, chatThreadId: undefined }) },
+      ]);
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Could not accept the offer.');
     }
@@ -210,10 +213,11 @@ export function WorkJobs() {
     void Linking.openURL(`tel:${phone}`);
   };
 
-  const handleChatClient = (threadId?: string) => {
+  /** Opens the unified job chat (messages, price negotiation and progress) for a job. */
+  const handleChatClient = (job?: Pick<Job, 'id' | 'chatThreadId'>) => {
     setSelectedJob(null);
-    if (threadId) {
-      router.push({ pathname: '/chat', params: { threadId } });
+    if (job) {
+      router.push({ pathname: '/chat/[id]', params: { id: job.chatThreadId || job.id, requestId: job.id } });
     } else {
       router.push('/chat');
     }
@@ -469,7 +473,7 @@ export function WorkJobs() {
                     <Pressable
                       onPress={(e) => {
                         e.stopPropagation();
-                        handleChatClient(job.chatThreadId);
+                        handleChatClient(job);
                       }}
                       style={[
                         styles.cardChatBtn,
@@ -599,7 +603,7 @@ export function WorkJobs() {
                     <Pressable
                       onPress={(e) => {
                         e.stopPropagation();
-                        handleChatClient(job.chatThreadId);
+                        handleChatClient(job);
                       }}
                       style={[
                         styles.cardChatBtn,
@@ -740,7 +744,7 @@ export function WorkJobs() {
                       </Pressable>
                     ) : null}
                     <Pressable
-                      onPress={() => handleChatClient(selectedJob.chatThreadId)}
+                      onPress={() => handleChatClient(selectedJob)}
                       style={[styles.clientActionBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
                     >
                       <Ionicons name="chatbubbles-outline" size={14} color={colors.primary} />
@@ -849,7 +853,7 @@ export function WorkJobs() {
                             icon={selectedJob.agreedPrice ? 'play' : 'chatbubbles-outline'}
                             onPress={() => {
                               if (!selectedJob.agreedPrice) {
-                                handleChatClient(selectedJob.chatThreadId);
+                                handleChatClient(selectedJob);
                               } else {
                                 void handleStartJob(selectedJob);
                               }
