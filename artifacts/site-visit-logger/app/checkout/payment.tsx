@@ -21,7 +21,6 @@ import { Notice } from '@/components/ui/Notice';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
-import { useChat } from '@/context/ChatContext';
 import { useAuth } from '@/context/AuthContext';
 import { getCachedCategories, resolveServiceCategoryId } from '@/lib/categories-api';
 import { cleanAndNormalizePhone } from '@/lib/auth-api';
@@ -81,7 +80,6 @@ export default function CheckoutPaymentScreen() {
     createBookingPayment,
     proposeTechnicianToJob,
   } = useFundi();
-  const { createOrGetThread, openConversation } = useChat();
 
   const params = useLocalSearchParams<{
     requestId?: string;
@@ -277,26 +275,24 @@ export default function CheckoutPaymentScreen() {
         requestType: job?.type === 'SOS' ? 'SOS' : 'NORMAL',
       });
 
-      // 3. For normal requests, propose technician if selected
+      // 3. Route the request to the selected technician: it lands in their inbox as an
+      //    incoming request they can accept or decline. A failure here must not lose the
+      //    paid job, so it is reported in the chat where the client can resend or pick
+      //    someone else. (The price negotiation opens automatically once they accept.)
       const techId = params.technicianId || job?.technician?.id;
+      let proposalError: string | undefined;
       if (techId && job?.type !== 'SOS') {
         try {
           await proposeTechnicianToJob(createdBackendJob.id, techId);
         } catch (propErr) {
-          console.warn('Technician proposal non-fatal error:', propErr);
+          proposalError =
+            propErr instanceof Error ? propErr.message : 'The request could not be sent to this technician.';
         }
+      } else if (job?.type !== 'SOS') {
+        proposalError = 'No technician was selected for this request.';
       }
 
-      // 4. Open real negotiation conversation
-      let destChatId = createdBackendJob.id;
-      try {
-        const convId = await openConversation(createdBackendJob.id);
-        destChatId = convId;
-      } catch (convErr) {
-        console.warn('Open conversation non-fatal error:', convErr);
-      }
-
-      // 5. Update local state and show payment success
+      // 4. Update local state and show payment success, then continue in the chat.
       const txId = bookingPayment.externalPaymentId || `TX-${Date.now().toString(36).toUpperCase()}`;
       markBookingFeePaid(targetRequestId, txId);
       setTransactionRef(txId);
@@ -305,10 +301,13 @@ export default function CheckoutPaymentScreen() {
 
       setTimeout(() => {
         router.replace({
-          pathname: `/chat/${destChatId}` as any,
+          pathname: '/chat/[id]',
           params: {
+            id: createdBackendJob.id,
             requestId: createdBackendJob.id,
             firstMessage: 'true',
+            ...(techId ? { technicianId: techId } : {}),
+            ...(proposalError ? { proposalError } : {}),
           },
         });
       }, 1400);

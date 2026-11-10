@@ -31,6 +31,8 @@ import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
 import { cleanAndNormalizePhone, updateUserRole } from '@/lib/auth-api';
 import { getAccessToken } from '@/lib/auth-session';
+import { acquireEventsSocket, onAppEvent } from '@/lib/events-socket';
+
 import {
   acceptTechnicianOffer,
   confirmJobCooperation,
@@ -42,6 +44,9 @@ import {
   type BackendJob,
   type TechnicianOfferItem,
 } from '@/lib/jobs-api';
+
+/** Fallback refresh interval for incoming requests while the push socket is unavailable. */
+const OFFER_POLL_MS = 20_000;
 
 export type {
   BookingFee,
@@ -486,6 +491,29 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       void refreshJobs();
     });
   }, [account?.phone, refreshJobs]);
+
+  // Incoming client requests (job offers) expire after a few minutes, so technicians
+  // must see them immediately: listen for the backend's `job:offer` push, poll as a
+  // fallback, and refresh whenever the app returns to the foreground.
+  useEffect(() => {
+    if (account?.role !== 'TECHNICIAN') return;
+    const release = acquireEventsSocket();
+    const offOffer = onAppEvent('job:offer', () => void refreshJobs());
+    const offNotification = onAppEvent('notification:new', () => void refreshJobs());
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') void refreshJobs();
+    }, OFFER_POLL_MS);
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void refreshJobs();
+    });
+    return () => {
+      offOffer();
+      offNotification();
+      clearInterval(timer);
+      sub.remove();
+      release();
+    };
+  }, [account?.role, refreshJobs]);
 
   const acceptOffer = useCallback(async (offerId: string): Promise<BackendJob> => {
     const backendJob = await acceptTechnicianOffer(offerId);

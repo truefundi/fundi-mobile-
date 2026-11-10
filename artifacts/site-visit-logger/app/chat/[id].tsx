@@ -24,6 +24,7 @@ import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/context/ChatContext';
 import { useFundi } from '@/context/FundiContext';
+import { useWork } from '@/context/WorkContext';
 import { useChatRoom, type ChatTimelineMessage } from '@/hooks/useChatRoom';
 import { useJobWorkspace } from '@/hooks/useJobWorkspace';
 import { onChatEvent } from '@/lib/chat-socket';
@@ -31,6 +32,8 @@ import { CHAT_TEXT_MAX_LENGTH, type BackendChatRoom } from '@/lib/chat-rooms-api
 import type { ConversationMessageItem, PriceOfferItem } from '@/lib/conversations-api';
 import { deriveLifecycle, offersRemaining, type LifecycleAction } from '@/lib/job-lifecycle';
 import { getServiceIcon } from '@/lib/categories-api';
+import { fetchPublicTechnicianById } from '@/lib/technicians-api';
+import type { MarketplaceTechnician } from '@/constants/technicians';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -39,6 +42,7 @@ import { JobProgressStepper } from '@/components/chat/JobProgressStepper';
 import { OfferCard } from '@/components/chat/OfferCard';
 import { OfferSheet, ReasonSheet } from '@/components/chat/ChatSheets';
 import { RequestCard, buildRequestSummary } from '@/components/chat/RequestCard';
+import { IncomingRequestView } from '@/components/chat/IncomingRequestView';
 
 /**
  * Unified job chat: messages (`/chat/rooms` + the `/chat` socket) and the
@@ -111,12 +115,17 @@ export default function JobChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { account } = useAuth();
-  const { getJob } = useFundi();
+  const { getJob, proposeTechnicianToJob } = useFundi();
   const { threads } = useChat();
-  const { id: routeId, requestId, firstMessage } = useLocalSearchParams<{
+  const { technicianOffers, acceptOffer: acceptTechnicianOffer, rejectOffer, refreshJobs } = useWork();
+  const { id: routeId, requestId, firstMessage, technicianId: technicianParam, proposalError } = useLocalSearchParams<{
     id?: string;
     requestId?: string;
     firstMessage?: string;
+    /** Technician profile the client routed this request to (before assignment). */
+    technicianId?: string;
+    /** Set when routing the request to the technician failed at submission. */
+    proposalError?: string;
   }>();
   const isTechnician = account?.role === 'TECHNICIAN';
   const viewerSide = isTechnician ? 'TECHNICIAN' : 'CUSTOMER';
@@ -130,8 +139,21 @@ export default function JobChatScreen() {
   const roomSettled = chat.resolution === 'found' || chat.resolution === 'not-found';
   const jobId = room?.jobId ?? jobHint ?? (chat.resolution === 'not-found' && !routeThread ? routeId : undefined);
 
+  // A technician opening a request that was routed to them but not answered yet.
+  const incomingOffer = useMemo(() => {
+    if (!isTechnician || room) return undefined;
+    const keys = [routeId, requestId].filter(Boolean);
+    return technicianOffers.find(
+      (offer) =>
+        offer.status === 'OFFERED' &&
+        (keys.includes(offer.job.id) || keys.includes(offer.id)) &&
+        (!offer.expiresAt || new Date(offer.expiresAt).getTime() > Date.now()),
+    );
+  }, [isTechnician, room, technicianOffers, routeId, requestId]);
+
   const workspace = useJobWorkspace({
-    jobId: roomSettled ? jobId : undefined,
+    // Unassigned technicians cannot read the job yet; the offer carries the request instead.
+    jobId: roomSettled && !incomingOffer ? jobId : undefined,
     conversationId: routeThread?.id,
     roomId: room?.id,
     active: true,
@@ -145,6 +167,27 @@ export default function JobChatScreen() {
       if (!payload?.id || payload.id === room.jobId) void workspace.refresh();
     });
   }, [room, workspace.refresh]);
+
+  // Client: who the request was routed to, shown until a technician is assigned.
+  // The backend reports who an open request is routed to (or who last let it go).
+  const routing = !isTechnician && !room ? job?.activeOffer ?? job?.lastOffer ?? null : null;
+  const proposedTechnicianId =
+    !isTechnician && !room
+      ? technicianParam || routing?.technicianId || getJob(jobId ?? '')?.technician?.id
+      : undefined;
+  const [proposedTechnician, setProposedTechnician] = useState<MarketplaceTechnician | null>(null);
+  useEffect(() => {
+    if (!proposedTechnicianId) return;
+    let cancelled = false;
+    fetchPublicTechnicianById(proposedTechnicianId)
+      .then((tech) => {
+        if (!cancelled) setProposedTechnician(tech);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [proposedTechnicianId]);
 
   const lifecycle = useMemo(
     () => deriveLifecycle({ role: isTechnician ? 'technician' : 'client', job, room, conversation }),
@@ -188,13 +231,21 @@ export default function JobChatScreen() {
   const otherParty = isTechnician
     ? room?.job.customer ?? conversation?.customer ?? null
     : room?.job.technician ?? conversation?.technician ?? null;
-  const otherName = otherParty?.fullName || (isTechnician ? 'Client' : 'Technician');
+  const otherName =
+    otherParty?.fullName ||
+    (!isTechnician
+      ? job?.currentTechnician?.fullName || proposedTechnician?.name || routing?.technicianName || localJob?.technician?.name
+      : undefined) ||
+    (isTechnician ? 'Client' : 'Technician');
   const otherAvatar = !isTechnician
     ? job?.currentTechnician?.profile?.profilePictureUrl ||
+      (!room ? proposedTechnician?.avatarUrl || routing?.technicianProfilePictureUrl : undefined) ||
       localJob?.technician?.avatarUrl ||
       localJob?.technician?.photoUri ||
       undefined
     : undefined;
+  /** Technician profile to open from the header (clients only). */
+  const technicianProfileId = !isTechnician ? job?.currentTechnician?.id ?? proposedTechnician?.id : undefined;
   const otherPhone = isTechnician
     ? conversation?.customer?.phoneNumber
     : conversation?.technician?.phoneNumber ?? localJob?.technician?.phone;
@@ -471,6 +522,58 @@ export default function JobChatScreen() {
     ]);
   };
 
+  // ── Client: request routing state before a technician is assigned ──────
+  const awaitingTechnician = !isTechnician && !room && job?.status === 'OPEN' && !job.currentTechnician;
+  const requestDelivered = awaitingTechnician && job?.dispatchStatus === 'OFFERED';
+  const routedName = proposedTechnician?.name ?? routing?.technicianName ?? localJob?.technician?.name ?? 'the technician';
+  const routedAvatar = proposedTechnician?.avatarUrl ?? routing?.technicianProfilePictureUrl ?? undefined;
+  const chooseAnotherTechnician = () => {
+    if (!jobId) return;
+    router.push({
+      pathname: '/select-technician',
+      params: { jobId, service: summary?.service ?? '', description: summary?.description ?? '' },
+    });
+  };
+  const resendToSameTechnician = async () => {
+    if (!jobId || !proposedTechnicianId) return;
+    try {
+      await proposeTechnicianToJob(jobId, proposedTechnicianId);
+      await workspace.refresh();
+    } catch (err) {
+      fail('Request not sent')(err);
+    }
+  };
+
+  // ── Technician: an unanswered request routed to them ───────────────────
+  if (incomingOffer) {
+    return (
+      <>
+        <IncomingRequestView
+          offer={incomingOffer}
+          onBack={goToList}
+          onAccept={async () => {
+            await acceptTechnicianOffer(incomingOffer.id);
+            // The job is now assigned: load its chat room and negotiation.
+            chat.retryResolve();
+          }}
+          onDecline={async (reason) => {
+            await rejectOffer(incomingOffer.id, reason || 'Technician unavailable');
+            goToList();
+          }}
+          onExpired={() => void refreshJobs()}
+          onPreviewImage={setPreviewUri}
+        />
+        {previewUri ? (
+          <Modal visible transparent animationType="fade" onRequestClose={() => setPreviewUri(null)}>
+            <Pressable style={styles.fullscreenOverlay} onPress={() => setPreviewUri(null)}>
+              <Image source={{ uri: previewUri }} style={styles.fullscreenImage} resizeMode="contain" />
+            </Pressable>
+          </Modal>
+        ) : null}
+      </>
+    );
+  }
+
   // ── Loading / not found ─────────────────────────────────────────────────
   const hasAnything = Boolean(room || conversation || job);
   const stillLoading =
@@ -707,6 +810,45 @@ export default function JobChatScreen() {
           onPreviewImage={setPreviewUri}
         />
       ) : null}
+      {awaitingTechnician ? (
+        <View
+          style={[styles.dispatchCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+          testID="chat-dispatch-status"
+        >
+          <View style={styles.dispatchRow}>
+            <ProfileAvatar uri={routedAvatar} name={routedName} size={36} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.dispatchTitle, { color: colors.foreground }]}>
+                {requestDelivered
+                  ? `Request sent to ${routedName}`
+                  : proposalError
+                    ? 'Your request was not delivered'
+                    : `${routedName === 'the technician' ? 'The technician' : routedName} didn't accept`}
+              </Text>
+              <Text style={[styles.dispatchText, { color: colors.mutedForeground }]}>
+                {requestDelivered
+                  ? 'It is in their inbox now. They have a few minutes to accept; you will be notified here.'
+                  : proposalError
+                    ? proposalError
+                    : routing?.status === 'EXPIRED'
+                      ? 'The request timed out before they answered. Your booking fee still covers this job.'
+                      : routing?.status === 'REJECTED'
+                        ? 'They declined this request. Your booking fee still covers this job.'
+                        : 'The request was declined or timed out. Your booking fee still covers this job.'}
+              </Text>
+            </View>
+            {requestDelivered ? <ActivityIndicator color={colors.primary} /> : null}
+          </View>
+          {!requestDelivered ? (
+            <View style={styles.dispatchActions}>
+              {proposedTechnicianId ? (
+                <Button label="Send again" size="small" variant="outline" onPress={() => void resendToSameTechnician()} style={{ flex: 1 }} />
+              ) : null}
+              <Button label="Choose another" size="small" onPress={chooseAnotherTechnician} style={{ flex: 1 }} />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 
@@ -735,8 +877,16 @@ export default function JobChatScreen() {
       {/* Header */}
       <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 14 : insets.top + 8, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
         <BackButton onPress={goToList} />
-        <ProfileAvatar uri={otherAvatar} name={otherName} size={38} style={styles.headerAvatarWrap} testID="chat-header-avatar" />
-        <View style={styles.headerInfo}>
+        <Pressable
+          disabled={!technicianProfileId}
+          onPress={() => technicianProfileId && router.push(`/technician/${technicianProfileId}` as any)}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${otherName}'s profile`}
+          style={styles.headerIdentity}
+          testID="chat-header-identity"
+        >
+          <ProfileAvatar uri={otherAvatar} name={otherName} size={38} style={styles.headerAvatarWrap} testID="chat-header-avatar" />
+          <View style={styles.headerInfo}>
           <Text numberOfLines={1} style={[styles.headerName, { color: colors.foreground }]}>{otherName}</Text>
           <View style={styles.headerSubRow}>
             {summary?.service ? (
@@ -750,10 +900,13 @@ export default function JobChatScreen() {
                 ? 'typing…'
                 : lifecycle.isPriceAgreed && lifecycle.agreedAmount
                   ? `${lifecycle.currency} ${lifecycle.agreedAmount.toLocaleString()} agreed`
-                  : ''}
+                  : awaitingTechnician
+                    ? requestDelivered ? 'Request sent · awaiting reply' : 'Not assigned yet'
+                    : isTechnician ? 'Client' : 'Your technician'}
             </Text>
           </View>
-        </View>
+          </View>
+        </Pressable>
         <View style={styles.headerActionsRow}>
           {otherPhone ? (
             <Pressable
@@ -973,7 +1126,13 @@ export default function JobChatScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   topBar: { paddingHorizontal: 16, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1 },
+  headerIdentity: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
   headerAvatarWrap: { marginLeft: 6, marginRight: 10 },
+  dispatchCard: { borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 12 },
+  dispatchRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  dispatchTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  dispatchText: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17, marginTop: 2 },
+  dispatchActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   headerInfo: { flex: 1, justifyContent: 'center', minWidth: 0 },
   headerName: { fontFamily: 'Inter_600SemiBold', fontSize: 15 },
   headerSubRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },

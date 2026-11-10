@@ -47,6 +47,18 @@ export interface BackendBookingPayment {
   remainingValiditySeconds?: number;
 }
 
+/** Which technician a client's request was routed to, before anyone is assigned. */
+export interface BackendRequestRouting {
+  id: string;
+  status?: 'OFFERED' | 'REJECTED' | 'EXPIRED';
+  technicianId: string;
+  technicianName: string;
+  technicianProfilePictureUrl?: string | null;
+  distanceMeters?: number;
+  expiresAt?: string | null;
+  respondedAt?: string | null;
+}
+
 export interface BackendJob {
   id: string;
   service: string;
@@ -69,6 +81,10 @@ export interface BackendJob {
     technicianConfirmedAt: string | null;
   };
   dispatchStatus: 'PENDING' | 'OFFERED' | 'EXHAUSTED';
+  /** Customer view of an open job: the technician the request is waiting on. */
+  activeOffer?: BackendRequestRouting | null;
+  /** Customer view of an open job with nothing pending: who last declined or let it expire. */
+  lastOffer?: BackendRequestRouting | null;
   currentTechnician?: BackendTechnicianProfile | null;
   bookingPayment?: BackendBookingPayment | null;
   customerProgress: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
@@ -107,8 +123,11 @@ export interface TechnicianOfferItem {
   round: number;
   status: 'OFFERED' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'DROPPED' | 'CANCELLED';
   expiresAt?: string;
+  offeredAt?: string;
   respondedAt?: string | null;
   rejectionReason?: string | null;
+  /** The requesting client, when the backend includes it (older backends omit it). */
+  customer?: { id: string; fullName: string; profilePictureUrl?: string | null } | null;
   job: {
     id: string;
     service: string;

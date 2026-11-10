@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -16,6 +16,7 @@ import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 import { useChat, type ChatThread } from '@/context/ChatContext';
 import { useFundi } from '@/context/FundiContext';
 import { useAuth } from '@/context/AuthContext';
+import { useWork } from '@/context/WorkContext';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { ProfileAvatar, computeParticipantInitials } from '@/components/ui/ProfileAvatar';
@@ -65,10 +66,44 @@ export default function ChatTabScreen() {
   const router = useRouter();
   const { threadId: requestedThreadId } = useLocalSearchParams<{ threadId?: string }>();
   const { account } = useAuth();
-  const { getJob } = useFundi();
+  const { getJob, jobs } = useFundi();
   const { threads, refreshConversations, error: negotiationError } = useChat();
   const rooms = useChatRooms();
   const isTechnician = account?.role === 'TECHNICIAN';
+  const { technicianOffers, refreshJobs } = useWork();
+
+  // Re-render periodically so request countdowns stay current and expired ones drop off.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isTechnician) return;
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, [isTechnician]);
+
+  // Technicians: client requests routed to them and waiting for an answer land here first.
+  const requestRows = useMemo<RowModel[]>(() => {
+    if (!isTechnician) return [];
+    return technicianOffers
+      .filter((offer) => offer.status === 'OFFERED' && (!offer.expiresAt || new Date(offer.expiresAt).getTime() > now))
+      .map((offer) => {
+        const msLeft = offer.expiresAt ? new Date(offer.expiresAt).getTime() - now : null;
+        const minutesLeft = msLeft !== null ? Math.max(1, Math.ceil(msLeft / 60_000)) : null;
+        return {
+          key: `request-${offer.id}`,
+          name: offer.customer?.fullName?.trim() || 'New client',
+          avatarUri: offer.customer?.profilePictureUrl ?? undefined,
+          serviceName: offer.job.service,
+          snippet: truncate(`Request: ${offer.job.description}`),
+          timeLabel: formatChatTime(offer.offeredAt ?? offer.job.createdAt),
+          unreadLabel: 'New',
+          statusTag: {
+            label: minutesLeft ? `Respond within ${minutesLeft} min` : 'Awaiting your reply',
+            tone: 'warning' as const,
+          },
+          onPress: () => router.push({ pathname: '/chat/[id]', params: { id: offer.job.id, requestId: offer.job.id } }),
+        };
+      });
+  }, [isTechnician, technicianOffers, now, router]);
 
   // Deep links into the tab with a thread id open the conversation directly.
   useEffect(() => {
@@ -155,9 +190,44 @@ export default function ChatTabScreen() {
     [threads, roomJobIds, router],
   );
 
+  // Clients: paid requests that are routed to a technician but not accepted yet.
+  const sentRequestRows = useMemo<RowModel[]>(() => {
+    if (isTechnician) return [];
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return jobs
+      .filter(
+        (job) =>
+          UUID.test(job.id) &&
+          job.bookingFee?.status === 'PAID' &&
+          (job.status === 'OFFERED' || job.status === 'REQUESTED') &&
+          !roomJobIds.has(job.id),
+      )
+      .map((job) => {
+        const delivered = job.status === 'OFFERED';
+        return {
+          key: `sent-${job.id}`,
+          name: job.routedTechnician?.name || job.technician?.name || `${job.service} request`,
+          avatarUri: job.routedTechnician?.avatarUrl ?? job.technician?.avatarUrl,
+          serviceName: job.service,
+          snippet: delivered
+            ? 'Request delivered · waiting for them to accept'
+            : job.routedTechnician
+              ? 'Declined or timed out · choose a technician'
+              : 'Not sent yet · choose a technician',
+          timeLabel: formatChatTime(job.statusSince || job.createdAt),
+          unreadLabel: null,
+          statusTag: delivered
+            ? { label: 'Awaiting reply', tone: 'warning' as const }
+            : { label: 'Action needed', tone: 'sos' as const },
+          onPress: () => router.push({ pathname: '/chat/[id]', params: { id: job.id, requestId: job.id } }),
+        };
+      });
+  }, [isTechnician, jobs, roomJobIds, router]);
+
   const onRefresh = () => {
     void rooms.refresh();
     void refreshConversations();
+    if (isTechnician) void refreshJobs();
   };
 
   const tagColors = (tone: 'muted' | 'warning' | 'sos') =>
@@ -232,7 +302,12 @@ export default function ChatTabScreen() {
     </Pressable>
   );
 
-  const nothingYet = !rooms.isLoading && roomRows.length === 0 && negotiationRows.length === 0;
+  const nothingYet =
+    !rooms.isLoading &&
+    roomRows.length === 0 &&
+    negotiationRows.length === 0 &&
+    requestRows.length === 0 &&
+    sentRequestRows.length === 0;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -282,6 +357,22 @@ export default function ChatTabScreen() {
           </View>
         ) : null}
 
+        {requestRows.length > 0 ? (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.primary }]}>
+              New requests ({requestRows.length})
+            </Text>
+            <View style={styles.listWrap}>{requestRows.map(renderRow)}</View>
+          </>
+        ) : null}
+
+        {sentRequestRows.length > 0 ? (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Sent requests</Text>
+            <View style={styles.listWrap}>{sentRequestRows.map(renderRow)}</View>
+          </>
+        ) : null}
+
         {roomRows.length > 0 ? (
           <>
             <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Job chats</Text>
@@ -308,7 +399,9 @@ export default function ChatTabScreen() {
             </View>
             <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No conversations yet</Text>
             <Text style={[styles.emptySubtitle, { color: colors.mutedForeground }]}>
-              Once a technician is assigned to a job, your chat with them shows up here.
+              {isTechnician
+                ? 'When a client sends you a request, it arrives here. Stay online to receive requests.'
+                : 'Once you send a request to a technician, your conversation with them shows up here.'}
             </Text>
           </View>
         ) : null}

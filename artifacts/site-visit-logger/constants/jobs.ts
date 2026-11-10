@@ -243,6 +243,8 @@ export interface ServiceRequest {
   phoneVerificationId?: string;
   serviceCategoryId?: string;
   offerId?: string;
+  /** Before assignment: the technician the client's request is routed to (or who last let it go). */
+  routedTechnician?: { id: string; name: string; avatarUrl?: string; pending: boolean };
   events: JobEvent[];
   type: RequestType;
   bookingFee: {
