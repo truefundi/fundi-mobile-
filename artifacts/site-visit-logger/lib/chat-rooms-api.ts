@@ -1,9 +1,31 @@
 import { apiRequest, apiUpload } from '@/lib/api';
 
-export interface ChatRoomMember {
-  userId: string;
-  role: 'CUSTOMER' | 'TECHNICIAN' | 'ADMIN';
-  unreadCount?: number;
+/**
+ * Client for the job chat endpoints (`/api/v1/chat/rooms`).
+ *
+ * Job chat is the general messaging channel between a customer and the
+ * technician currently assigned to a job. It is intentionally separate from
+ * the structured price negotiation in `/api/v1/conversations`
+ * (see `lib/conversations-api.ts`).
+ *
+ * Types mirror `ChatService.roomResponse` / `ChatService.messageResponse` in
+ * the backend. Every function throws on failure so callers can surface
+ * loading, error and retry states instead of silently rendering empty data.
+ */
+
+export type ChatRoomStatus = 'ACTIVE' | 'DISABLED' | 'COMPLETED';
+export type ChatMemberRole = 'CUSTOMER' | 'TECHNICIAN' | 'ADMIN';
+export type ChatSenderRole = 'CUSTOMER' | 'TECHNICIAN' | 'ADMIN' | 'SYSTEM';
+export type ChatMessageType = 'TEXT' | 'VOICE_NOTE' | 'FILE' | 'IMAGE' | 'VIDEO' | 'SYSTEM';
+export type ChatMediaType = Exclude<ChatMessageType, 'TEXT' | 'SYSTEM'>;
+
+/** Job statuses in which the backend accepts new chat messages. */
+export const CHAT_WRITABLE_JOB_STATUSES = ['ASSIGNED', 'PAUSED'] as const;
+export const CHAT_TEXT_MAX_LENGTH = 4000;
+
+export interface ChatParticipant {
+  id: string;
+  fullName: string;
 }
 
 export interface ChatRoomJobSummary {
@@ -11,118 +33,161 @@ export interface ChatRoomJobSummary {
   status: string;
   cooperationStatus: string;
   description: string;
-  service?: string | null;
-  customer: {
-    id: string;
-    fullName: string;
-    phoneNumber?: string;
-  };
-  technician?: {
-    id: string;
-    fullName: string;
-    phoneNumber?: string;
-  } | null;
+  service: string | null;
+  customer: ChatParticipant;
+  technician: ChatParticipant | null;
+}
+
+export interface ChatRoomMember {
+  userId: string;
+  role: ChatMemberRole;
+  blockedAt: string | null;
 }
 
 export interface BackendChatRoom {
   id: string;
   jobId: string;
-  status: 'ACTIVE' | 'DISABLED' | 'COMPLETED';
+  status: ChatRoomStatus;
+  disabledAt: string | null;
+  disabledReason: string | null;
   createdAt: string;
   updatedAt: string;
   job: ChatRoomJobSummary;
+  assignment: { id: string; endedAt: string | null };
   members: ChatRoomMember[];
+  currentMember?: { blockedAt: string | null; archivedAt: string | null };
+}
+
+export interface ChatReadReceipt {
+  userId: string;
+  readAt: string;
 }
 
 export interface BackendChatMessage {
   id: string;
   roomId: string;
-  senderId: string;
-  senderRole: 'CUSTOMER' | 'TECHNICIAN' | 'ADMIN';
-  senderName?: string;
-  type: 'TEXT' | 'VOICE_NOTE' | 'FILE' | 'IMAGE' | 'VIDEO' | 'SYSTEM';
-  text?: string | null;
-  mediaUrl?: string | null;
-  mediaSizeBytes?: number | null;
-  mediaMimeType?: string | null;
+  senderId: string | null;
+  senderRole: ChatSenderRole;
+  type: ChatMessageType;
+  text: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  durationSeconds: number | null;
+  downloadUrl: string | null;
+  downloadPath: string | null;
+  isTombstone: boolean;
+  isBlocked: boolean;
+  editedAt: string | null;
+  deletedAt: string | null;
   createdAt: string;
-  updatedAt: string;
+  readBy: ChatReadReceipt[];
+  readByOtherSide: boolean;
+  readByViewer: boolean;
 }
 
-export async function listChatRooms(): Promise<BackendChatRoom[]> {
-  try {
-    return await apiRequest<BackendChatRoom[]>('/api/v1/chat/rooms', {
-      authenticated: true,
-    });
-  } catch {
-    return [];
-  }
+export interface ChatMessagePage {
+  items: BackendChatMessage[];
+  nextCursor: string | null;
 }
 
-export async function getChatRoom(roomId: string): Promise<BackendChatRoom | null> {
-  try {
-    return await apiRequest<BackendChatRoom>(`/api/v1/chat/rooms/${roomId}`, {
-      authenticated: true,
-    });
-  } catch {
-    return null;
-  }
+export interface ChatReadResult {
+  userId: string;
+  messageId: string;
+  readAt: string;
+  count: number;
 }
 
-export async function listChatRoomMessages(
+const ROOMS = '/api/v1/chat/rooms';
+
+export function listChatRooms(): Promise<BackendChatRoom[]> {
+  return apiRequest<BackendChatRoom[]>(ROOMS, { authenticated: true });
+}
+
+export function getChatRoom(roomId: string): Promise<BackendChatRoom> {
+  return apiRequest<BackendChatRoom>(`${ROOMS}/${roomId}`, { authenticated: true });
+}
+
+/** Returns one page of messages, newest first (backend order). */
+export function listChatRoomMessages(
   roomId: string,
   limit = 50,
   beforeMessageId?: string,
-): Promise<BackendChatMessage[]> {
+): Promise<ChatMessagePage> {
   const query = new URLSearchParams({ limit: String(limit) });
   if (beforeMessageId) query.append('beforeMessageId', beforeMessageId);
-
-  try {
-    return await apiRequest<BackendChatMessage[]>(`/api/v1/chat/rooms/${roomId}/messages?${query.toString()}`, {
-      authenticated: true,
-    });
-  } catch {
-    return [];
-  }
+  return apiRequest<ChatMessagePage>(`${ROOMS}/${roomId}/messages?${query.toString()}`, {
+    authenticated: true,
+  });
 }
 
-export async function sendChatRoomText(roomId: string, text: string): Promise<BackendChatMessage> {
-  return apiRequest<BackendChatMessage>(`/api/v1/chat/rooms/${roomId}/messages`, {
+export function sendChatRoomText(roomId: string, text: string): Promise<BackendChatMessage> {
+  return apiRequest<BackendChatMessage>(`${ROOMS}/${roomId}/messages`, {
     method: 'POST',
     authenticated: true,
     body: { text },
   });
 }
 
-export async function sendChatRoomMedia(
+export function sendChatRoomMedia(
   roomId: string,
-  type: 'IMAGE' | 'VIDEO' | 'FILE' | 'VOICE_NOTE',
-  fileUri: string,
-  fileName?: string,
-  mimeType?: string,
+  type: ChatMediaType,
+  file: { uri: string; name?: string; mimeType?: string },
   durationSeconds?: number,
 ): Promise<BackendChatMessage> {
   const formData = new FormData();
   formData.append('type', type);
   if (durationSeconds) formData.append('durationSeconds', String(durationSeconds));
-
   formData.append('file', {
-    uri: fileUri,
-    name: fileName || `upload_${Date.now()}`,
-    type: mimeType || (type === 'IMAGE' ? 'image/jpeg' : type === 'VIDEO' ? 'video/mp4' : 'application/octet-stream'),
-  } as any);
-
-  return apiUpload<BackendChatMessage>(`/api/v1/chat/rooms/${roomId}/messages/media`, formData);
+    uri: file.uri,
+    name: file.name || `upload_${Date.now()}`,
+    type:
+      file.mimeType ||
+      (type === 'IMAGE' ? 'image/jpeg' : type === 'VIDEO' ? 'video/mp4' : 'application/octet-stream'),
+  } as unknown as Blob);
+  return apiUpload<BackendChatMessage>(`${ROOMS}/${roomId}/messages/media`, formData);
 }
 
-export async function markChatRoomRead(roomId: string, messageId: string): Promise<{ success: boolean }> {
-  try {
-    return await apiRequest<{ success: boolean }>(`/api/v1/chat/rooms/${roomId}/read`, {
-      method: 'POST',
-      authenticated: true,
-      body: { messageId },
-    });
-  } catch {
-    return { success: false };
+export function markChatRoomRead(roomId: string, messageId: string): Promise<ChatReadResult> {
+  return apiRequest<ChatReadResult>(`${ROOMS}/${roomId}/read`, {
+    method: 'POST',
+    authenticated: true,
+    body: { messageId },
+  });
+}
+
+/** Whether the backend would accept a new message in this room right now. */
+export function isChatRoomWritable(room: BackendChatRoom): boolean {
+  return (
+    room.status === 'ACTIVE' &&
+    !room.assignment.endedAt &&
+    !room.currentMember?.blockedAt &&
+    (CHAT_WRITABLE_JOB_STATUSES as readonly string[]).includes(room.job.status)
+  );
+}
+
+/** Picks the room for the job's current assignment, falling back to the newest one. */
+export function pickRoomForJob(rooms: BackendChatRoom[], jobId: string): BackendChatRoom | undefined {
+  const forJob = rooms
+    .filter((room) => room.jobId === jobId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return forJob.find((room) => !room.assignment.endedAt && room.status === 'ACTIVE') ?? forJob[0];
+}
+
+/** Short human-readable preview for a message, used in lists and notifications. */
+export function describeChatMessage(message: BackendChatMessage): string {
+  if (message.isTombstone) return 'Message deleted';
+  if (message.isBlocked) return 'Message removed by a moderator';
+  switch (message.type) {
+    case 'IMAGE':
+      return 'Photo';
+    case 'VIDEO':
+      return 'Video';
+    case 'VOICE_NOTE':
+      return 'Voice note';
+    case 'FILE':
+      return message.fileName ? `Document · ${message.fileName}` : 'Document';
+    default:
+      return message.text?.trim() || 'Message';
   }
 }
