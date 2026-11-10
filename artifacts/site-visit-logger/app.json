@@ -33,7 +33,13 @@
       "expo-font",
       "expo-web-browser",
       "expo-image-picker",
-      "expo-location"
+      "expo-location",
+      [
+        "expo-notifications",
+        {
+          "color": "#ffffff"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

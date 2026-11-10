@@ -32,6 +32,19 @@ import {
   formatBookingFee,
 } from '@/constants/jobs';
 import { getServiceBookingFee } from '@/constants/services';
+import { inferUploadMimeType } from '@/constants/uploads';
+import { fetchJobPhoneStatus } from '@/lib/jobs-api';
+
+/** Local request media as upload parts for the job create call. */
+function requestMediaParts(uris: Array<string | undefined>, kind: 'photo' | 'video') {
+  return uris
+    .filter((uri): uri is string => Boolean(uri))
+    .map((uri, index) => {
+      const mimeType = inferUploadMimeType(uri) ?? (kind === 'photo' ? 'image/jpeg' : 'video/mp4');
+      const extension = mimeType.split('/')[1]?.replace('quicktime', 'mov') ?? (kind === 'photo' ? 'jpg' : 'mp4');
+      return { uri, mimeType, name: `${kind}_${index + 1}.${extension}` };
+    });
+}
 
 type PaymentChannel = 'MTN_MOMO' | 'AIRTEL_MONEY' | 'CARD_WALLET';
 
@@ -206,10 +219,16 @@ export default function CheckoutPaymentScreen() {
     setPaymentError(null);
     setOtpError(null);
 
-    // If phone verification not yet obtained, request phone verification code first
+    // No code yet: an account whose number is already verified needs none;
+    // otherwise send one and confirm it before paying.
     if (!phoneVerificationId) {
       setIsProcessing(true);
       try {
+        const status = await fetchJobPhoneStatus().catch(() => null);
+        if (status?.verified) {
+          await executeBookingAndCreateJob(null);
+          return;
+        }
         const req = await requestPhoneVerification();
         setPhoneVerificationId(req.verificationId);
         setIsProcessing(false);
@@ -243,9 +262,21 @@ export default function CheckoutPaymentScreen() {
     }
   };
 
-  const executeBookingAndCreateJob = async (verificationId: string) => {
+  const executeBookingAndCreateJob = async (verificationId: string | null) => {
     setIsProcessing(true);
     setPaymentError(null);
+
+    // Matching is by distance, so a request without a map position must not be
+    // sent with a made-up one. Ask the client to fix the location first.
+    const latitude = job?.locationLatitude;
+    const longitude = job?.locationLongitude;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      setIsProcessing(false);
+      setPaymentError(
+        'This request has no map location yet. Go back, set the service location (or use your current location), then pay.',
+      );
+      return;
+    }
 
     const targetRequestId = params.requestId || job!.id;
     const targetServiceCategoryId = await resolveServiceCategoryId(
@@ -263,16 +294,20 @@ export default function CheckoutPaymentScreen() {
       );
 
       // 2. Create customer job on real backend
+      // The price itself is agreed in the chat, so no amount is sent here.
+      const photos = requestMediaParts(job?.photoUris?.length ? job.photoUris : [job?.photoUri], 'photo');
+      const [video] = requestMediaParts([job?.videoUris?.[0] ?? job?.videoUri], 'video');
       const createdBackendJob = await createBackendJob({
         paymentId: bookingPayment.id,
-        phoneVerificationId: verificationId,
+        ...(verificationId ? { phoneVerificationId: verificationId } : {}),
         serviceCategoryId: targetServiceCategoryId,
         description: job?.problem || params.service || 'Service Request',
-        locationAddress: job?.locationLabel || 'Kigali, Rwanda',
-        latitude: job?.locationLatitude ?? -1.9441,
-        longitude: job?.locationLongitude ?? 30.0619,
-        offeredAmount: bookingAmount,
+        locationAddress: job?.locationLabel?.trim() || `${latitude}, ${longitude}`,
+        latitude: latitude as number,
+        longitude: longitude as number,
         requestType: job?.type === 'SOS' ? 'SOS' : 'NORMAL',
+        ...(photos.length ? { photos } : {}),
+        ...(video ? { video } : {}),
       });
 
       // 3. Route the request to the selected technician: it lands in their inbox as an
@@ -381,9 +416,24 @@ export default function CheckoutPaymentScreen() {
             {formatBookingFee(bookingAmount, bookingCurrency)}
           </Text>
           <Text style={[styles.amountDesc, { color: colors.secondary }]}>
-            Paid once to lock in your technician and unlock direct chat
+            Sends your request to the technician and opens the chat. This is not the job price.
           </Text>
         </SectionCard>
+
+        <View style={[styles.termsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.termsTitle, { color: colors.foreground }]}>How the booking fee works</Text>
+          {[
+            { icon: 'time-outline' as const, text: 'Valid for 7 days from payment. The clock pauses while a technician is working with you.' },
+            { icon: 'swap-horizontal-outline' as const, text: 'If the technician declines or does not answer, the same fee covers sending the request to someone else.' },
+            { icon: 'chatbubbles-outline' as const, text: 'You agree the job price with the technician in the chat. Agreeing a price confirms the job and uses the fee.' },
+            { icon: 'close-circle-outline' as const, text: 'You can pull out before a price is agreed and keep the remaining validity for another technician.' },
+          ].map((term) => (
+            <View key={term.text} style={styles.termRow}>
+              <Ionicons name={term.icon} size={16} color={colors.primary} />
+              <Text style={[styles.termText, { color: colors.mutedForeground }]}>{term.text}</Text>
+            </View>
+          ))}
+        </View>
 
         {paymentError && (
           <Notice tone="warning" icon="alert-circle-outline" text={paymentError} />
@@ -644,6 +694,10 @@ export default function CheckoutPaymentScreen() {
 }
 
 const styles = StyleSheet.create({
+  termsCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 10, marginTop: 4 },
+  termsTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  termRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  termText: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18 },
   screen: { flex: 1 },
   topBar: {
     paddingHorizontal: 20,

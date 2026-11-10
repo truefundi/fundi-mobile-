@@ -24,6 +24,7 @@ import { useColors } from '@/hooks/useColors';
 import { useCountdown } from '@/hooks/useCountdown';
 import { cleanAndNormalizePhone } from '@/lib/auth-api';
 import { resolveServiceCategoryId } from '@/lib/categories-api';
+import { fetchJobPhoneStatus } from '@/lib/jobs-api';
 import { notify } from '@/lib/haptics';
 
 const RESEND_COOLDOWN_MS = 60 * 1000;
@@ -95,12 +96,42 @@ export default function VerifyPhoneScreen() {
     }
   };
 
-  // Auto-send on initial load
+  // On load: an account whose number is already verified skips the code and
+  // goes straight to the booking fee. Otherwise the code is sent right away.
   useEffect(() => {
-    if (!hasRequestedInitial.current) {
-      hasRequestedInitial.current = true;
-      sendVerificationCode(phone);
-    }
+    if (hasRequestedInitial.current) return;
+    hasRequestedInitial.current = true;
+    let active = true;
+    (async () => {
+      setIsRequesting(true);
+      try {
+        const status = await fetchJobPhoneStatus();
+        const sameNumber = !params.phone || cleanAndNormalizePhone(params.phone) === cleanAndNormalizePhone(status.phoneNumber);
+        if (active && status.verified && sameNumber) {
+          const finalCategoryId = await resolveServiceCategoryId(params.service, params.categoryId);
+          router.replace({
+            pathname: '/checkout/booking-fee',
+            params: {
+              requestId: params.requestId,
+              technicianId: params.technicianId,
+              service: params.service,
+              categoryId: finalCategoryId,
+              verifiedPhone: cleanAndNormalizePhone(status.phoneNumber),
+              amount: params.amount,
+              currency: params.currency,
+            },
+          });
+          return;
+        }
+      } catch {
+        // Status unavailable: fall back to verifying with a code.
+      }
+      if (active) await sendVerificationCode(phone);
+    })();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Submit entered OTP

@@ -43,6 +43,7 @@ import { OfferCard } from '@/components/chat/OfferCard';
 import { OfferSheet, ReasonSheet } from '@/components/chat/ChatSheets';
 import { RequestCard, buildRequestSummary } from '@/components/chat/RequestCard';
 import { IncomingRequestView } from '@/components/chat/IncomingRequestView';
+import { retryJobDispatch } from '@/lib/jobs-api';
 
 /**
  * Unified job chat: messages (`/chat/rooms` + the `/chat` socket) and the
@@ -173,7 +174,7 @@ export default function JobChatScreen() {
   const routing = !isTechnician && !room ? job?.activeOffer ?? job?.lastOffer ?? null : null;
   const proposedTechnicianId =
     !isTechnician && !room
-      ? technicianParam || routing?.technicianId || getJob(jobId ?? '')?.technician?.id
+      ? routing?.technicianId || technicianParam || getJob(jobId ?? '')?.technician?.id
       : undefined;
   const [proposedTechnician, setProposedTechnician] = useState<MarketplaceTechnician | null>(null);
   useEffect(() => {
@@ -212,6 +213,7 @@ export default function JobChatScreen() {
 
   const [draft, setDraft] = useState('');
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [autoRouting, setAutoRouting] = useState(false);
   const [offerSheet, setOfferSheet] = useState<{ mode: 'offer' | 'counter'; reference?: PriceOfferItem } | null>(null);
   const [reasonFlow, setReasonFlow] = useState<{ flow: ReasonFlow; offer?: PriceOfferItem } | null>(null);
   const listRef = useRef<FlatList<TimelineItem>>(null);
@@ -350,10 +352,10 @@ export default function JobChatScreen() {
   const acceptOffer = (offer: PriceOfferItem) => {
     Alert.alert(
       'Agree on this price?',
-      `${offer.currency} ${offer.amount.toLocaleString()} becomes the agreed repair price. The booking fee is separate. Pulling out is no longer possible once you both confirm.`,
+      `${offer.currency} ${offer.amount.toLocaleString()} becomes the agreed repair price and the job is confirmed straight away. The booking fee is separate and is used up. Pulling out is no longer possible after this.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Agree', onPress: () => void workspace.acceptOffer(offer.id).catch(fail('Could not accept offer')) },
+        { text: 'Agree & confirm', onPress: () => void workspace.acceptOffer(offer.id).catch(fail('Could not accept offer')) },
       ],
     );
   };
@@ -456,7 +458,7 @@ export default function JobChatScreen() {
     },
     'deny-offer': {
       title: 'Deny offer',
-      description: 'Denying ends the price negotiation. Add a reason for the other side (optional).',
+      description: 'The negotiation stays open, so either of you can make another offer. Add a reason to help them (optional).',
       confirm: 'Deny offer',
       required: false,
     },
@@ -534,6 +536,24 @@ export default function JobChatScreen() {
       params: { jobId, service: summary?.service ?? '', description: summary?.description ?? '' },
     });
   };
+  // Fundi routes the request to the best eligible technician not asked yet.
+  const findAnotherTechnician = async () => {
+    if (!jobId) return;
+    setAutoRouting(true);
+    try {
+      await retryJobDispatch(jobId);
+      await workspace.refresh();
+    } catch (err) {
+      fail('No technician found')(err);
+    } finally {
+      setAutoRouting(false);
+    }
+  };
+  const feeValidUntil = job?.bookingPayment?.validUntil ? new Date(job.bookingPayment.validUntil) : null;
+  const feeValidityText =
+    feeValidUntil && !Number.isNaN(feeValidUntil.getTime())
+      ? `Booking fee valid until ${feeValidUntil.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.`
+      : null;
   const resendToSameTechnician = async () => {
     if (!jobId || !proposedTechnicianId) return;
     try {
@@ -821,14 +841,14 @@ export default function JobChatScreen() {
               <Text style={[styles.dispatchTitle, { color: colors.foreground }]}>
                 {requestDelivered
                   ? `Request sent to ${routedName}`
-                  : proposalError
+                  : proposalError && !routing
                     ? 'Your request was not delivered'
                     : `${routedName === 'the technician' ? 'The technician' : routedName} didn't accept`}
               </Text>
               <Text style={[styles.dispatchText, { color: colors.mutedForeground }]}>
                 {requestDelivered
                   ? 'It is in their inbox now. They have a few minutes to accept; you will be notified here.'
-                  : proposalError
+                  : proposalError && !routing
                     ? proposalError
                     : routing?.status === 'EXPIRED'
                       ? 'The request timed out before they answered. Your booking fee still covers this job.'
@@ -836,16 +856,30 @@ export default function JobChatScreen() {
                         ? 'They declined this request. Your booking fee still covers this job.'
                         : 'The request was declined or timed out. Your booking fee still covers this job.'}
               </Text>
+              {!requestDelivered && feeValidityText ? (
+                <Text style={[styles.dispatchText, { color: colors.mutedForeground }]}>{feeValidityText}</Text>
+              ) : null}
             </View>
             {requestDelivered ? <ActivityIndicator color={colors.primary} /> : null}
           </View>
           {!requestDelivered ? (
-            <View style={styles.dispatchActions}>
-              {proposedTechnicianId ? (
-                <Button label="Send again" size="small" variant="outline" onPress={() => void resendToSameTechnician()} style={{ flex: 1 }} />
-              ) : null}
-              <Button label="Choose another" size="small" onPress={chooseAnotherTechnician} style={{ flex: 1 }} />
-            </View>
+            <>
+              <Button
+                label="Let Fundi find someone"
+                size="small"
+                onPress={() => void findAnotherTechnician()}
+                loading={autoRouting}
+                disabled={autoRouting}
+                style={{ marginTop: 10 }}
+                testID="chat-auto-route"
+              />
+              <View style={styles.dispatchActions}>
+                {proposedTechnicianId ? (
+                  <Button label="Send again" size="small" variant="outline" onPress={() => void resendToSameTechnician()} disabled={autoRouting} style={{ flex: 1 }} />
+                ) : null}
+                <Button label="Choose myself" size="small" variant="outline" onPress={chooseAnotherTechnician} disabled={autoRouting} style={{ flex: 1 }} />
+              </View>
+            </>
           ) : null}
         </View>
       ) : null}

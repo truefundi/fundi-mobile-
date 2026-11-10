@@ -32,6 +32,23 @@ const LAST_STEP = STEP_NAMES.length;
 
 const PROBLEM_REQUIRED = 'Tell us what happened so we can find the right technician.';
 const ADDRESS_REQUIRED = 'Add the address where the service is needed.';
+const LOCATION_NOT_FOUND =
+  "We couldn't find this address on the map. Use your current location or choose a saved place so nearby technicians can be matched.";
+
+/** Looks up coordinates for a typed address. Returns null when it cannot be placed. */
+async function geocodeTypedAddress(address: string): Promise<{ latitude: number; longitude: number } | null> {
+  if (!address || Platform.OS === 'web') return null;
+  try {
+    const results = await Location.geocodeAsync(address);
+    const first = results?.[0];
+    if (first && Number.isFinite(first.latitude) && Number.isFinite(first.longitude)) {
+      return { latitude: first.latitude, longitude: first.longitude };
+    }
+  } catch {
+    // Geocoding is unavailable or the address is unknown; the caller asks for a location instead.
+  }
+  return null;
+}
 
 type Editing = 'service' | 'problem' | 'attached' | 'location' | null;
 
@@ -367,10 +384,23 @@ export default function RequestScreen() {
     }
     setIsSubmitting(true);
     try {
-      const selectedLocation = normalizeLocationSelection({
+      let selectedLocation = normalizeLocationSelection({
         coordinates: currentAddressCoords,
         address: address.trim(),
       });
+      // Technicians are matched by distance, so the request needs a real map
+      // position. Look the typed address up; if that fails, ask for one rather
+      // than guessing.
+      if (selectedLocation.latitude === undefined || selectedLocation.longitude === undefined) {
+        const found = await geocodeTypedAddress(address.trim());
+        if (!found) {
+          setAddressError(LOCATION_NOT_FOUND);
+          setStep(1);
+          await notify('warning');
+          return;
+        }
+        selectedLocation = { ...selectedLocation, ...found };
+      }
       const persistedPhotos = await persistRequestMedia(photos.map((photo) => ({
         uri: photo.uri,
         name: photo.name,

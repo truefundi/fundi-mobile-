@@ -157,7 +157,7 @@ export function deriveLifecycle(input: {
     headline =
       job?.dispatchStatus === 'OFFERED'
         ? 'Request delivered. Waiting for the technician to accept.'
-        : 'Not accepted yet. Send it again or choose another technician.';
+        : 'Not accepted yet. Let Fundi find someone, send it again, or choose a technician yourself.';
   } else if (!isPriceAgreed && negotiationEnded) {
     headline =
       (convStatus === 'EXPIRED' ? 'The negotiation expired.' : 'The price negotiation ended without agreement.') +
@@ -169,7 +169,7 @@ export function deriveLifecycle(input: {
     } else {
       headline = role === 'client'
         ? 'Waiting for the technician to accept your request.'
-        : 'Waiting for the client to open the price negotiation.';
+        : 'Opening the price negotiation…';
     }
   } else if (!isPriceAgreed) {
     if (offer && offer.senderRole !== viewerSide) {
@@ -177,11 +177,17 @@ export function deriveLifecycle(input: {
       headline = 'You have a price offer to review.';
     } else if (offer) {
       headline = 'Your offer is waiting for a response.';
+    } else if (conversation && offersRemaining(conversation, viewerSide) === 0) {
+      headline = role === 'client'
+        ? 'You have no offers left. Wait for the technician, or pull out to choose someone else.'
+        : 'You have no offers left. Wait for the client, or pull out to release the job.';
     } else {
       action = { kind: 'make-offer' };
-      headline = 'Propose a price to agree on the repair cost.';
+      headline = 'Propose a price. Once the other side accepts, the job is confirmed.';
     }
   } else if (!cooperationConfirmed) {
+    // Agreements now confirm the job on the backend; this covers older jobs
+    // agreed before that change.
     if (!myConfirmation) {
       action = { kind: 'confirm-cooperation' };
       headline = 'Price agreed. Confirm to lock in the job.';
@@ -193,9 +199,9 @@ export function deriveLifecycle(input: {
   } else if (!startedDone) {
     if (role === 'technician') {
       action = { kind: 'start-job' };
-      headline = 'Start the job when you arrive.';
+      headline = 'Price agreed and job confirmed. Start the job when you arrive.';
     } else {
-      headline = 'Waiting for the technician to start the job.';
+      headline = 'Price agreed and job confirmed. Waiting for the technician to start.';
     }
   } else if (role === 'technician') {
     if (technicianProgress !== 'COMPLETED') {
@@ -241,10 +247,22 @@ export function deriveLifecycle(input: {
   };
 }
 
-/** Offers each side has left (backend: 3 per side, 6 total). */
+/**
+ * Offers each side has left (backend: 3 per side, 6 total). Counted from the
+ * current technician's acceptance, since a reassigned job reopens the same
+ * conversation with fresh limits.
+ */
 export function offersRemaining(conversation: BackendConversation | null, side: 'CUSTOMER' | 'TECHNICIAN') {
   if (!conversation) return 0;
-  const mine = conversation.messages.filter((m) => m.offer?.senderRole === side).length;
+  let start = 0;
+  for (let i = conversation.messages.length - 1; i >= 0; i -= 1) {
+    const message = conversation.messages[i];
+    if (message.type === 'TECHNICIAN_RESPONSE' && message.metadata?.decision === 'ACCEPTED') {
+      start = i;
+      break;
+    }
+  }
+  const mine = conversation.messages.slice(start).filter((m) => m.offer?.senderRole === side).length;
   return Math.max(
     0,
     Math.min(CONVERSATION_MAX_OFFERS_PER_SIDE - mine, CONVERSATION_MAX_TOTAL_OFFERS - conversation.offerCount),
