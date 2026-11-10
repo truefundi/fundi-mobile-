@@ -118,6 +118,7 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="select-technician" options={{ headerShown: false }} />
         <Stack.Screen name="technician/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="checkout/verify-phone" options={{ headerShown: false }} />
         <Stack.Screen name="checkout/booking-fee" options={{ headerShown: false }} />
         <Stack.Screen name="checkout/payment" options={{ headerShown: false }} />
         <Stack.Screen name="checkout/sos-dispatch" options={{ headerShown: false }} />

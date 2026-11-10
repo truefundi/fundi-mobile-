@@ -46,6 +46,9 @@ export default function BookingFeeReviewScreen() {
     address?: string;
     lat?: string;
     lng?: string;
+    categoryId?: string;
+    phoneVerificationId?: string;
+    verifiedPhone?: string;
   }>();
 
   const job = params.requestId ? getJob(params.requestId) : undefined;
@@ -153,6 +156,7 @@ export default function BookingFeeReviewScreen() {
     if (!finalRequestId) {
       finalRequestId = createDraftRequest({
         service: serviceName,
+        serviceCategoryId: params.categoryId,
         problem: problemDesc,
         locationLabel: locationText,
         urgency: 'Today',
@@ -175,6 +179,9 @@ export default function BookingFeeReviewScreen() {
         requestId: finalRequestId,
         technicianId: technician?.id,
         service: serviceName,
+        categoryId: params.categoryId || job?.serviceCategoryId,
+        phoneVerificationId: params.phoneVerificationId,
+        verifiedPhone: params.verifiedPhone,
         amount: bookingAmount.toString(),
         currency: bookingCurrency,
       },

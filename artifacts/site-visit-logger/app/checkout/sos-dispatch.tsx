@@ -24,7 +24,8 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { useAuth } from '@/context/AuthContext';
-import { getCachedCategories } from '@/lib/categories-api';
+import { getCachedCategories, resolveServiceCategoryId } from '@/lib/categories-api';
+import { cleanAndNormalizePhone } from '@/lib/auth-api';
 import {
   toJobTechnician,
   type MarketplaceTechnician,
@@ -94,6 +95,7 @@ export default function SosDispatchScreen() {
     problem?: string;
     locationLabel?: string;
     address?: string;
+    categoryId?: string;
   }>();
 
   const targetRequestId = params.requestId || params.jobId;
@@ -261,13 +263,13 @@ export default function SosDispatchScreen() {
   const executeSosBroadcast = async (verificationId: string) => {
     setPhase('AUTHORIZING');
     try {
-      const targetServiceCategoryId =
-        activeJob?.serviceCategoryId ||
-        getCachedCategories()?.find((c) => c.label.toLowerCase().includes('emergency') || c.label.toLowerCase() === (serviceName || '').toLowerCase())?.id ||
-        getCachedCategories()?.[0]?.id ||
-        'default-category-id';
+      const targetServiceCategoryId = await resolveServiceCategoryId(
+        serviceName,
+        params.categoryId || activeJob?.serviceCategoryId,
+      );
+      const normalizedPhone = cleanAndNormalizePhone(phoneNumber);
 
-      const bookingPayment = await createBookingPayment(targetServiceCategoryId, 'SOS', phoneNumber);
+      const bookingPayment = await createBookingPayment(targetServiceCategoryId, 'SOS', normalizedPhone);
 
       const createdBackendJob = await createBackendJob({
         paymentId: bookingPayment.id,
