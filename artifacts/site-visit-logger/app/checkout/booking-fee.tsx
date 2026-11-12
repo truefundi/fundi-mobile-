@@ -53,7 +53,7 @@ export default function BookingFeeReviewScreen() {
 
   const job = params.requestId ? getJob(params.requestId) : undefined;
   const isAlreadyPaid = job?.bookingFee?.status === 'PAID';
-  const destinationChatId = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
+  const destinationChatId = job?.id || params.requestId;
 
   // Route Guard: If booking fee has already been settled, redirect to chat always
   useEffect(() => {

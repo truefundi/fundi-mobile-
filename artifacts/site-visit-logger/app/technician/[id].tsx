@@ -138,7 +138,7 @@ export default function TechnicianProfileScreen() {
     // Intercept call to navigate to payment screens if payment has already been settled
     const targetJob = finalRequestId ? getJob(finalRequestId) : undefined;
     if (targetJob?.bookingFee?.status === 'PAID') {
-      const destChat = targetJob.chatThreadId || targetJob.chatId || targetJob.id;
+      const destChat = targetJob.id;
       router.replace({
         pathname: `/chat/${destChat}` as any,
         params: { requestId: targetJob.id },

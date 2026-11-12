@@ -52,8 +52,8 @@ import { retryJobDispatch } from '@/lib/jobs-api';
  * (Technician Found → Price Agreed → Job Start → Job End) and pre-agreement
  * pull-out.
  *
- * The route id may be a chat room id, a negotiation id or a job id, with an
- * optional `requestId` job hint; all resolve to the same job.
+ * Each job has exactly one chat, opened as `/chat/<jobId>`. Older links with a
+ * chat room id or negotiation id still resolve to the same job's chat.
  *
  * Access rules: clients can only message or negotiate once the job's booking
  * fee is paid; technicians can as soon as they are assigned. Before the price
@@ -138,7 +138,13 @@ export default function JobChatScreen() {
   const chat = useChatRoom(routeId, jobHint);
   const { room } = chat;
   const roomSettled = chat.resolution === 'found' || chat.resolution === 'not-found';
-  const jobId = room?.jobId ?? jobHint ?? (chat.resolution === 'not-found' && !routeThread ? routeId : undefined);
+  // Once known, the job stays fixed for this screen so later data never swaps the chat underneath.
+  const pinnedJob = useRef<{ route?: string; jobId?: string }>({});
+  if (pinnedJob.current.route !== routeId) pinnedJob.current = { route: routeId };
+  const resolvedJobId =
+    room?.jobId ?? jobHint ?? (chat.resolution === 'not-found' && !routeThread ? routeId : undefined);
+  if (resolvedJobId && !pinnedJob.current.jobId) pinnedJob.current.jobId = resolvedJobId;
+  const jobId = pinnedJob.current.jobId ?? resolvedJobId;
 
   // A technician opening a request that was routed to them but not answered yet.
   const incomingOffer = useMemo(() => {

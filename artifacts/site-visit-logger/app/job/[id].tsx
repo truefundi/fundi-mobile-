@@ -4,7 +4,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { vibrate } from '@/lib/haptics';
 import { useFundi } from '@/context/FundiContext';
-import { useChat } from '@/context/ChatContext';
 import { BackButton } from '@/components/ui/BackButton';
 import { AdditionalWork } from '@/components/job/AdditionalWork';
 import { Arrived } from '@/components/job/Arrived';
@@ -59,7 +58,6 @@ export default function JobScreen() {
     isHydrated,
     acceptOffer,
     payBookingFee,
-    linkChatThread,
     approveQuote,
     declineQuote,
     approveAdditionalWork,
@@ -68,7 +66,6 @@ export default function JobScreen() {
     recordSettlement,
     cancelJob,
   } = useFundi();
-  const { createOrGetThread } = useChat();
   const [pending, setPending] = useState<Pending | null>(null);
 
   const job = id ? getJob(id) : undefined;
@@ -115,31 +112,10 @@ export default function JobScreen() {
     setPending(null);
   };
 
+  /** Every job has one chat, addressed by the job id. */
   const openPaidJobChat = () => {
     if (!job.technician) return;
-    const now = new Date().toISOString();
-    const threadId = job.chatThreadId ?? createOrGetThread(
-      job.technician.name,
-      'technician',
-      job.id,
-      {
-        id: job.id,
-        serviceName: job.service,
-        problem: job.problem,
-        address: job.locationLabel,
-        ...(job.locationLatitude !== undefined ? { latitude: job.locationLatitude } : {}),
-        ...(job.locationLongitude !== undefined ? { longitude: job.locationLongitude } : {}),
-        photos: job.photoUris ?? (job.photoUri ? [job.photoUri] : []),
-        videos: job.videoUris ?? (job.videoUri ? [job.videoUri] : []),
-        thumbnailUri: job.photoUris?.[0] ?? job.photoUri,
-        createdAt: job.createdAt ?? now,
-        status: 'ACCEPTED',
-      },
-      job.technician.phone,
-      job.technician.location,
-    );
-    if (!job.chatThreadId) linkChatThread(job.id, threadId);
-    router.push({ pathname: `/chat/${threadId}` as any, params: { requestId: job.id } });
+    router.push({ pathname: '/chat/[id]', params: { id: job.id } });
   };
 
   let stage: ReactNode;
@@ -186,7 +162,7 @@ export default function JobScreen() {
                   icon="arrow-forward"
                   onPress={() => {
                     if (job.bookingFee?.status === 'PAID') {
-                      const destChat = job.chatThreadId || job.chatId || job.id;
+                      const destChat = job.id;
                       router.replace({
                         pathname: `/chat/${destChat}` as any,
                         params: { requestId: job.id },
@@ -323,7 +299,7 @@ export default function JobScreen() {
                   icon="arrow-forward"
                   onPress={() => {
                     if (job.bookingFee?.status === 'PAID') {
-                      const destChat = job.chatThreadId || job.chatId || job.id;
+                      const destChat = job.id;
                       router.replace({
                         pathname: `/chat/${destChat}` as any,
                         params: { requestId: job.id },

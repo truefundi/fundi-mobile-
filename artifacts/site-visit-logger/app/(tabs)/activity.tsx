@@ -134,7 +134,7 @@ export default function ActivityScreen() {
 
   const handleOpenChat = (job: Job) => {
     if (job.chatThreadId) {
-      router.push({ pathname: `/chat/${job.chatThreadId}` as any, params: { requestId: job.id } });
+      router.push({ pathname: '/chat/[id]', params: { id: job.id } });
     } else {
       router.push('/chat');
     }

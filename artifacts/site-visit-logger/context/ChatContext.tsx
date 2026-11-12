@@ -201,9 +201,8 @@ type ChatContextValue = {
   acceptRequestThread: (threadId: string) => Promise<void>;
   endRequestThread: (threadId: string) => Promise<void>;
   /**
-   * Returns the id to navigate to (`/chat/<id>`) for a job: the existing
-   * negotiation thread when known, otherwise the job id itself, which the chat
-   * screen resolves to the job's chat room or negotiation.
+   * Returns the id to navigate to (`/chat/<id>`) for a job. Every job has
+   * exactly one chat, addressed by the job id.
    */
   createOrGetThread: (
     otherName: string,
@@ -351,10 +350,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const createOrGetThread = useCallback<ChatContextValue['createOrGetThread']>(
     (_otherName, _role, jobId) => {
-      if (!jobId) return threads[0]?.id ?? '';
-      return findThreadForJob(jobId)?.id ?? jobId;
+      if (!jobId) return threads[0]?.jobId ?? '';
+      return jobId;
     },
-    [threads, findThreadForJob],
+    [threads],
   );
 
   const value = useMemo<ChatContextValue>(

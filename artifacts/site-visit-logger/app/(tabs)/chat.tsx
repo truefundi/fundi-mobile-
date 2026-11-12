@@ -13,7 +13,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
-import { useChat, type ChatThread } from '@/context/ChatContext';
+import { useChat } from '@/context/ChatContext';
 import { useFundi } from '@/context/FundiContext';
 import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
@@ -21,7 +21,7 @@ import { AppHeader } from '@/components/ui/AppHeader';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { ProfileAvatar, computeParticipantInitials } from '@/components/ui/ProfileAvatar';
 import { getServiceIcon } from '@/lib/categories-api';
-import { describeChatMessage } from '@/lib/chat-rooms-api';
+import { describeChatMessage, pickRoomForJob } from '@/lib/chat-rooms-api';
 import { useChatRooms, type ChatRoomSummary } from '@/hooks/useChatRooms';
 
 export { computeParticipantInitials as getParticipantInitial };
@@ -80,31 +80,6 @@ export default function ChatTabScreen() {
     return () => clearInterval(timer);
   }, [isTechnician]);
 
-  // Technicians: client requests routed to them and waiting for an answer land here first.
-  const requestRows = useMemo<RowModel[]>(() => {
-    if (!isTechnician) return [];
-    return technicianOffers
-      .filter((offer) => offer.status === 'OFFERED' && (!offer.expiresAt || new Date(offer.expiresAt).getTime() > now))
-      .map((offer) => {
-        const msLeft = offer.expiresAt ? new Date(offer.expiresAt).getTime() - now : null;
-        const minutesLeft = msLeft !== null ? Math.max(1, Math.ceil(msLeft / 60_000)) : null;
-        return {
-          key: `request-${offer.id}`,
-          name: offer.customer?.fullName?.trim() || 'New client',
-          avatarUri: offer.customer?.profilePictureUrl ?? undefined,
-          serviceName: offer.job.service,
-          snippet: truncate(`Request: ${offer.job.description}`),
-          timeLabel: formatChatTime(offer.offeredAt ?? offer.job.createdAt),
-          unreadLabel: 'New',
-          statusTag: {
-            label: minutesLeft ? `Respond within ${minutesLeft} min` : 'Awaiting your reply',
-            tone: 'warning' as const,
-          },
-          onPress: () => router.push({ pathname: '/chat/[id]', params: { id: offer.job.id, requestId: offer.job.id } }),
-        };
-      });
-  }, [isTechnician, technicianOffers, now, router]);
-
   // Deep links into the tab with a thread id open the conversation directly.
   useEffect(() => {
     if (requestedThreadId) {
@@ -112,100 +87,142 @@ export default function ChatTabScreen() {
     }
   }, [requestedThreadId, router]);
 
-  const roomJobIds = useMemo(() => new Set(rooms.summaries.map((s) => s.room.jobId)), [rooms.summaries]);
+  /**
+   * One row per job. A job can be backed by a routed request, a price
+   * negotiation and one or more chat rooms (one per assignment); they are all
+   * the same chat, so they merge into a single row that always opens
+   * `/chat/<jobId>` and keeps its identity as the job moves through its stages.
+   */
+  const rows = useMemo<RowModel[]>(() => {
+    type Entry = RowModel & { at: number; pinned: boolean };
+    const entries = new Map<string, Entry>();
+    const time = (iso?: string | null) => {
+      const t = iso ? new Date(iso).getTime() : NaN;
+      return Number.isFinite(t) ? t : 0;
+    };
+    const add = (jobId: string, entry: Omit<Entry, 'key' | 'onPress'>) => {
+      if (entries.has(jobId)) return; // Sources are added richest first.
+      entries.set(jobId, {
+        ...entry,
+        key: `job-${jobId}`,
+        onPress: () => router.push({ pathname: '/chat/[id]', params: { id: jobId } }),
+      });
+    };
+    const negotiationFor = (jobId: string) =>
+      threads.find((t) => t.jobId === jobId && !t.isEnded) ?? threads.find((t) => t.jobId === jobId);
 
-  const roomRows = useMemo<RowModel[]>(
-    () =>
-      rooms.summaries.map((summary: ChatRoomSummary) => {
-        const { room, lastMessage } = summary;
-        const other = isTechnician ? room.job.customer : room.job.technician;
-        const name = other?.fullName?.trim() || (isTechnician ? 'Client' : 'Technician');
-        const job = getJob(room.jobId);
-        const avatarUri = !isTechnician
-          ? job?.technician?.avatarUrl || job?.technician?.photoUri || undefined
-          : undefined;
-        let snippet: string;
-        if (lastMessage) {
-          const mine = lastMessage.senderId === account?.id;
-          snippet = `${mine ? 'You: ' : ''}${describeChatMessage(lastMessage)}`;
-        } else {
-          snippet = room.job.description ? `Job: ${room.job.description}` : 'Say hello to start coordinating';
-        }
-        // Negotiation state for the same job, shown as a cue on the row.
-        const negotiation = threads.find((t) => t.jobId === room.jobId);
-        const pendingOffer = negotiation?.messages.find((m) => m.priceOffer?.status === 'PENDING')?.priceOffer;
-        const negotiationTag: RowModel['statusTag'] = negotiation?.agreedPrice
-          ? { label: `Agreed RWF ${negotiation.agreedPrice.toLocaleString()}`, tone: 'muted' }
-          : pendingOffer
-            ? { label: `Offer RWF ${pendingOffer.amount.toLocaleString()}`, tone: 'warning' }
-            : negotiation && !negotiation.isAccepted && !negotiation.isEnded
-              ? { label: 'Awaiting acceptance', tone: 'warning' }
-              : undefined;
-        const statusTag =
-          ROOM_STATUS_TAG[room.status] ??
-          (room.assignment.endedAt ? { label: 'Reassigned', tone: 'warning' as const } : undefined) ??
-          (job?.type === 'SOS' ? { label: 'SOS Priority', tone: 'sos' as const } : undefined) ??
-          negotiationTag;
-        return {
-          key: `room-${room.id}`,
-          name,
-          avatarUri,
-          serviceName: room.job.service ?? undefined,
-          snippet: truncate(snippet),
-          timeLabel: formatChatTime(summary.activityAt),
-          unreadLabel: summary.unreadCount > 0
-            ? summary.unreadCapped || summary.unreadCount > 99 ? '99+' : String(summary.unreadCount)
-            : null,
-          statusTag,
-          onPress: () => router.push({ pathname: '/chat/[id]', params: { id: room.id } }),
-        };
-      }),
-    [rooms.summaries, threads, isTechnician, getJob, account?.id, router],
-  );
+    // 1. Chat rooms, grouped by job: the current room speaks for the job.
+    const roomsByJob = new Map<string, ChatRoomSummary[]>();
+    for (const summary of rooms.summaries) {
+      const list = roomsByJob.get(summary.room.jobId) ?? [];
+      list.push(summary);
+      roomsByJob.set(summary.room.jobId, list);
+    }
+    for (const [jobId, summaries] of roomsByJob) {
+      const current = pickRoomForJob(summaries.map((x) => x.room), jobId);
+      const summary = summaries.find((x) => x.room.id === current?.id) ?? summaries[0];
+      const { room, lastMessage } = summary;
+      const other = isTechnician ? room.job.customer : room.job.technician;
+      const name = other?.fullName?.trim() || (isTechnician ? 'Client' : 'Technician');
+      const job = getJob(jobId);
+      const avatarUri = !isTechnician
+        ? job?.technician?.avatarUrl || job?.technician?.photoUri || undefined
+        : undefined;
+      let snippet: string;
+      if (lastMessage) {
+        const mine = lastMessage.senderId === account?.id;
+        snippet = `${mine ? 'You: ' : ''}${describeChatMessage(lastMessage)}`;
+      } else {
+        snippet = room.job.description ? `Job: ${room.job.description}` : 'Say hello to start coordinating';
+      }
+      const negotiation = negotiationFor(jobId);
+      const pendingOffer = negotiation?.messages.find((m) => m.priceOffer?.status === 'PENDING')?.priceOffer;
+      const negotiationTag: RowModel['statusTag'] = negotiation?.agreedPrice
+        ? { label: `Agreed RWF ${negotiation.agreedPrice.toLocaleString()}`, tone: 'muted' }
+        : pendingOffer
+          ? { label: `Offer RWF ${pendingOffer.amount.toLocaleString()}`, tone: 'warning' }
+          : negotiation && !negotiation.isAccepted && !negotiation.isEnded
+            ? { label: 'Awaiting acceptance', tone: 'warning' }
+            : undefined;
+      const statusTag =
+        ROOM_STATUS_TAG[room.status] ??
+        (room.assignment.endedAt ? { label: 'Reassigned', tone: 'warning' as const } : undefined) ??
+        (job?.type === 'SOS' ? { label: 'SOS Priority', tone: 'sos' as const } : undefined) ??
+        negotiationTag;
+      const unread = summaries.reduce((sum, x) => sum + x.unreadCount, 0);
+      const capped = summaries.some((x) => x.unreadCapped);
+      const at = Math.max(...summaries.map((x) => time(x.activityAt)), time(negotiation?.lastMessageTime));
+      add(jobId, {
+        name,
+        avatarUri,
+        serviceName: room.job.service ?? undefined,
+        snippet: truncate(snippet),
+        timeLabel: formatChatTime(new Date(at).toISOString()),
+        unreadLabel: unread > 0 ? (capped || unread > 99 ? '99+' : String(unread)) : null,
+        statusTag,
+        at,
+        pinned: false,
+      });
+    }
 
-  // Negotiations whose job has no chat room yet (once assigned, the job chat takes over).
-  const negotiationRows = useMemo<RowModel[]>(
-    () =>
-      threads
-        .filter((t: ChatThread) => !t.jobId || !roomJobIds.has(t.jobId))
-        .map((thread) => {
-          const request = thread.messages.find((m) => m.serviceRequest)?.serviceRequest;
-          const lastOffer = [...thread.messages].reverse().find((m) => m.priceOffer)?.priceOffer;
-          let snippet = thread.lastMessage;
-          if (thread.isEnded) snippet = 'Request closed';
-          else if (thread.agreedPrice) snippet = `Agreed price: RWF ${thread.agreedPrice.toLocaleString()}`;
-          else if (lastOffer?.status === 'PENDING') snippet = `Offer pending: ${lastOffer.currency} ${lastOffer.amount.toLocaleString()}`;
-          return {
-            key: `neg-${thread.id}`,
-            name: thread.otherParticipantName || 'Specialist',
-            avatarUri: thread.otherParticipantAvatarUrl,
-            serviceName: request?.serviceName,
-            snippet: truncate(snippet || 'Negotiation started'),
-            timeLabel: formatChatTime(thread.lastMessageTime),
-            unreadLabel: null,
-            statusTag: thread.isEnded ? { label: 'Closed', tone: 'muted' as const } : { label: 'Pricing', tone: 'warning' as const },
-            onPress: () => router.push({ pathname: '/chat/[id]', params: { id: thread.id, requestId: thread.jobId } }),
-          };
-        }),
-    [threads, roomJobIds, router],
-  );
+    // 2. Technicians: requests routed to them and waiting for an answer (pinned on top).
+    if (isTechnician) {
+      for (const offer of technicianOffers) {
+        if (offer.status !== 'OFFERED') continue;
+        if (offer.expiresAt && new Date(offer.expiresAt).getTime() <= now) continue;
+        const msLeft = offer.expiresAt ? new Date(offer.expiresAt).getTime() - now : null;
+        const minutesLeft = msLeft !== null ? Math.max(1, Math.ceil(msLeft / 60_000)) : null;
+        const at = time(offer.offeredAt ?? offer.job.createdAt);
+        add(offer.job.id, {
+          name: offer.customer?.fullName?.trim() || 'New client',
+          avatarUri: offer.customer?.profilePictureUrl ?? undefined,
+          serviceName: offer.job.service,
+          snippet: truncate(`Request: ${offer.job.description}`),
+          timeLabel: formatChatTime(new Date(at).toISOString()),
+          unreadLabel: 'New',
+          statusTag: {
+            label: minutesLeft ? `Respond within ${minutesLeft} min` : 'Awaiting your reply',
+            tone: 'warning',
+          },
+          at,
+          pinned: true,
+        });
+      }
+    }
 
-  // Clients: paid requests that are routed to a technician but not accepted yet.
-  const sentRequestRows = useMemo<RowModel[]>(() => {
-    if (isTechnician) return [];
-    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    return jobs
-      .filter(
-        (job) =>
-          UUID.test(job.id) &&
-          job.bookingFee?.status === 'PAID' &&
-          (job.status === 'OFFERED' || job.status === 'REQUESTED') &&
-          !roomJobIds.has(job.id),
-      )
-      .map((job) => {
+    // 3. Price negotiations whose job has no chat room yet.
+    for (const thread of threads) {
+      if (!thread.jobId || entries.has(thread.jobId)) continue;
+      const negotiation = negotiationFor(thread.jobId) ?? thread;
+      const request = negotiation.messages.find((m) => m.serviceRequest)?.serviceRequest;
+      const lastOffer = [...negotiation.messages].reverse().find((m) => m.priceOffer)?.priceOffer;
+      let snippet = negotiation.lastMessage;
+      if (negotiation.isEnded) snippet = 'Request closed';
+      else if (negotiation.agreedPrice) snippet = `Agreed price: RWF ${negotiation.agreedPrice.toLocaleString()}`;
+      else if (lastOffer?.status === 'PENDING') snippet = `Offer pending: ${lastOffer.currency} ${lastOffer.amount.toLocaleString()}`;
+      const at = time(negotiation.lastMessageTime);
+      add(thread.jobId, {
+        name: negotiation.otherParticipantName || 'Specialist',
+        avatarUri: negotiation.otherParticipantAvatarUrl,
+        serviceName: request?.serviceName,
+        snippet: truncate(snippet || 'Negotiation started'),
+        timeLabel: formatChatTime(new Date(at).toISOString()),
+        unreadLabel: null,
+        statusTag: negotiation.isEnded ? { label: 'Closed', tone: 'muted' } : { label: 'Pricing', tone: 'warning' },
+        at,
+        pinned: false,
+      });
+    }
+
+    // 4. Clients: paid requests that are routed but not accepted yet.
+    if (!isTechnician) {
+      const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      for (const job of jobs) {
+        if (!UUID.test(job.id) || job.bookingFee?.status !== 'PAID') continue;
+        if (job.status !== 'OFFERED' && job.status !== 'REQUESTED') continue;
         const delivered = job.status === 'OFFERED';
-        return {
-          key: `sent-${job.id}`,
+        const at = time(job.statusSince || job.createdAt);
+        add(job.id, {
           name: job.routedTechnician?.name || job.technician?.name || `${job.service} request`,
           avatarUri: job.routedTechnician?.avatarUrl ?? job.technician?.avatarUrl,
           serviceName: job.service,
@@ -214,15 +231,19 @@ export default function ChatTabScreen() {
             : job.routedTechnician
               ? 'Declined or timed out · choose a technician'
               : 'Not sent yet · choose a technician',
-          timeLabel: formatChatTime(job.statusSince || job.createdAt),
+          timeLabel: formatChatTime(new Date(at).toISOString()),
           unreadLabel: null,
-          statusTag: delivered
-            ? { label: 'Awaiting reply', tone: 'warning' as const }
-            : { label: 'Action needed', tone: 'sos' as const },
-          onPress: () => router.push({ pathname: '/chat/[id]', params: { id: job.id, requestId: job.id } }),
-        };
-      });
-  }, [isTechnician, jobs, roomJobIds, router]);
+          statusTag: delivered ? { label: 'Awaiting reply', tone: 'warning' } : { label: 'Action needed', tone: 'sos' },
+          at,
+          pinned: false,
+        });
+      }
+    }
+
+    return [...entries.values()]
+      .sort((x, y) => Number(y.pinned) - Number(x.pinned) || y.at - x.at || x.key.localeCompare(y.key))
+      .map(({ at: _at, pinned: _pinned, ...row }) => row);
+  }, [rooms.summaries, threads, technicianOffers, jobs, isTechnician, now, getJob, account?.id, router]);
 
   const onRefresh = () => {
     void rooms.refresh();
@@ -302,12 +323,7 @@ export default function ChatTabScreen() {
     </Pressable>
   );
 
-  const nothingYet =
-    !rooms.isLoading &&
-    roomRows.length === 0 &&
-    negotiationRows.length === 0 &&
-    requestRows.length === 0 &&
-    sentRequestRows.length === 0;
+  const nothingYet = !rooms.isLoading && rows.length === 0;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -357,35 +373,7 @@ export default function ChatTabScreen() {
           </View>
         ) : null}
 
-        {requestRows.length > 0 ? (
-          <>
-            <Text style={[styles.sectionTitle, { color: colors.primary }]}>
-              New requests ({requestRows.length})
-            </Text>
-            <View style={styles.listWrap}>{requestRows.map(renderRow)}</View>
-          </>
-        ) : null}
-
-        {sentRequestRows.length > 0 ? (
-          <>
-            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Sent requests</Text>
-            <View style={styles.listWrap}>{sentRequestRows.map(renderRow)}</View>
-          </>
-        ) : null}
-
-        {roomRows.length > 0 ? (
-          <>
-            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Job chats</Text>
-            <View style={styles.listWrap}>{roomRows.map(renderRow)}</View>
-          </>
-        ) : null}
-
-        {negotiationRows.length > 0 ? (
-          <>
-            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Other requests</Text>
-            <View style={styles.listWrap}>{negotiationRows.map(renderRow)}</View>
-          </>
-        ) : null}
+        {rows.length > 0 ? <View style={styles.listWrap}>{rows.map(renderRow)}</View> : null}
         {negotiationError && !threads.length ? (
           <Text style={[styles.sectionError, { color: colors.mutedForeground }]}>
             Negotiations unavailable: {negotiationError}
