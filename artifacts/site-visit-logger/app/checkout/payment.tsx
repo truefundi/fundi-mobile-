@@ -156,7 +156,7 @@ export default function CheckoutPaymentScreen() {
   const canResendOtp = resendSeconds === 0 && !isResendingOtp;
 
   const isAlreadyPaid = job?.bookingFee?.status === 'PAID';
-  const destinationChatId = job?.chatThreadId || job?.chatId || job?.id || params.requestId;
+  const destinationChatId = job?.id || params.requestId;
 
   // Route Guard: If booking fee is already settled, redirect to chat always to prevent disruptions
   useEffect(() => {

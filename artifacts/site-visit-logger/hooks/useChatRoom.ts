@@ -22,6 +22,8 @@ import { emitTyping, joinChatRoom, onChatEvent } from '@/lib/chat-socket';
 const PAGE_SIZE = 50;
 /** REST refresh interval while the realtime socket is unavailable. */
 const OFFLINE_POLL_MS = 6_000;
+/** How often a job without a chat room yet re-checks for one. */
+const ROOM_WAIT_POLL_MS = 8_000;
 const TYPING_TIMEOUT_MS = 5_000;
 
 export type ChatDeliveryState = 'sending' | 'failed';
@@ -118,42 +120,91 @@ export function useChatRoom(routeId?: string, jobIdHint?: string) {
   }, []);
 
   // ── Resolve the room and load the newest page ───────────────────────────
-  useEffect(() => {
-    if (!account) return;
-    let cancelled = false;
-    setResolution('resolving');
-    setResolveError(null);
-    (async () => {
+  // The ids identify one job's chat. Learning more about the same job (e.g. a
+  // job hint arriving after the route id) must not reset the screen, and a job
+  // without a room yet keeps checking quietly so the room appears in place once
+  // a technician is assigned.
+  const candidates = useMemo(
+    () => [...new Set([routeId, jobIdHint].filter((value): value is string => Boolean(value)))],
+    [routeId, jobIdHint],
+  );
+  const candidateKey = candidates.join('|');
+  const currentRoom = useRef<BackendChatRoom | null>(null);
+  currentRoom.current = room;
+  const resolvedOnce = useRef(false);
+  const resolveSeq = useRef(0);
+
+  const resolve = useCallback(
+    async (mode: 'initial' | 'silent') => {
+      if (!account || !candidates.length) return;
+      const seq = ++resolveSeq.current;
+      if (mode === 'initial' && !resolvedOnce.current) {
+        setResolution('resolving');
+        setResolveError(null);
+      }
       try {
         const rooms = await listChatRooms();
-        const candidates = [routeId, jobIdHint].filter((value): value is string => Boolean(value));
         const match =
           rooms.find((r) => candidates.includes(r.id)) ??
           candidates.map((jobId) => pickRoomForJob(rooms, jobId)).find(Boolean);
-        if (cancelled) return;
+        if (seq !== resolveSeq.current || !mounted.current) return;
         if (!match) {
-          setRoom(null);
-          setResolution('not-found');
+          // Keep a room we already show (a transient miss must not blank the chat).
+          if (!currentRoom.current) {
+            setRoom(null);
+            setResolution('not-found');
+          }
+          resolvedOnce.current = true;
+          return;
+        }
+        if (currentRoom.current?.id === match.id) {
+          setRoom(match);
+          setResolution('found');
+          resolvedOnce.current = true;
           return;
         }
         const page = await listChatRoomMessages(match.id, PAGE_SIZE);
-        if (cancelled) return;
+        if (seq !== resolveSeq.current || !mounted.current) return;
         setRoom(match);
         setMessages(mergeMessages([], page.items));
         setNextCursor(page.nextCursor);
         setHistoryError(null);
         lastReadRequested.current = null;
         setResolution('found');
+        resolvedOnce.current = true;
       } catch (error) {
-        if (cancelled) return;
-        setResolveError(errorMessage(error, 'Unable to open this chat.'));
-        setResolution('error');
+        if (seq !== resolveSeq.current || !mounted.current) return;
+        if (!resolvedOnce.current) {
+          setResolveError(errorMessage(error, 'Unable to open this chat.'));
+          setResolution('error');
+        }
       }
-    })();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [account, candidateKey],
+  );
+
+  useEffect(() => {
+    // Already showing this job's room: nothing to resolve.
+    const shown = currentRoom.current;
+    if (shown && candidates.some((id) => id === shown.id || id === shown.jobId)) return;
+    void resolve('initial');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolve, resolveAttempt]);
+
+  // No room yet (request not accepted): pick it up as soon as the job changes.
+  useEffect(() => {
+    if (resolution !== 'not-found') return;
+    const offJob = onChatEvent('chat:job:updated', (payload: { id?: string }) => {
+      if (!payload?.id || candidates.includes(payload.id)) void resolve('silent');
+    });
+    const timer = setInterval(() => void resolve('silent'), ROOM_WAIT_POLL_MS);
     return () => {
-      cancelled = true;
+      offJob();
+      clearInterval(timer);
     };
-  }, [account, routeId, jobIdHint, resolveAttempt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolution, resolve]);
 
   const retryResolve = useCallback(() => setResolveAttempt((n) => n + 1), []);
 

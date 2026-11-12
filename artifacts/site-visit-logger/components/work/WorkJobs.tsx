@@ -217,7 +217,7 @@ export function WorkJobs() {
   const handleChatClient = (job?: Pick<Job, 'id' | 'chatThreadId'>) => {
     setSelectedJob(null);
     if (job) {
-      router.push({ pathname: '/chat/[id]', params: { id: job.chatThreadId || job.id, requestId: job.id } });
+      router.push({ pathname: '/chat/[id]', params: { id: job.id } });
     } else {
       router.push('/chat');
     }

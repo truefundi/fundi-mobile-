@@ -76,7 +76,7 @@ export default function NotificationsScreen() {
   const openNotification = (item: (typeof notifications)[number]) => {
     if (!item.read) toggleRead(item.id);
     if (item.threadId) {
-      router.push({ pathname: `/chat/${item.threadId}` as any, params: { requestId: item.jobId } });
+      router.push({ pathname: '/chat/[id]', params: { id: item.jobId ?? item.threadId! } });
     } else if (item.jobId) {
       router.push(`/job/${item.jobId}`);
     }

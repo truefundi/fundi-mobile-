@@ -168,9 +168,9 @@ export default function SosDispatchScreen() {
   // Route guard: if already assigned and paid, go directly to chat
   useEffect(() => {
     const job = targetRequestId ? getJob(targetRequestId) : undefined;
-    if (job?.bookingFee?.status === 'PAID' && job.technician && job.chatThreadId && phase === 'REVIEW') {
+    if (job?.bookingFee?.status === 'PAID' && job.technician && phase === 'REVIEW') {
       router.replace({
-        pathname: `/chat/${job.chatThreadId}` as any,
+        pathname: `/chat/${job.id}` as any,
         params: {
           requestId: job.id,
           type: 'SOS',
@@ -303,11 +303,9 @@ export default function SosDispatchScreen() {
     notify('success');
     vibrate();
 
-    let destChatId = finalId;
-    try {
-      const convId = await openConversation(finalId);
-      destChatId = convId;
-    } catch {}
+    // The chat is always addressed by its job id.
+    const destChatId = finalId;
+    await openConversation(finalId).catch(() => undefined);
 
     setTimeout(() => {
       router.replace({
