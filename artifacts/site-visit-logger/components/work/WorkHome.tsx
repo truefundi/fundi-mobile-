@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { SwitchRow } from '@/components/ui/SwitchRow';
+import { DocumentReviewList } from '@/components/work/DocumentReviewList';
 import { WorkApplication } from '@/components/work/WorkApplication';
 import { restoreSession } from '@/lib/auth-api';
 import { useAuth } from '@/context/AuthContext';
@@ -35,81 +36,81 @@ function WorkPending() {
     }
   };
 
+  const documents = profile?.documents ?? [];
+  const deniedCount = documents.filter((document) => document.status === 'DENIED').length;
+
   return (
-    <View style={[styles.statusCard, { backgroundColor: colors.warningMuted }]}>
-      <Feather name="clock" size={26} color={colors.warning} />
-      <Text style={[styles.title, { color: colors.foreground }]}>Application & Trades under review</Text>
-      <Text style={[styles.body, { color: colors.mutedForeground }]}>
-        Your application is waiting for an administrator to review your details and trades.
-      </Text>
+    <View style={styles.screen}>
+      <View style={[styles.statusCard, { backgroundColor: deniedCount ? colors.destructiveMuted : colors.warningMuted }]}>
+        <Feather name={deniedCount ? 'alert-circle' : 'clock'} size={26} color={deniedCount ? colors.destructive : colors.warning} />
+        <Text style={[styles.title, { color: colors.foreground }]}>
+          {deniedCount
+            ? `${deniedCount === 1 ? 'One document needs' : `${deniedCount} documents need`} a new file`
+            : 'Application & Trades under review'}
+        </Text>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          {deniedCount
+            ? 'Read the reviewer note and replace just that document. Everything else stays as you submitted it.'
+            : 'Your application is waiting for an administrator to review your details and trades.'}
+        </Text>
       
-      {profile?.submittedAt ? (
-        <Text style={[styles.body, { color: colors.mutedForeground }]}>
-          Submitted {new Date(profile.submittedAt).toLocaleString()}
-        </Text>
-      ) : null}
-      {profile?.fullName ? (
-        <Text style={[styles.body, { color: colors.mutedForeground }]}>
-          {profile.fullName} • {profile.phoneNumber}
-        </Text>
-      ) : null}
-      {profile?.baseAddress ? (
-        <Text style={[styles.body, { color: colors.mutedForeground }]}>{profile.baseAddress}</Text>
-      ) : null}
-
-      <Text style={[styles.body, styles.documentTitle, { color: colors.foreground, marginTop: 12 }]}>
-        Submitted Trades:
-      </Text>
-      {profile?.serviceExperiences?.map((experience, index) => {
-        const statusColor = 
-          experience.status === 'APPROVED' ? colors.success :
-          experience.status === 'DENIED' || experience.status === 'SUSPENDED' ? colors.destructive :
-          colors.warning;
-
-        return (
-          <View key={`${experience.trade}-${index}`} style={styles.documentLine}>
-            <Text style={[styles.body, { color: colors.foreground }]}>
-              • {experience.trade || experience.customName} ({experience.yearsOfExperience} yrs)
-            </Text>
-            <Text style={[styles.body, { color: statusColor, fontFamily: 'Inter_600SemiBold' }]}>
-              Status: {experience.status ?? 'PENDING'}
-              {experience.reviewNote ? ` — ${experience.reviewNote}` : ''}
-            </Text>
-          </View>
-        );
-      })}
-
-      <Text style={[styles.body, styles.documentTitle, { color: colors.foreground, marginTop: 12 }]}>
-        Documents:
-      </Text>
-      {profile?.documents?.map((document) => (
-        <View key={document.id} style={styles.documentLine}>
-          <Text style={[styles.body, styles.documentTitle, { color: colors.foreground }]}>{document.title}</Text>
+        {profile?.submittedAt ? (
           <Text style={[styles.body, { color: colors.mutedForeground }]}>
-            {document.status.replace(/_/g, ' ')}{document.reviewNote ? ` — ${document.reviewNote}` : ''}
+            Submitted {new Date(profile.submittedAt).toLocaleString()}
           </Text>
-        </View>
-      ))}
+        ) : null}
+        {profile?.fullName ? (
+          <Text style={[styles.body, { color: colors.mutedForeground }]}>
+            {profile.fullName} • {profile.phoneNumber}
+          </Text>
+        ) : null}
+        {profile?.baseAddress ? (
+          <Text style={[styles.body, { color: colors.mutedForeground }]}>{profile.baseAddress}</Text>
+        ) : null}
 
-      {applicationError || retryError ? (
-        <View style={styles.retryContainer}>
-          <Text style={[styles.body, { color: colors.destructive }]}>{retryError ?? applicationError}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Retry loading application"
-            accessibilityState={{ disabled: retrying, busy: retrying }}
-            disabled={retrying}
-            onPress={() => void retry()}
-          >
-            <Text style={[styles.body, styles.retry, { color: colors.primary }]}>{retrying ? 'Retrying…' : 'Retry'}</Text>
-          </Pressable>
-        </View>
-      ) : null}
+        <Text style={[styles.body, styles.documentTitle, { color: colors.foreground, marginTop: 12 }]}>
+          Submitted Trades:
+        </Text>
+        {profile?.serviceExperiences?.map((experience, index) => {
+          const statusColor = 
+            experience.status === 'APPROVED' ? colors.success :
+            experience.status === 'DENIED' || experience.status === 'SUSPENDED' ? colors.destructive :
+            colors.warning;
+
+          return (
+            <View key={`${experience.trade}-${index}`} style={styles.documentLine}>
+              <Text style={[styles.body, { color: colors.foreground }]}>
+                • {experience.trade || experience.customName} ({experience.yearsOfExperience} yrs)
+              </Text>
+              <Text style={[styles.body, { color: statusColor, fontFamily: 'Inter_600SemiBold' }]}>
+                Status: {experience.status ?? 'PENDING'}
+                {experience.reviewNote ? ` — ${experience.reviewNote}` : ''}
+              </Text>
+            </View>
+          );
+        })}
+
+        {applicationError || retryError ? (
+          <View style={styles.retryContainer}>
+            <Text style={[styles.body, { color: colors.destructive }]}>{retryError ?? applicationError}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading application"
+              accessibilityState={{ disabled: retrying, busy: retrying }}
+              disabled={retrying}
+              onPress={() => void retry()}
+            >
+              <Text style={[styles.body, styles.retry, { color: colors.primary }]}>{retrying ? 'Retrying…' : 'Retry'}</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+      <DocumentReviewList documents={documents} />
     </View>
   );
 }
 
-function WorkRejected() {
+function WorkRejected({ onlyDocuments }: { onlyDocuments: boolean }) {
   const colors = useColors();
   const { profile } = useWork();
 
@@ -118,10 +119,12 @@ function WorkRejected() {
       <Feather name="alert-circle" size={26} color={colors.destructive} />
       <Text style={[styles.title, { color: colors.foreground }]}>Application needs changes</Text>
       <Text style={[styles.body, { color: colors.mutedForeground }]}>
-        Review the feedback on your documents or specific trades, update your details, then retry your submission.
+        {onlyDocuments
+          ? 'Replace the documents marked below. Each one goes back to review as soon as you send it.'
+          : 'Review the feedback on your documents or specific trades, update your details, then retry your submission.'}
       </Text>
 
-      {profile?.rejectionFeedback ? (
+      {profile?.rejectionFeedback && !onlyDocuments ? (
         <View style={[styles.feedbackBox, { backgroundColor: colors.card, borderColor: colors.destructive }]}>
           <Text style={[styles.feedbackTitle, { color: colors.destructive }]}>Admin Review Feedback:</Text>
           <Text style={[styles.body, { color: colors.foreground, textAlign: 'left', marginTop: 4 }]}>
@@ -136,11 +139,6 @@ function WorkRejected() {
         </Text>
       ))}
 
-      {profile?.documents?.filter((document) => document.status === 'DENIED').map((document) => (
-        <Text key={`doc-err-${document.id}`} style={[styles.body, { color: colors.destructive, marginTop: 4 }]}>
-          {document.title}{document.reviewNote ? ` — ${document.reviewNote}` : ''}
-        </Text>
-      ))}
     </View>
   );
 }
@@ -173,6 +171,33 @@ function WorkApproved() {
   );
 }
 
+function WorkRejectedHome() {
+  const colors = useColors();
+  const { profile } = useWork();
+  const [editAll, setEditAll] = useState(false);
+  const documents = profile?.documents ?? [];
+  const deniedDocuments = documents.some((document) => document.status === 'DENIED');
+  const deniedTrades = profile?.serviceExperiences?.some(
+    (experience) => experience.status === 'DENIED' || experience.status === 'SUSPENDED',
+  );
+  // Denied documents alone are fixed one by one; the full form is for anything else.
+  const onlyDocuments = deniedDocuments && !deniedTrades;
+  const showForm = !onlyDocuments || editAll;
+
+  return (
+    <View style={styles.screen}>
+      <WorkRejected onlyDocuments={onlyDocuments} />
+      <DocumentReviewList documents={documents} />
+      {onlyDocuments && !editAll ? (
+        <Pressable accessibilityRole="button" onPress={() => setEditAll(true)} testID="edit-full-application">
+          <Text style={[styles.body, styles.retry, { color: colors.primary }]}>Change other application details</Text>
+        </Pressable>
+      ) : null}
+      {showForm ? <WorkApplication /> : null}
+    </View>
+  );
+}
+
 /** Technician verification is server-owned; mock same-device jobs are not shown in working mode. */
 export function WorkHome(_props: { query?: string }) {
   const { status, submissionFailed } = useWork();
@@ -181,14 +206,7 @@ export function WorkHome(_props: { query?: string }) {
   
   if (isWorkPending(status)) return <WorkPending />;
   
-  if (isWorkRejected(status)) {
-    return (
-      <View style={styles.screen}>
-        <WorkRejected />
-        <WorkApplication />
-      </View>
-    );
-  }
+  if (isWorkRejected(status)) return <WorkRejectedHome />;
   
   if (isWorkVerified(status)) return <WorkApproved />;
   
