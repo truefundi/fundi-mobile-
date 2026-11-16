@@ -130,6 +130,9 @@ type ApiTechnicianProfile = {
 
 type ApiTechnicianDocument = NonNullable<WorkProfile['documents']>[number];
 
+/** A file picked on the device for a document upload. */
+export type DocumentFile = { uri: string; name?: string; size?: number; mimeType?: string };
+
 function statusFromApi(status: ApiTechnicianProfile['verificationStatus']): WorkStatus {
   if (status === 'APPROVED') return 'verified';
   if (status === 'REJECTED') return 'rejected';
@@ -154,11 +157,9 @@ function mapProfile(
     reviewNote: service.reviewNote ?? null,
   }));
 
-  // Rejection feedback note extraction from denied documents or denied experiences
-  const deniedDoc = documents.find((d) => d.status === 'DENIED');
+  // General feedback only; notes on denied documents are shown on each document.
   const deniedExp = experiences.find((e) => e.status === 'DENIED' || e.status === 'SUSPENDED');
   const rejectionFeedback =
-    deniedDoc?.reviewNote ??
     deniedExp?.reviewNote ??
     (profile.verificationStatus === 'REJECTED' ? (local?.rejectionFeedback ?? 'Application was not approved.') : null);
 
@@ -327,6 +328,8 @@ type WorkContextValue = {
   submissionFailed: boolean;
   refreshApplication: () => Promise<void>;
   apply: (profile: TechnicianApplication) => Promise<void>;
+  /** Replaces one denied document with a new file and sends it back to review. */
+  resubmitDocument: (documentId: string, file: DocumentFile) => Promise<void>;
   offers: Job[];
   technicianOffers: TechnicianOfferItem[];
   mine: Job[];
@@ -804,8 +807,12 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     [storageKey],
   );
 
+  /** Uploads in flight; background refreshes wait so they never see a half-finished submission. */
+  const uploadsInFlight = useRef(0);
+
   const refreshApplication = useCallback(async () => {
     if (!storageKey) return;
+    if (uploadsInFlight.current > 0) return;
     if (account?.role !== 'TECHNICIAN' && !isWorkPending(state.status)) {
       setState((current) => ({ ...current, status: 'none' }));
       return;
@@ -817,8 +824,10 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       const documents = await apiRequest<ApiTechnicianDocument[]>('/api/v1/technicians/profile/documents', {
         authenticated: true,
       });
+      if (uploadsInFlight.current > 0) return;
       setState((current) => {
-        const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID' && document.status !== 'DENIED');
+        // A denied ID is replaced on its own from the document list; only a missing one needs the form.
+        const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID');
         const applicationNeedsFiles = !hasNationalId;
         const nextStatus = statusFromApi(serverProfile.verificationStatus);
         const nextMode = isWorkVerified(nextStatus) ? 'working' : current.mode;
@@ -965,16 +974,16 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           ...application,
           submittedAt: state.profile?.submittedAt ?? new Date().toISOString(),
         };
+        // The screen keeps showing the form (with its progress) until every upload
+        // has finished; only then does it switch to the review status in one step.
         let savedState: Stored = {
           ...state,
-          status: 'PENDING_REVIEW',
-          mode: 'working',
           profile: localDraft,
           applicationError: null,
           submissionFailed: false,
         };
-        setState(savedState);
         if (targetStorageKey) await AsyncStorage.setItem(targetStorageKey, serializeStored(savedState));
+        uploadsInFlight.current += 1;
 
         try {
           const profilePictureMimeType = application.profilePictureUri && !/^https?:\/\//i.test(application.profilePictureUri)
@@ -1047,14 +1056,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             });
           }
 
-          savedState = {
-            ...savedState,
-            status: 'PENDING_REVIEW',
-            mode: 'working',
-            profile: mapProfile(serverProfile, [], localDraft),
-          };
-          setState(savedState);
-          if (storageKey) await AsyncStorage.setItem(storageKey, serializeStored(savedState));
+          savedState = { ...savedState, profile: mapProfile(serverProfile, [], localDraft) };
 
           if (application.profilePictureUri && !serverProfile.profilePictureUrl) {
             const form = new FormData();
@@ -1070,42 +1072,46 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           const documents = await apiRequest<ApiTechnicianDocument[]>('/api/v1/technicians/profile/documents', {
             authenticated: true,
           });
-          const documentExists = (type: ApiTechnicianDocument['type'], title: string) =>
-            documents.some((document) => document.type === type && document.title === title && document.status !== 'DENIED');
-          const removeDeniedDocument = async (type: ApiTechnicianDocument['type'], title: string) => {
-            const denied = documents.find((document) => document.type === type && document.title === title && document.status === 'DENIED');
-            if (denied) {
-              await apiRequest(`/api/v1/technicians/profile/documents/${denied.id}`, {
-                method: 'DELETE',
-                authenticated: true,
-              });
-            }
-          };
+          const findDocument = (type: ApiTechnicianDocument['type'], titles: string[]) =>
+            documents.find((document) => document.type === type && titles.includes(document.title) && document.status !== 'DENIED') ??
+            documents.find((document) => document.type === type && titles.includes(document.title));
+          const isRemote = (uri: string) => /^https?:\/\//i.test(uri);
 
-          if (!documentExists('NATIONAL_ID', 'National ID card') && !documentExists('NATIONAL_ID', 'National ID')) {
-            await removeDeniedDocument('NATIONAL_ID', 'National ID card');
-            await removeDeniedDocument('NATIONAL_ID', 'National ID');
+          const nationalId = findDocument('NATIONAL_ID', ['National ID card', 'National ID']);
+          if (!nationalId || (nationalId.status === 'DENIED' && !isRemote(application.idPhotoUri))) {
             const form = new FormData();
-            form.append('type', 'NATIONAL_ID');
-            form.append('title', 'National ID card');
+            if (!nationalId) {
+              form.append('type', 'NATIONAL_ID');
+              form.append('title', 'National ID card');
+            }
             await appendLocalFile(form, application.idPhotoUri, 'national-id', idPhotoMimeType);
-            await apiUpload('/api/v1/technicians/profile/documents', form);
+            await apiUpload(
+              nationalId ? `/api/v1/technicians/profile/documents/${nationalId.id}` : '/api/v1/technicians/profile/documents',
+              form,
+              nationalId ? 'PATCH' : 'POST',
+            );
           }
 
           for (const [index, uri] of application.certificateUris.entries()) {
             const title = `Certificate ${index + 1}`;
-            if (documentExists('CERTIFICATE', title)) continue;
-            await removeDeniedDocument('CERTIFICATE', title);
+            const existing = findDocument('CERTIFICATE', [title]);
+            if (existing && (existing.status !== 'DENIED' || isRemote(uri))) continue;
             const experience = experiences[Math.min(index, experiences.length - 1)];
             const mimeType = certificateMimeTypes[index];
             if (!mimeType) throw new Error(`Choose Certificate ${index + 1} again before uploading.`);
             const form = new FormData();
-            form.append('type', 'CERTIFICATE');
-            form.append('title', title);
-            form.append('certificateType', 'TVET_CERTIFICATE');
-            form.append('customCategoryName', experience?.customName || 'General');
+            if (!existing) {
+              form.append('type', 'CERTIFICATE');
+              form.append('title', title);
+              form.append('certificateType', 'TVET_CERTIFICATE');
+              form.append('customCategoryName', experience?.customName || 'General');
+            }
             await appendLocalFile(form, uri, `certificate-${index + 1}`, mimeType);
-            await apiUpload('/api/v1/technicians/profile/documents', form);
+            await apiUpload(
+              existing ? `/api/v1/technicians/profile/documents/${existing.id}` : '/api/v1/technicians/profile/documents',
+              form,
+              existing ? 'PATCH' : 'POST',
+            );
           }
 
           const [updatedProfile, updatedDocuments] = await Promise.all([
@@ -1136,7 +1142,44 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           setState(failedState);
           if (storageKey) await AsyncStorage.setItem(storageKey, serializeStored(failedState));
           throw error;
+        } finally {
+          uploadsInFlight.current -= 1;
         }
+      },
+      resubmitDocument: async (documentId, file) => {
+        const current = state.profile?.documents?.find((document) => document.id === documentId);
+        if (!current) throw new Error('This document is no longer on your application. Pull to refresh.');
+        if (current.status !== 'DENIED') throw new Error('Only documents that need changes can be replaced.');
+        const label = current.type === 'NATIONAL_ID' ? 'Your ID document' : current.title;
+        const mimeType = validateApplicationFile(label, file.uri, file.size, file.mimeType, true);
+        const form = new FormData();
+        await appendLocalFile(form, file.uri, current.type === 'NATIONAL_ID' ? 'national-id' : 'certificate', mimeType);
+
+        uploadsInFlight.current += 1;
+        try {
+          const updated = await apiUpload<ApiTechnicianDocument>(
+            `/api/v1/technicians/profile/documents/${documentId}`,
+            form,
+            'PATCH',
+          );
+          // Show the new status straight away; the application status follows from the server.
+          update((prev) => {
+            if (!prev.profile) return prev;
+            const documents = (prev.profile.documents ?? []).map((document) =>
+              document.id === documentId ? { ...document, ...updated } : document,
+            );
+            const stillDenied = documents.some((document) => document.status === 'DENIED');
+            return {
+              ...prev,
+              status: isWorkRejected(prev.status) && !stillDenied ? 'PENDING_REVIEW' : prev.status,
+              profile: { ...prev.profile, documents },
+              applicationError: null,
+            };
+          });
+        } finally {
+          uploadsInFlight.current -= 1;
+        }
+        await refreshApplication().catch(() => undefined);
       },
       offers: technicianOffers.map(mapOfferToJob),
       technicianOffers,
