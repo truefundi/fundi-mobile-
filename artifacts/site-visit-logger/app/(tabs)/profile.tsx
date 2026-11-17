@@ -2,9 +2,9 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter, type Href } from 'expo-router';
 import React, { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { AppHeader } from '@/components/ui/AppHeader';
 import { ModeSlider } from '@/components/ui/ModeSlider';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { formatPhone, initialsOf } from '@/constants/auth';
@@ -45,6 +45,9 @@ export default function ProfileScreen() {
   const colors = useColors();
   const { isDark, toggleTheme } = useTheme();
   const bottomPadding = useTabScreenPadding();
+  // No app header here, so the page clears the status bar itself.
+  const insets = useSafeAreaInsets();
+  const topInset = Platform.OS === 'web' ? 0 : insets.top;
   const router = useRouter();
   const { jobs } = useFundi();
   const { mode, setMode, status, profile, mine, done, earnings } = useWork();
@@ -119,9 +122,8 @@ export default function ProfileScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <AppHeader />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: bottomPadding }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: topInset + 18, paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
       >
       <PageHeading eyebrow="Your Fundi account" title="Profile" />
