@@ -11,8 +11,9 @@ import {
   View,
 } from 'react-native';
 import { formatMoney, getServiceBookingFee, isClosed, repairTotal } from '@/constants/jobs';
-import { searchServices, SERVICES, type Service } from '@/constants/services';
-import { useCategories } from '@/lib/categories-api';
+import type { Service } from '@/constants/services';
+import { ActiveFilterChips, ServiceFilterSheet, ServiceSearchBar } from '@/components/search/ServiceSearch';
+import { useServiceSearch } from '@/hooks/useServiceSearch';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FloatingActionGroup } from '@/components/ui/FloatingActionGroup';
@@ -69,7 +70,8 @@ export default function HomeScreen({
   // Only a verified worker has a job list to search.
   const searchingJobs = mode === 'working' && isWorkVerified(status);
   const [jobQuery, setJobQuery] = useState('');
-  const [serviceQuery, setServiceQuery] = useState('');
+  const search = useServiceSearch();
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const { activeJob, recent } = useMemo(() => {
     const open = jobs.filter((job) => !isClosed(job.status));
@@ -79,11 +81,10 @@ export default function HomeScreen({
     };
   }, [jobs]);
 
-  const { categories, search: searchCategories } = useCategories();
-  const allServices = categories.length > 0 ? categories : SERVICES;
-  const isSearching = serviceQuery.trim().length > 0;
-  // A search looks through every service, not just the six on show.
-  const shownServices = isSearching ? searchCategories(serviceQuery) : allServices.slice(0, HOME_SERVICE_COUNT);
+  const isSearching = search.isFiltering;
+  const hasQuery = search.query.trim().length > 0;
+  // A search or filter looks through every service, not just the six on show.
+  const shownServices = isSearching ? search.results : search.services.slice(0, HOME_SERVICE_COUNT);
 
   // Compute visibility based on mode, active job state, search input, and explicit overrides
   const { hideBot: computedHideBot, hideSos: computedHideSos } = useFloatingActionVisibility({
@@ -139,41 +140,16 @@ export default function HomeScreen({
             <Text style={[styles.searchText, { color: colors.mutedForeground }]}>Find a technician</Text>
           </Pressable>
         ) : (
-          <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: isSearching ? colors.primary : colors.border }]}>
-            <Feather name="search" size={19} color={isSearching ? colors.primary : colors.mutedForeground} />
-            <TextInput
-              accessibilityLabel="Search services"
-              testID="home-search-input"
-              value={serviceQuery}
-              onChangeText={setServiceQuery}
-              placeholder="Search a service, e.g. leak, wiring"
-              placeholderTextColor={colors.mutedForeground}
-              returnKeyType="search"
-              autoCorrect={false}
-              style={[styles.searchInput, { color: colors.foreground }]}
+          <>
+            <ServiceSearchBar
+              value={search.query}
+              onChange={search.setQuery}
+              filterCount={search.filterCount}
+              onOpenFilters={() => setFiltersOpen(true)}
+              testID="home-search"
             />
-            {isSearching ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Clear search"
-                testID="home-search-clear"
-                onPress={() => setServiceQuery('')}
-                hitSlop={8}
-                style={styles.clearButton}
-              >
-                <Feather name="x-circle" size={18} color={colors.mutedForeground} />
-              </Pressable>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Browse all services"
-              testID="home-search-button"
-              onPress={() => router.navigate('/services')}
-              style={({ pressed }) => [styles.searchFilter, { backgroundColor: colors.secondary, opacity: pressed ? 0.7 : 1 }]}
-            >
-              <Feather name="sliders" size={16} color={colors.primary} />
-            </Pressable>
-          </View>
+            <ActiveFilterChips filters={search.filters} groups={search.groups} onChange={search.setFilters} />
+          </>
         )}
         {mode === 'working' ? (
           <WorkHome query={jobQuery} />
@@ -209,7 +185,11 @@ export default function HomeScreen({
 
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.foreground }]} numberOfLines={1}>
-                {isSearching ? `Results for ${serviceQuery.trim()}` : 'What service do you need?'}
+                {hasQuery
+                  ? `Results for "${search.query.trim()}"`
+                  : isSearching
+                    ? `${shownServices.length} service${shownServices.length === 1 ? '' : 's'}`
+                    : 'What service do you need?'}
               </Text>
               <Pressable onPress={() => router.navigate('/services')} testID="see-all-services-button" hitSlop={10}>
                 <Text style={[styles.seeAll, { color: colors.primary }]}>See all</Text>
@@ -218,8 +198,12 @@ export default function HomeScreen({
             {shownServices.length === 0 ? (
               <EmptyState
                 icon="search"
-                title="No service matches that"
-                text="Describe the problem in a general request and we will match you with the right technician."
+                title={search.filterCount ? 'No service matches these filters' : 'No service matches that'}
+                text={
+                  search.filterCount
+                    ? 'Loosen a filter, or describe the problem in a general request and we will match you with the right technician.'
+                    : 'Describe the problem in a general request and we will match you with the right technician.'
+                }
                 action={{ label: 'Start a general request', onPress: () => requestService('General Maintenance'), testID: 'home-search-general-request' }}
               />
             ) : (
@@ -291,6 +275,14 @@ export default function HomeScreen({
         onPressBot={onPressBot}
         onPressSos={onPressSos}
       />
+      <ServiceFilterSheet
+        visible={filtersOpen}
+        filters={search.filters}
+        groups={search.groups}
+        countFor={search.countFor}
+        onApply={search.setFilters}
+        onClose={() => setFiltersOpen(false)}
+      />
     </View>
   );
 }
@@ -320,8 +312,6 @@ const styles = StyleSheet.create({
   // minWidth 0 lets the field shrink; otherwise it pushes the buttons off-screen.
   searchInput: { flex: 1, minWidth: 0, fontFamily: 'Inter_500Medium', fontSize: 14, minHeight: 48 },
   searchText: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 14 },
-  clearButton: { padding: 4 },
-  searchFilter: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   emergency: { minHeight: 112, borderRadius: 18, padding: 17, flexDirection: 'row', alignItems: 'center', gap: 12, overflow: 'hidden' },
   emergencyCopy: { flex: 1 },
   emergencyKicker: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.3 },
