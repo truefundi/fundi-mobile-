@@ -879,7 +879,7 @@ export function WorkApplication() {
           {/* Trades & Experience Card */}
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.cardHeaderRow}>
-              <View>
+              <View style={styles.cardHeaderText}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>Trades & Skills</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Select the services you offer and your experience.
@@ -920,8 +920,13 @@ export function WorkApplication() {
                   ) : null}
                 </View>
 
-                {/* Trade Selector */}
-                <View style={styles.rowWrap}>
+                {/* Trade Selector: one row that scrolls sideways, like the service picker on a request. */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.tradeScroll}
+                  contentContainerStyle={styles.tradeScrollContent}
+                >
                   {TRADES.map((trade) => {
                     const isSelected = exp.trade === trade;
                     return (
@@ -948,7 +953,7 @@ export function WorkApplication() {
                       </Pressable>
                     );
                   })}
-                </View>
+                </ScrollView>
 
                 {exp.trade === 'Others' ? (
                   <TextInput
@@ -970,8 +975,8 @@ export function WorkApplication() {
 
                 {/* Experience Stepper */}
                 <View style={styles.yearsRow}>
-                  <Text style={[styles.label, { color: colors.foreground, marginTop: 0 }]}>
-                    Years of experience:
+                  <Text style={[styles.label, styles.yearsLabel, { color: colors.foreground, marginTop: 0 }]}>
+                    Years of experience
                   </Text>
                   <View style={styles.stepperControl}>
                     <Pressable
@@ -1271,7 +1276,7 @@ export function WorkApplication() {
           {/* TVET & Trade Certificates Card (OPTIONAL) */}
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.cardHeaderRow}>
-              <View>
+              <View style={styles.cardHeaderText}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>
                   Trade Certificates
                 </Text>
@@ -1393,9 +1398,8 @@ export function WorkApplication() {
 }
 
 const styles = StyleSheet.create({
+  // Home already gives the form its 20pt screen gutter; no second inset here.
   container: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
     paddingBottom: 40,
     gap: 16,
   },
@@ -1459,11 +1463,17 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 10,
   },
+  // The title shrinks and wraps so the button beside it always stays inside the card.
   cardHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    gap: 10,
     marginBottom: 4,
+  },
+  cardHeaderText: {
+    flex: 1,
+    minWidth: 0,
   },
   cardTitle: {
     fontFamily: 'Inter_700Bold',
@@ -1518,6 +1528,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   smallBtn: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -1544,6 +1555,14 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
+  tradeScroll: {
+    flexGrow: 0,
+    marginTop: 4,
+  },
+  tradeScrollContent: {
+    gap: 8,
+    paddingVertical: 2,
+  },
   chip: {
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -1555,6 +1574,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   addTradeBtn: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -1583,16 +1603,25 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_600SemiBold',
     fontSize: 13,
   },
+  // On narrow cards the stepper drops under the label instead of overflowing the card.
   yearsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
+    rowGap: 8,
+    columnGap: 10,
     marginTop: 6,
   },
+  yearsLabel: {
+    flexShrink: 1,
+  },
   stepperControl: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
+    marginLeft: 'auto',
   },
   stepperBtn: {
     width: 32,
