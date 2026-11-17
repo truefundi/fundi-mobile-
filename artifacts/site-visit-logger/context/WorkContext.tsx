@@ -29,7 +29,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
-import { cleanAndNormalizePhone, updateUserRole } from '@/lib/auth-api';
+import { cleanAndNormalizePhone, refreshTokens, updateUserRole } from '@/lib/auth-api';
 import { getAccessToken } from '@/lib/auth-session';
 import { acquireEventsSocket, onAppEvent } from '@/lib/events-socket';
 
@@ -950,8 +950,15 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       submissionFailed: state.submissionFailed,
       refreshApplication,
       apply: async (application) => {
-        const token = await getAccessToken();
-        if (!token && !account) throw new Error('Verify your phone with the code sent via SMS before completing submission.');
+        if (!account) throw new Error('Sign in and verify your phone before submitting a technician application.');
+        try {
+          await refreshTokens();
+        } catch {
+          throw new Error('Your sign-in session has expired. Sign in again, then submit your technician application.');
+        }
+        if (!(await getAccessToken())) {
+          throw new Error('Your sign-in session has expired. Sign in again, then submit your technician application.');
+        }
         const phone = account?.phone || application.phoneNumber;
         const targetStorageKey = phone ? workKey(phone) : storageKey;
         const localDraft: WorkProfile = {
@@ -1017,16 +1024,24 @@ export function WorkProvider({ children }: { children: ReactNode }) {
 
           let serverProfile: ApiTechnicianProfile;
           try {
-            await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', { authenticated: true });
+            // Create directly. A missing profile is normal for a new applicant,
+            // so don't probe GET /profile and generate an expected 404 first.
             serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
-              method: 'PUT',
+              method: 'POST',
               authenticated: true,
               body: profileBody,
             });
           } catch (error) {
-            if (!(error instanceof ApiRequestError) || (error.status !== 404 && error.status !== 403)) throw error;
+            const status = error instanceof ApiRequestError
+              ? error.status
+              : error && typeof error === 'object' && 'status' in error
+                ? Number((error as { status: unknown }).status)
+                : undefined;
+            // Public registration may already have created the profile. In
+            // that case the API returns 409 and the application should update it.
+            if (status !== 409) throw error;
             serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
-              method: 'POST',
+              method: 'PUT',
               authenticated: true,
               body: profileBody,
             });

@@ -23,6 +23,7 @@ import { useFundi } from '@/context/FundiContext';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { normalizeLocationSelection, canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import { persistRequestMedia } from '@/lib/requestMedia';
+import { geocodeLocation } from '@/lib/jobs-api';
 
 const MAX_VIDEO_SECONDS = 120;
 const MAX_PHOTOS = 5;
@@ -37,17 +38,26 @@ const LOCATION_NOT_FOUND =
 
 /** Looks up coordinates for a typed address. Returns null when it cannot be placed. */
 async function geocodeTypedAddress(address: string): Promise<{ latitude: number; longitude: number } | null> {
-  if (!address || Platform.OS === 'web') return null;
-  try {
-    const results = await Location.geocodeAsync(address);
-    const first = results?.[0];
-    if (first && Number.isFinite(first.latitude) && Number.isFinite(first.longitude)) {
-      return { latitude: first.latitude, longitude: first.longitude };
+  if (!address) return null;
+  if (Platform.OS !== 'web') {
+    try {
+      const results = await Location.geocodeAsync(address);
+      const first = results?.[0];
+      if (first && Number.isFinite(first.latitude) && Number.isFinite(first.longitude)) {
+        return { latitude: first.latitude, longitude: first.longitude };
+      }
+    } catch {
+      // Use the backend geocoder when the device provider is unavailable.
     }
-  } catch {
-    // Geocoding is unavailable or the address is unknown; the caller asks for a location instead.
   }
-  return null;
+  try {
+    const result = await geocodeLocation(address);
+    return Number.isFinite(result.latitude) && Number.isFinite(result.longitude)
+      ? { latitude: result.latitude, longitude: result.longitude }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 type Editing = 'service' | 'problem' | 'attached' | 'location' | null;
