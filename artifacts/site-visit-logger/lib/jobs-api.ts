@@ -118,6 +118,12 @@ export interface MatchingTechnicianItem {
   avatarUrl?: string | null;
 }
 
+export interface GeocodedLocation {
+  displayName: string;
+  latitude: number;
+  longitude: number;
+}
+
 export interface TechnicianOfferItem {
   id: string;
   matchScore: number;
@@ -323,6 +329,14 @@ export async function previewMatchingTechnicians(
   });
   return apiRequest<MatchingTechnicianItem[]>(`/api/v1/jobs/matching-technicians?${query.toString()}`, {
     authenticated: true,
+  });
+}
+
+export async function geocodeLocation(location: string): Promise<GeocodedLocation> {
+  return apiRequest<GeocodedLocation>('/api/v1/jobs/geocode-location', {
+    method: 'POST',
+    authenticated: true,
+    body: { location },
   });
 }
 
