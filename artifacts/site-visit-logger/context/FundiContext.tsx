@@ -30,7 +30,6 @@ import {
   type PaymentMethod,
   type PaymentStatus,
   type Quote,
-  type Rating,
   type RequestLifecycleStatus,
   type RequestStatus,
   type RequestType,
@@ -186,7 +185,6 @@ type FundiContextValue = {
   declineAdditionalWork: (id: string) => void;
   startSettlement: (id: string) => void;
   recordSettlement: (id: string, method: SettlementMethod) => void;
-  submitRating: (id: string, rating: Rating) => void;
   cancelJob: (id: string, reason?: string, recipientPhones?: string[]) => Promise<void>;
   updateJob: (id: string, updates: Partial<Job>, recipientPhones?: string[]) => void;
   advance: (id: string, next: JobStatus) => void;
@@ -786,7 +784,6 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       startSettlement: (id) => advance(id, 'PAYMENT_PENDING'),
       recordSettlement: (id, method) =>
         update(id, (job) => transition({ ...job, settlementMethod: method }, 'PAYMENT_REPORTED')),
-      submitRating: (id, rating) => update(id, (job) => ({ ...job, rating })),
       cancelJob,
       updateJob: (id, updates, recipientPhones) => update(id, (job) => { const now = new Date().toISOString(); const nextStatus = updates.status ?? job.status; let moved: Job = { ...job, ...updates, status: nextStatus, statusSince: nextStatus !== job.status ? now : job.statusSince }; if (nextStatus === 'COMPLETED') { moved.completedAt = updates.completedAt ?? now; } if (nextStatus !== job.status && EVENT_COPY[nextStatus]) { const copy = EVENT_COPY[nextStatus]!; moved.events = [...job.events, { id: makeId('evt'), status: nextStatus, title: copy.title, text: copy.text, at: now }]; } return moved; }, recipientPhones),
 

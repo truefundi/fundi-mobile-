@@ -43,9 +43,9 @@ export function JobClosed({ job, hideBack = false, onRebook }: { job: Job; hideB
           <>
             <Button label="View invoice" onPress={() => router.push(`/invoice/${job.id}`)} testID="closed-invoice-button" />
             <Button
-              label={job.rating ? 'View your review' : 'Rate technician'}
+              label={job.rating ? 'Edit your rating' : 'Rate technician'}
               variant="outline"
-              onPress={() => router.push(`/rate/${job.id}`)}
+              onPress={() => router.push({ pathname: '/chat/[id]', params: { id: job.id, rate: '1' } })}
               testID="closed-rate-button"
             />
           </>

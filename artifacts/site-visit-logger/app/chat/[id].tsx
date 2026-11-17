@@ -43,6 +43,8 @@ import { OfferSheet, ReasonSheet } from '@/components/chat/ChatSheets';
 import { RequestCard, buildRequestSummary } from '@/components/chat/RequestCard';
 import { IncomingRequestIntro, buildOfferSummary, formatCountdown, useSecondsLeft } from '@/components/chat/IncomingRequestView';
 import { ActionDialog, type DialogRequest } from '@/components/ui/ActionDialog';
+import { RatingBar, RatingSheet } from '@/components/chat/RatingPanel';
+import { fetchJobRating, submitJobRating, updateJobRating, type JobRatingState } from '@/lib/ratings-api';
 import { retryJobDispatch, type TechnicianOfferItem } from '@/lib/jobs-api';
 
 type DialogButton = { text: string; style?: 'default' | 'cancel' | 'destructive'; onPress?: () => void };
@@ -105,6 +107,8 @@ function roomLockReason(room: BackendChatRoom | null, isTechnician: boolean): st
 
 /** One line of text at 14/20 plus vertical padding: the same height as the composer buttons. */
 const INPUT_MIN_HEIGHT = 42;
+/** Jobs whose rating sheet already opened by itself during this app session. */
+const promptedRatings = new Set<string>();
 const INPUT_MAX_HEIGHT = 120;
 
 const ACTION_LABEL: Record<LifecycleAction['kind'], string> = {
@@ -125,8 +129,10 @@ export default function JobChatScreen() {
   const { getJob, proposeTechnicianToJob } = useFundi();
   const { threads } = useChat();
   const { technicianOffers, acceptOffer: acceptTechnicianOffer, rejectOffer, refreshJobs } = useWork();
-  const { id: routeId, requestId, firstMessage, technicianId: technicianParam, proposalError } = useLocalSearchParams<{
+  const { id: routeId, requestId, firstMessage, technicianId: technicianParam, proposalError, rate } = useLocalSearchParams<{
     id?: string;
+    /** Opens the rating sheet straight away (from a completed job elsewhere in the app). */
+    rate?: string;
     requestId?: string;
     firstMessage?: string;
     /** Technician profile the client routed this request to (before assignment). */
@@ -253,6 +259,38 @@ export default function JobChatScreen() {
   const [reasonFlow, setReasonFlow] = useState<{ flow: ReasonFlow; offer?: PriceOfferItem } | null>(null);
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
+
+  // ── Rating: the client rates the technician once the job is complete ────
+  const canRate = !isTechnician && job?.status === 'COMPLETED' && Boolean(jobId);
+  const [ratingState, setRatingState] = useState<JobRatingState | null>(null);
+  const [ratingLoading, setRatingLoading] = useState(false);
+  const [ratingSheet, setRatingSheet] = useState<{ initialScore?: number } | null>(null);
+  const ratingPrompted = useRef(false);
+  useEffect(() => {
+    if (!canRate || !jobId) return;
+    let cancelled = false;
+    setRatingLoading(true);
+    fetchJobRating(jobId)
+      .then((state) => {
+        if (cancelled) return;
+        setRatingState(state);
+        // Ask once, right after the job is done; afterwards the bar at the bottom stays.
+        if (!ratingPrompted.current && (rate === '1' || !state.rating)) {
+          ratingPrompted.current = true;
+          if (rate === '1' || !promptedRatings.has(jobId)) {
+            promptedRatings.add(jobId);
+            setRatingSheet({});
+          }
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setRatingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canRate, jobId, rate]);
   /** Whether the progress tracker is dropped down from the header. */
   const [progressOpen, setProgressOpen] = useState(false);
   /** Composer height: one line, growing with the text up to five lines. */
@@ -919,14 +957,15 @@ export default function JobChatScreen() {
     </View>
   );
 
+  // Kept to a word or two: next to three buttons on a narrow phone, anything longer wraps.
   const inputPlaceholder = !room
     ? pendingOffer
-      ? 'Accept to start chatting'
-      : 'Opens once assigned'
+      ? 'Accept first'
+      : 'Not open yet'
     : lockReason
-      ? 'Messaging is off'
+      ? 'Chat closed'
       : feeBlocksClient
-        ? feeStatus === 'checking' ? 'Checking payment…' : 'Pay the fee to chat'
+        ? feeStatus === 'checking' ? 'Checking…' : 'Pay to chat'
         : 'Message';
 
   const actionLabel = lifecycle.action ? ACTION_LABEL[lifecycle.action.kind] : null;
@@ -1102,7 +1141,15 @@ export default function JobChatScreen() {
         </View>
       ) : null}
 
-      {pendingOffer && !acceptedOffer && !offerExpired ? (
+      {canRate ? (
+        <RatingBar
+          technicianName={otherName}
+          state={ratingState}
+          loading={ratingLoading}
+          bottomInset={insets.bottom}
+          onRate={(initialScore) => setRatingSheet({ initialScore })}
+        />
+      ) : pendingOffer && !acceptedOffer && !offerExpired ? (
         <View
           style={[
             styles.answerBar,
@@ -1220,6 +1267,20 @@ export default function JobChatScreen() {
         }}
       />
       <ActionDialog request={dialog} onClose={() => setDialog(null)} />
+      {canRate ? (
+        <RatingSheet
+          visible={Boolean(ratingSheet)}
+          technicianName={otherName}
+          state={ratingState}
+          initialScore={ratingSheet?.initialScore}
+          onClose={() => setRatingSheet(null)}
+          onSubmit={async (input, existing) => {
+            if (!jobId) return;
+            const saved = existing ? await updateJobRating(jobId, input) : await submitJobRating(jobId, input);
+            setRatingState((current) => (current ? { ...current, rating: saved } : { items: [], rating: saved }));
+          }}
+        />
+      ) : null}
       <ReasonSheet
         visible={Boolean(reasonFlow)}
         title={reasonFlow ? reasonCopy[reasonFlow.flow].title : ''}
@@ -1315,6 +1376,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     textAlignVertical: 'center',
+    includeFontPadding: false,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', resize: 'none' } as object) : {}),
   },
   answerBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1 },
