@@ -129,7 +129,6 @@ function RootLayoutNav() {
         <Stack.Screen name="request" options={{ headerShown: false }} />
         <Stack.Screen name="job/[id]" options={{ headerShown: false, gestureEnabled: false }} />
         <Stack.Screen name="invoice/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="rate/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="payments" options={{ headerShown: false }} />
         <Stack.Screen name="notifications" options={{ headerShown: false }} />
         <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
