@@ -181,11 +181,11 @@ export function KeywordSuggestions({ words, onPick }: { words: string[]; onPick:
   return (
     <View style={styles.suggestBlock}>
       <Text style={[styles.suggestTitle, { color: colors.mutedForeground }]}>Try searching</Text>
-      <View style={styles.wrapRow}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollRow} contentContainerStyle={styles.scrollRowContent}>
         {words.map((word) => (
           <Chip key={word} label={word} onPress={() => onPick(word)} testID={`keyword-${word}`} />
         ))}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -266,7 +266,7 @@ export function ServiceFilterSheet({
           {groups.length > 0 ? (
             <>
               <Text style={[styles.sectionLabel, { color: colors.foreground }]}>Service group</Text>
-              <View style={styles.wrapRow}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollRow} contentContainerStyle={styles.scrollRowContent}>
                 <Chip
                   label="All"
                   selected={draft.groupIds.length === 0}
@@ -282,12 +282,12 @@ export function ServiceFilterSheet({
                     testID={`filter-group-${group.id}`}
                   />
                 ))}
-              </View>
+              </ScrollView>
             </>
           ) : null}
 
           <Text style={[styles.sectionLabel, { color: colors.foreground }]}>Booking fee</Text>
-          <View style={styles.wrapRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollRow} contentContainerStyle={styles.scrollRowContent}>
             {FEE_OPTIONS.map((option) => (
               <Chip
                 key={option.label}
@@ -297,10 +297,10 @@ export function ServiceFilterSheet({
                 testID={`filter-fee-${option.value ?? 'any'}`}
               />
             ))}
-          </View>
+          </ScrollView>
 
           <Text style={[styles.sectionLabel, { color: colors.foreground }]}>Sort by</Text>
-          <View style={styles.wrapRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollRow} contentContainerStyle={styles.scrollRowContent}>
             {SORT_OPTIONS.map((option) => (
               <Chip
                 key={option.value}
@@ -310,7 +310,7 @@ export function ServiceFilterSheet({
                 testID={`filter-sort-${option.value}`}
               />
             ))}
-          </View>
+          </ScrollView>
         </ScrollView>
 
         <Button
@@ -361,7 +361,10 @@ const styles = StyleSheet.create({
   clearAllText: { fontFamily: 'Inter_600SemiBold', fontSize: 13, textDecorationLine: 'underline' },
   suggestBlock: { marginTop: 12 },
   suggestTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginBottom: 8, letterSpacing: 0.2 },
-  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  // One row that scrolls sideways, so long labels never stack the list into many lines.
+  // It bleeds to the screen edges so chips scroll out of view rather than being cut at the padding.
+  scrollRow: { flexGrow: 0, marginHorizontal: -20 },
+  scrollRowContent: { gap: 8, paddingHorizontal: 20, paddingVertical: 2 },
   backdrop: { backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: {
     position: 'absolute',
