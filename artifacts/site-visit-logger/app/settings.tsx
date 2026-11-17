@@ -6,7 +6,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button } from '@/components/ui/Button';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { SwitchRow } from '@/components/ui/SwitchRow';
-import { formatPhone } from '@/constants/auth';
+import { formatPhone, PIN_LENGTH } from '@/constants/auth';
 import { PLACE_ICON } from '@/constants/places';
 import { useProfile } from '@/context/ProfileContext';
 import { useColors } from '@/hooks/useColors';
@@ -176,6 +176,37 @@ export default function SettingsScreen() {
           >
             <Feather name="user" size={18} color={colors.primary} />
             <Text style={[styles.rowLabel, { color: colors.foreground }]}>Update profile</Text>
+            <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+      </View>
+
+      <View>
+        <Text style={[styles.section, { color: colors.foreground }]}>Security</Text>
+        <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+          Your {PIN_LENGTH}-digit PIN signs you in on this and other devices.
+        </Text>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Change PIN"
+            testID="settings-change-pin"
+            onPress={() => router.push('/change-pin')}
+            style={({ pressed }) => [styles.row, { borderBottomColor: colors.border, borderBottomWidth: 1, opacity: pressed ? 0.65 : 1 }]}
+          >
+            <Feather name="lock" size={18} color={colors.primary} />
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>Change PIN</Text>
+            <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Forgot PIN? Reset it with an SMS code"
+            testID="settings-reset-pin"
+            onPress={() => router.push({ pathname: '/change-pin', params: { mode: 'reset' } })}
+            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.65 : 1 }]}
+          >
+            <Feather name="message-square" size={18} color={colors.primary} />
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>Forgot PIN? Reset by SMS</Text>
             <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
           </Pressable>
         </View>

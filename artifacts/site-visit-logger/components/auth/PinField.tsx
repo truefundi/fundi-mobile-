@@ -12,6 +12,10 @@ type PinFieldProps = {
   autoFocus?: boolean;
   testID?: string;
   allowToggleVisibility?: boolean;
+  /** Number of boxes; PIN_LENGTH by default (6 for an SMS code). */
+  length?: number;
+  /** Mask the digits. Off for one-time codes, which are not secret once used. */
+  masked?: boolean;
 };
 
 export function PinField({
@@ -22,20 +26,22 @@ export function PinField({
   autoFocus = false,
   testID = 'pin-input',
   allowToggleVisibility = true,
+  length = PIN_LENGTH,
+  masked = true,
 }: PinFieldProps) {
   const colors = useColors();
   const inputRef = useRef<TextInputInstance>(null);
-  const [isSecure, setIsSecure] = useState(true);
+  const [isSecure, setIsSecure] = useState(masked);
   const [isFocused, setIsFocused] = useState(false);
 
-  const cleanDigits = value.replace(/\D/g, '').slice(0, PIN_LENGTH);
+  const cleanDigits = value.replace(/\D/g, '').slice(0, length);
 
   return (
     <View style={styles.container}>
       {label ? (
         <View style={styles.labelRow}>
           <Text style={[styles.label, { color: colors.foreground }]}>{label}</Text>
-          {allowToggleVisibility && cleanDigits.length > 0 ? (
+          {allowToggleVisibility && masked && cleanDigits.length > 0 ? (
             <Pressable
               onPress={() => setIsSecure(!isSecure)}
               hitSlop={8}
@@ -52,11 +58,11 @@ export function PinField({
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={label ?? `Enter ${PIN_LENGTH} digit PIN`}
+        accessibilityLabel={label ?? `Enter ${length} digit PIN`}
         onPress={() => inputRef.current?.focus()}
         style={styles.cellRow}
       >
-        {Array.from({ length: PIN_LENGTH }).map((_, index) => {
+        {Array.from({ length }).map((_, index) => {
           const char = cleanDigits[index] ?? '';
           const active = isFocused && index === cleanDigits.length;
           const filled = index < cleanDigits.length;
@@ -93,13 +99,13 @@ export function PinField({
           testID={testID}
           value={cleanDigits}
           onChangeText={(text) => {
-            const digits = text.replace(/\D/g, '').slice(0, PIN_LENGTH);
+            const digits = text.replace(/\D/g, '').slice(0, length);
             onChange(digits);
           }}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           keyboardType="number-pad"
-          maxLength={PIN_LENGTH}
+          maxLength={length}
           autoFocus={autoFocus && Platform.OS !== 'web'}
           style={styles.hiddenInput}
           caretHidden

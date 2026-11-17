@@ -6,10 +6,13 @@ import { LoginStep } from '@/components/auth/LoginStep';
 import { RegisterStep } from '@/components/auth/RegisterStep';
 import { WelcomeStep } from '@/components/auth/WelcomeStep';
 import { OtpStep } from '@/components/auth/OtpStep';
+import { PinResetFlow } from '@/components/auth/PinResetFlow';
+import { BackButton } from '@/components/ui/BackButton';
+import { PageHeading } from '@/components/ui/PageHeading';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 
-type Step = 'welcome' | 'register' | 'login';
+type Step = 'welcome' | 'register' | 'login' | 'reset';
 
 /**
  * Sign In Screen: Welcome, Real Backend Registration & Login with 6-digit OTP confirmation.
@@ -57,8 +60,24 @@ export default function SignInScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {step === 'login' ? (
-          <LoginStep onBack={() => setStep('welcome')} onRegister={() => setStep('register')} />
+        {step === 'reset' ? (
+          <View style={styles.step}>
+            <BackButton onPress={() => setStep('login')} testID="reset-back-button" />
+            <PageHeading
+              eyebrow="Forgot your PIN?"
+              title="Reset your PIN"
+              subtitle="We'll text a code to your phone. Enter it with a new PIN and you're signed in."
+              style={styles.heading}
+            />
+            {/* Signing in sends the app on to home, so there is nothing more to do here. */}
+            <PinResetFlow onDone={() => undefined} />
+          </View>
+        ) : step === 'login' ? (
+          <LoginStep
+            onBack={() => setStep('welcome')}
+            onRegister={() => setStep('register')}
+            onForgotPin={() => setStep('reset')}
+          />
         ) : (
           <RegisterStep onBack={() => setStep('welcome')} onLogin={() => setStep('login')} />
         )}
@@ -70,4 +89,6 @@ export default function SignInScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { paddingHorizontal: 20, flexGrow: 1 },
+  step: { flex: 1 },
+  heading: { marginTop: 14, marginBottom: 8 },
 });

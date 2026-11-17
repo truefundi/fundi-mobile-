@@ -14,6 +14,7 @@ import {
   registerWithPin,
   requestLoginOtp,
   resendOtp,
+  resetPin as resetPinApi,
   restoreSession,
   updateUserRole,
   verifyOtp,
@@ -62,6 +63,8 @@ type AuthContextValue = {
   verifyCode: (entered: string) => Promise<void>;
   /** Cancels the ongoing verification and returns to the initial auth screen. */
   cancelVerification: () => Promise<void>;
+  /** Replaces a forgotten PIN with the SMS code, then signs in with the new session. */
+  resetPin: (phone: string, code: string, newPin: string) => Promise<void>;
   /** Ends the session by revoking the refresh token and clearing local tokens. */
   signOut: () => Promise<void>;
   /** Permanently deletes the account on the backend. */
@@ -231,6 +234,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [verification],
   );
 
+  const resetPin = useCallback(async (phone: string, code: string, newPin: string) => {
+    const session = await resetPinApi(phone, code, newPin);
+    setAccount(accountFromApi(session.user));
+    setVerification(null);
+    await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
+  }, []);
+
   const cancelVerification = useCallback(async () => {
     setVerification(null);
     await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
@@ -272,6 +282,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resendCode,
       verifyCode,
       cancelVerification,
+      resetPin,
       signOut,
       deleteAccount,
     }),
@@ -284,6 +295,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginWithOtp,
       register,
       resendCode,
+      resetPin,
       signOut,
       updateRole,
       verification,

@@ -13,6 +13,8 @@ import { useColors } from '@/hooks/useColors';
 type Props = {
   onBack: () => void;
   onRegister: () => void;
+  /** Opens the forgotten-PIN reset. */
+  onForgotPin: () => void;
 };
 
 type LoginMode = 'pin' | 'otp';
@@ -20,7 +22,7 @@ type LoginMode = 'pin' | 'otp';
 /**
  * Login step: Supports fast PIN authentication as well as SMS OTP login fallback.
  */
-export function LoginStep({ onBack, onRegister }: Props) {
+export function LoginStep({ onBack, onRegister, onForgotPin }: Props) {
   const colors = useColors();
   const { login, loginWithOtp } = useAuth();
 
@@ -168,16 +170,12 @@ export function LoginStep({ onBack, onRegister }: Props) {
       {mode === 'pin' ? (
         <Pressable
           accessibilityRole="button"
-          onPress={() => {
-            setMode('otp');
-            setError('');
-          }}
+          testID="login-forgot-pin"
+          onPress={onForgotPin}
           hitSlop={8}
           style={styles.otpFallbackRow}
         >
-          <Text style={[styles.otpFallbackText, { color: colors.primary }]}>
-            Forgot PIN? Sign in with SMS code
-          </Text>
+          <Text style={[styles.otpFallbackText, { color: colors.primary }]}>Forgot PIN? Reset it</Text>
         </Pressable>
       ) : (
         <Pressable

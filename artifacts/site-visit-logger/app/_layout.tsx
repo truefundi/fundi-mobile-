@@ -134,6 +134,7 @@ function RootLayoutNav() {
         <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
         <Stack.Screen name="saved-locations" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen name="change-pin" options={{ headerShown: false }} />
         <Stack.Screen name="help" options={{ headerShown: false }} />
         <Stack.Screen name="chatbot" options={{ headerShown: false }} />
       </Stack.Protected>
