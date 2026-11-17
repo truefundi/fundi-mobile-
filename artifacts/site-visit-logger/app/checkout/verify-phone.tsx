@@ -66,6 +66,9 @@ export default function VerifyPhoneScreen() {
 
   const inputRef = useRef<TextInputInstance>(null);
   const hasRequestedInitial = useRef(false);
+  // Until the account's verified status is known nothing is shown, so a verified
+  // account passes through without the code screen flashing up.
+  const [checkingStatus, setCheckingStatus] = useState(true);
 
   // 60-second cooldown timer
   const { remainingSeconds } = useCountdown(sentAt, RESEND_COOLDOWN_MS);
@@ -126,7 +129,9 @@ export default function VerifyPhoneScreen() {
       } catch {
         // Status unavailable: fall back to verifying with a code.
       }
-      if (active) await sendVerificationCode(phone);
+      if (!active) return;
+      setCheckingStatus(false);
+      await sendVerificationCode(phone);
     })();
     return () => {
       active = false;
@@ -206,6 +211,14 @@ export default function VerifyPhoneScreen() {
     setIsEditingPhone(false);
     sendVerificationCode(normalized);
   };
+
+  if (checkingStatus) {
+    return (
+      <View style={[styles.container, styles.checking, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -439,6 +452,10 @@ export default function VerifyPhoneScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  checking: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   topBar: {
     flexDirection: 'row',

@@ -74,7 +74,9 @@ const STEP_LABELS: Record<ViewerRole, Record<StepKey, string>> = {
   technician: { found: 'Request Accepted', agreed: 'Price Agreed', started: 'Start Job', ended: 'Finish Job' },
 };
 
-const STARTED = new Set(['STARTED', 'IN_PROGRESS', 'COMPLETED']);
+// The backend marks a technician STARTED as soon as they accept the request;
+// work on site begins at IN_PROGRESS.
+const WORK_STARTED = new Set(['IN_PROGRESS', 'COMPLETED']);
 
 function pendingOffer(conversation: BackendConversation | null): PriceOfferItem | null {
   if (!conversation) return null;
@@ -118,14 +120,19 @@ export function deriveLifecycle(input: {
   // ── Step completion ────────────────────────────────────────────────────
   const technicianAccepted = hasAssignment && convStatus !== 'PENDING' && !requestDeclined;
   const foundDone = role === 'client' ? hasAssignment || technicianAccepted : technicianAccepted;
-  const startedDone = STARTED.has(technicianProgress) || completed;
+  const startedDone = WORK_STARTED.has(technicianProgress) || completed;
   const doneByKey: Record<StepKey, boolean> = {
-    found: foundDone || isPriceAgreed,
+    found: foundDone,
     agreed: isPriceAgreed,
     started: startedDone,
     ended: completed,
   };
   const order: StepKey[] = ['found', 'agreed', 'started', 'ended'];
+  // Steps fill strictly in order: a later step being done means every earlier one is too,
+  // so the tracker never shows a gap.
+  for (let i = order.length - 2; i >= 0; i -= 1) {
+    if (doneByKey[order[i + 1]]) doneByKey[order[i]] = true;
+  }
   const firstOpen = order.find((key) => !doneByKey[key]);
   const steps: LifecycleStep[] = order.map((key) => ({
     key,

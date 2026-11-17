@@ -7,7 +7,8 @@ import { getServiceIcon } from '@/lib/categories-api';
 import { canOpenMapNavigation, openMapNavigation } from '@/lib/location';
 import type { BackendChatRoom } from '@/lib/chat-rooms-api';
 import type { BackendConversation } from '@/lib/conversations-api';
-import type { BackendJob } from '@/lib/jobs-api';
+import { jobMediaUrl, type BackendJob } from '@/lib/jobs-api';
+import { cachedRequestMediaUri } from '@/lib/requestMedia';
 import type { RequestResponseBadge } from '@/lib/job-lifecycle';
 
 /** Everything the request card and its details modal show, merged from backend records. */
@@ -43,11 +44,11 @@ export function buildRequestSummary(
     longitude: job?.location.longitude ?? conversation?.request.longitude,
     isSos: job?.requestType === 'SOS',
     createdAt: job?.createdAt ?? null,
-    photos: media.filter((m) => m.type === 'PHOTO').map((m) => m.url),
-    videos: media.filter((m) => m.type === 'VIDEO').map((m) => m.url),
+    photos: media.filter((m) => m.type === 'PHOTO').map(jobMediaUrl),
+    videos: media.filter((m) => m.type === 'VIDEO').map(jobMediaUrl),
     documents: media
       .filter((m) => m.type === 'DOCUMENT' || m.type === 'VOICE_NOTE')
-      .map((m, i) => ({ url: m.url, label: m.type === 'VOICE_NOTE' ? `Voice note ${i + 1}` : `Document ${i + 1}` })),
+      .map((m, i) => ({ url: jobMediaUrl(m), label: m.type === 'VOICE_NOTE' ? `Voice note ${i + 1}` : `Document ${i + 1}` })),
     bookingFeePaid: Boolean(job?.bookingPayment),
     bookingFee: job?.bookingPayment ? { amount: job.bookingPayment.amount, currency: job.bookingPayment.currency } : null,
   };
@@ -113,7 +114,7 @@ export function RequestCard({ summary, badge, cancelLabel, cancelHint, onCancel,
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} testID="chat-request-card">
       <View style={styles.top}>
         {summary.photos[0] ? (
-          <Pressable onPress={() => onPreviewImage(summary.photos[0])}>
+          <Pressable onPress={() => onPreviewImage(cachedRequestMediaUri(summary.photos[0]) ?? summary.photos[0])}>
             <MediaImage uri={summary.photos[0]} style={styles.thumb} fallbackIcon={icon} />
           </Pressable>
         ) : (
@@ -238,7 +239,7 @@ export function RequestCard({ summary, badge, cancelLabel, cancelHint, onCancel,
                         key={`${uri}-${index}`}
                         onPress={() => {
                           setShowDetails(false);
-                          onPreviewImage(uri);
+                          onPreviewImage(cachedRequestMediaUri(uri) ?? uri);
                         }}
                         style={styles.galleryItem}
                       >

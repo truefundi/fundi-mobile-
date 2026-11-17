@@ -20,6 +20,7 @@ import {
   type CreateJobInput,
   type PhoneVerificationRequestResponse,
   type VerifyPhoneResponse,
+  jobMediaUrl,
 } from '@/lib/jobs-api';
 import {
   isClosed,
@@ -73,8 +74,8 @@ type NewRequest = Pick<
 export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
   const photoMedia = backendJob.media?.filter((m) => m.type === 'PHOTO') ?? [];
   const videoMedia = backendJob.media?.filter((m) => m.type === 'VIDEO') ?? [];
-  const photoUris = photoMedia.map((m) => m.url);
-  const videoUris = videoMedia.map((m) => m.url);
+  const photoUris = photoMedia.map(jobMediaUrl);
+  const videoUris = videoMedia.map(jobMediaUrl);
 
   let status: JobStatus = 'REQUESTED';
   if (backendJob.status === 'CANCELLED') {
@@ -84,7 +85,8 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
   } else if (backendJob.status === 'IN_PROGRESS') {
     status = 'IN_PROGRESS';
   } else if (backendJob.status === 'ASSIGNED') {
-    status = 'ACTIVE';
+    // The technician is STARTED once they accept; work on site is IN_PROGRESS.
+    status = backendJob.technicianProgress === 'IN_PROGRESS' || backendJob.technicianProgress === 'COMPLETED' ? 'IN_PROGRESS' : 'ACTIVE';
   } else if (backendJob.status === 'OPEN') {
     if (backendJob.dispatchStatus === 'OFFERED') {
       status = 'OFFERED';
@@ -215,7 +217,7 @@ const EVENT_COPY: Partial<Record<JobStatus, { title: string; text: string }>> = 
   MATCHING: { title: 'Choose a technician', text: 'Browse the available technicians.' },
   SEARCHING_DISPATCH: { title: 'Emergency Dispatch Active', text: 'Alerting nearby verified emergency technicians...' },
   OFFERED: { title: 'Technician selected', text: 'Review the technician you selected before continuing.' },
-  ACCEPTED: { title: 'Offer accepted', text: 'Confirm the Service Booking Fee to unlock technician dispatch and chat.' },
+  ACCEPTED: { title: 'Request accepted', text: 'Confirm the Service Booking Fee to unlock technician dispatch and chat.' },
   PAYMENT_PENDING: { title: 'Booking fee pending', text: 'Confirm the Service Booking Fee to unlock technician dispatch and chat.' },
   PAID: { title: 'Booking fee confirmed', text: 'Service Booking Fee received. Your technician is dispatched and chat is ready.' },
   VISIT_PAID: { title: 'Booking fee confirmed', text: 'Service Booking Fee received. Your technician is dispatched and chat is ready.' },

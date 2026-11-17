@@ -72,7 +72,7 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
   MATCHING: 'Choose a technician',
   SEARCHING_DISPATCH: 'Dispatching technician',
   OFFERED: 'Technician found',
-  ACCEPTED: 'Offer accepted',
+  ACCEPTED: 'Request accepted',
   PAYMENT_PENDING: 'Booking fee pending',
   PAID: 'Booking fee paid · chat ready',
   VISIT_PAID: 'Booking fee paid · chat ready',

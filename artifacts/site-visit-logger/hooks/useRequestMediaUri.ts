@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react';
-import { resolveRequestMediaUri } from '@/lib/requestMedia';
+import { cachedRequestMediaUri, isProtectedMediaUri, resolveRequestMediaUri } from '@/lib/requestMedia';
 
 export function useRequestMediaUri(uri: string): string | null {
-  const [resolvedUri, setResolvedUri] = useState<string | null>(null);
+  const [resolvedUri, setResolvedUri] = useState<string | null>(() => cachedRequestMediaUri(uri) ?? null);
+  // Loaded API attachments are shared and cached for the session, so they are never revoked here.
+  const shared = isProtectedMediaUri(uri);
 
   useEffect(() => {
     let active = true;
     let objectUrl: string | null = null;
-    setResolvedUri(null);
+    setResolvedUri(cachedRequestMediaUri(uri) ?? null);
     resolveRequestMediaUri(uri)
       .then((resolved) => {
         if (!active) {
-          if (resolved.startsWith('blob:')) URL.revokeObjectURL(resolved);
+          if (!shared && resolved.startsWith('blob:')) URL.revokeObjectURL(resolved);
           return;
         }
-        if (resolved.startsWith('blob:')) objectUrl = resolved;
+        if (!shared && resolved.startsWith('blob:')) objectUrl = resolved;
         setResolvedUri(resolved);
       })
       .catch((error: unknown) => {
@@ -25,7 +27,7 @@ export function useRequestMediaUri(uri: string): string | null {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [uri]);
+  }, [uri, shared]);
 
   return resolvedUri;
 }

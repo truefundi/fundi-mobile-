@@ -1,5 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
+import { getAccessToken } from '@/lib/auth-session';
 
 export type RequestMediaInput = {
   uri: string;
@@ -85,7 +86,51 @@ export async function persistRequestMedia(media: RequestMediaInput[]): Promise<s
   );
 }
 
+/** Job attachments served by the API need the user's token, so an <Image> cannot load them directly. */
+const PROTECTED_MEDIA = /\/api\/v1\/jobs\/[^/]+\/media\/[^/?#]+/;
+const protectedCache = new Map<string, Promise<string>>();
+const protectedResolved = new Map<string, string>();
+
+export function isProtectedMediaUri(uri: string): boolean {
+  return PROTECTED_MEDIA.test(uri);
+}
+
+/** The loaded local address of an attachment, when it has been loaded already. */
+export function cachedRequestMediaUri(uri: string): string | undefined {
+  return protectedResolved.get(uri);
+}
+
+async function loadProtectedMedia(uri: string): Promise<string> {
+  const token = await getAccessToken();
+  const headers: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri, { headers });
+    if (!response.ok) throw new Error(`Could not load the attachment (${response.status}).`);
+    return URL.createObjectURL(await response.blob());
+  }
+  const directory = new Directory(Paths.cache, 'fundi-job-media');
+  if (!directory.exists) directory.create();
+  const name = uri.match(PROTECTED_MEDIA)?.[0].split('/').slice(-3).join('-') ?? `${Date.now()}`;
+  const destination = new File(directory, name);
+  if (destination.exists) return destination.uri;
+  const file = await File.downloadFileAsync(uri, destination, { headers });
+  return file.uri;
+}
+
 export async function resolveRequestMediaUri(uri: string): Promise<string> {
+  if (isProtectedMediaUri(uri)) {
+    let pending = protectedCache.get(uri);
+    if (!pending) {
+      pending = loadProtectedMedia(uri).then((resolved) => {
+        protectedResolved.set(uri, resolved);
+        return resolved;
+      });
+      // A failed load can be retried the next time the attachment is shown.
+      pending.catch(() => protectedCache.delete(uri));
+      protectedCache.set(uri, pending);
+    }
+    return pending;
+  }
   if (!uri.startsWith(WEB_MEDIA_PREFIX)) return uri;
   const database = await openWebMediaDatabase();
   return new Promise((resolve, reject) => {

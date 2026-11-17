@@ -247,7 +247,7 @@ export async function resolveServiceCategoryId(
 /** Fetches real categories from the database API with caching */
 export async function fetchCategories(): Promise<Service[]> {
   try {
-    const rawCategories = await apiRequest<DatabaseCategory[]>('/api/v1/catalog/categories');
+    const rawCategories = await apiRequest<DatabaseCategory[]>('/api/v1/catalog/services');
     if (Array.isArray(rawCategories) && rawCategories.length > 0) {
       const services = rawCategories.map(mapDatabaseCategoryToService);
       inMemoryCategories = services;

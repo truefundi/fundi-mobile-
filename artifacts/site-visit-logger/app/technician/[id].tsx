@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { continueToCheckout } from '@/lib/checkout-nav';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
@@ -146,15 +147,12 @@ export default function TechnicianProfileScreen() {
       return;
     }
 
-    // Dedicated phone verification flow triggers after selecting technician and before booking fee
-    router.push({
-      pathname: '/checkout/verify-phone',
-      params: {
-        requestId: finalRequestId,
-        technicianId: tech?.id,
-        service: targetService,
-        categoryId: targetJob?.serviceCategoryId || params.categoryId,
-      },
+    // Booking fee next; an unverified phone is confirmed with a code first.
+    void continueToCheckout(router, {
+      requestId: finalRequestId,
+      technicianId: tech?.id,
+      service: targetService,
+      categoryId: targetJob?.serviceCategoryId || params.categoryId,
     });
   };
 

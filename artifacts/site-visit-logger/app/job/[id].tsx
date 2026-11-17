@@ -1,6 +1,7 @@
 import React, { useEffect, useState, type ReactNode } from 'react';
 import { StyleSheet, View, Platform, BackHandler } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { continueToCheckout } from '@/lib/checkout-nav';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { vibrate } from '@/lib/haptics';
 import { useFundi } from '@/context/FundiContext';
@@ -69,6 +70,14 @@ export default function JobScreen() {
   const [pending, setPending] = useState<Pending | null>(null);
 
   const job = id ? getJob(id) : undefined;
+  // Once the booking fee is paid the job lives in its chat, whose tracker follows the
+  // backend step by step. Sending paid jobs there keeps a single tracker per job.
+  const tracksInChat = Boolean(
+    job && (job.bookingFee?.status === 'PAID' || ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'].includes(job.status)) && job.technician,
+  );
+  useEffect(() => {
+    if (job && tracksInChat) router.replace({ pathname: '/chat/[id]', params: { id: job.id } });
+  }, [job?.id, tracksInChat, router]);
 
   const tap = () => {
     vibrate();
@@ -91,7 +100,7 @@ export default function JobScreen() {
     return () => sub.remove();
   }, [router]);
 
-  if (!isHydrated) return <LoadingState label="Loading your job…" fullScreen />;
+  if (!isHydrated || tracksInChat) return <LoadingState label="Loading your job…" fullScreen />;
 
   if (!job) {
     return (
@@ -169,7 +178,7 @@ export default function JobScreen() {
                       });
                       return;
                     }
-                    router.push({ pathname: '/checkout/verify-phone', params: { requestId: job.id, technicianId: job.technician?.id, service: job.service, categoryId: job.serviceCategoryId } });
+                    void continueToCheckout(router, { requestId: job.id, technicianId: job.technician?.id, service: job.service, categoryId: job.serviceCategoryId });
                   }}
                   testID="review-booking-fee-button"
                 />
@@ -306,10 +315,7 @@ export default function JobScreen() {
                       });
                       return;
                     }
-                    router.push({
-                      pathname: '/checkout/verify-phone',
-                      params: { requestId: job.id, technicianId: job.technician?.id, service: job.service, categoryId: job.serviceCategoryId },
-                    });
+                    void continueToCheckout(router, { requestId: job.id, technicianId: job.technician?.id, service: job.service, categoryId: job.serviceCategoryId });
                   }}
                   testID="pay-booking-fee-pending-button"
                 />
