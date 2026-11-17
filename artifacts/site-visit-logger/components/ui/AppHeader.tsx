@@ -18,22 +18,18 @@ function greeting(): string {
 }
 
 /**
- * The one header every tab carries: role switch, who you are, notifications, theme toggle.
- *
- * It lives outside each screen's scroll view so it never scrolls away, and it
- * is one component rather than four copies — the flank widths have to match
- * exactly for the greeting to sit on the true centre, and that is precisely
- * the kind of detail that drifts when it is duplicated.
+ * The one header every tab carries. Top row: the mode slider ("Slide to work" /
+ * "Slide to hire"), the theme toggle and notifications. Second row: greeting on
+ * the left, name in the centre, location on the right. It lives outside each
+ * screen's scroll view so it never scrolls away.
  */
 export function AppHeader() {
   const colors = useColors();
   const { isDark, toggleTheme } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  // On small phones a matching 104pt right flank leaves the greeting ~70pt and
-  // it wraps; there the bell keeps only its own width and the text gets the rest.
-  const narrow = width < 360;
+  // Small phones get slightly smaller side text so "Good afternoon" and the town fit.
+  const small = useWindowDimensions().width < 350;
   const { profile: account } = useProfile();
   const { unreadCount } = useNotifications();
 
@@ -41,56 +37,56 @@ export function AppHeader() {
 
   return (
     <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 4 : insets.top }]}>
-      <View style={styles.row}>
-        <ModeSlider compact onPressAvatar={() => router.navigate('/profile')} />
-
-        {/* Both flanks are 104pt wide, so flex:1 lands the greeting on the true
-            centre of the row rather than merely between the two. */}
-        <View style={styles.center}>
-          <Text numberOfLines={1} style={[styles.greetingLabel, { color: colors.mutedForeground }]}>{greeting()}</Text>
-          <Text numberOfLines={1} style={[styles.userName, { color: colors.foreground }]}>{firstName}</Text>
-          <View style={styles.locationRow}>
-            <Ionicons name="location-sharp" size={13} color={colors.primary} />
-            <Text numberOfLines={1} style={[styles.location, { color: colors.mutedForeground }]}>
-              {account?.location ?? DEFAULT_LOCATION}
-            </Text>
-          </View>
+      <View style={styles.topRow}>
+        <View style={styles.slider}>
+          <ModeSlider variant="header" onPressAvatar={() => router.navigate('/profile')} />
         </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          testID="home-theme-toggle"
+          onPress={() => void toggleTheme()}
+          style={({ pressed }) => [
+            styles.iconButton,
+            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+          ]}
+        >
+          <Feather name={isDark ? 'sun' : 'moon'} size={18} color={isDark ? '#facc15' : colors.foreground} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={unreadCount ? `Open notifications, ${unreadCount} unread` : 'Open notifications'}
+          testID="home-notifications-button"
+          onPress={() => router.navigate('/notifications')}
+          style={({ pressed }) => [
+            styles.iconButton,
+            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+          ]}
+        >
+          <Feather name="bell" size={19} color={colors.foreground} />
+          {unreadCount > 0 ? (
+            <View style={[styles.badge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
+              <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
+      </View>
 
-        <View style={[styles.right, narrow && styles.rightNarrow]}>
-          {!narrow && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-              testID="home-theme-toggle"
-              onPress={() => void toggleTheme()}
-              style={({ pressed }) => [
-                styles.iconButton,
-                { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
-              ]}
-            >
-              <Feather name={isDark ? 'sun' : 'moon'} size={17} color={isDark ? '#facc15' : colors.foreground} />
-            </Pressable>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={unreadCount ? `Open notifications, ${unreadCount} unread` : 'Open notifications'}
-            testID="home-notifications-button"
-            onPress={() => router.navigate('/notifications')}
-            style={({ pressed }) => [
-              styles.iconButton,
-              { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
-            ]}
-          >
-            <Feather name="bell" size={18} color={colors.foreground} />
-            {unreadCount > 0 ? (
-              <View style={[styles.badge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
-                <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </Text>
-              </View>
-            ) : null}
-          </Pressable>
+      {/* Three equal columns, so the name sits on the true centre of the screen. */}
+      <View style={[styles.infoRow, small && styles.infoRowSmall]}>
+        <Text numberOfLines={1} style={[styles.greetingLabel, styles.colLeft, small && styles.smallGreeting, { color: colors.mutedForeground }]}>
+          {greeting()}
+        </Text>
+        <Text numberOfLines={1} style={[styles.userName, styles.colCenter, { color: colors.foreground }]}>
+          {firstName}
+        </Text>
+        <View style={[styles.colRight, styles.locationRow]}>
+          <Ionicons name="location-sharp" size={13} color={colors.primary} />
+          <Text numberOfLines={1} style={[styles.location, small && styles.smallLocation, { color: colors.mutedForeground }]}>
+            {account?.location ?? DEFAULT_LOCATION}
+          </Text>
         </View>
       </View>
     </View>
@@ -98,19 +94,24 @@ export function AppHeader() {
 }
 
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: 20, paddingBottom: 2 },
-  row: { flexDirection: 'row', alignItems: 'center' },
-  center: { flex: 1, alignItems: 'center', paddingHorizontal: 6 },
-  right: { width: 104, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
-  rightNarrow: { width: 44, gap: 0 },
+  header: { paddingHorizontal: 20, paddingBottom: 8 },
+  topRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  slider: { flex: 1 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
+  colLeft: { flex: 1, textAlign: 'left' },
+  colCenter: { flex: 1, textAlign: 'center' },
+  colRight: { flex: 1, justifyContent: 'flex-end' },
+  infoRowSmall: { gap: 4 },
+  smallGreeting: { fontSize: 12 },
+  smallLocation: { fontSize: 11 },
   greetingLabel: { fontFamily: 'Inter_500Medium', fontSize: 13 },
-  userName: { fontFamily: 'Inter_700Bold', fontSize: 18, letterSpacing: -0.4, marginTop: 1, maxWidth: '100%' },
-  locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  userName: { fontFamily: 'Inter_700Bold', fontSize: 18, letterSpacing: -0.4 },
+  locationRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   location: { fontFamily: 'Inter_400Regular', fontSize: 12, flexShrink: 1 },
   iconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
