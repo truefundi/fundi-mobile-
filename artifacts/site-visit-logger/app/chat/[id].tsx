@@ -37,7 +37,7 @@ import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
-import { JobProgressStepper } from '@/components/chat/JobProgressStepper';
+import { JobProgressStepper, ProgressToggle } from '@/components/chat/JobProgressStepper';
 import { OfferCard } from '@/components/chat/OfferCard';
 import { OfferSheet, ReasonSheet } from '@/components/chat/ChatSheets';
 import { RequestCard, buildRequestSummary } from '@/components/chat/RequestCard';
@@ -102,6 +102,10 @@ function roomLockReason(room: BackendChatRoom | null, isTechnician: boolean): st
   }
   return null;
 }
+
+/** One line of text at 14/20 plus vertical padding: the same height as the composer buttons. */
+const INPUT_MIN_HEIGHT = 42;
+const INPUT_MAX_HEIGHT = 120;
 
 const ACTION_LABEL: Record<LifecycleAction['kind'], string> = {
   'accept-request': 'Accept request',
@@ -249,6 +253,10 @@ export default function JobChatScreen() {
   const [reasonFlow, setReasonFlow] = useState<{ flow: ReasonFlow; offer?: PriceOfferItem } | null>(null);
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
+  /** Whether the progress tracker is dropped down from the header. */
+  const [progressOpen, setProgressOpen] = useState(false);
+  /** Composer height: one line, growing with the text up to five lines. */
+  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
   /** Same shape as `Alert.alert`, drawn in-app so it also works on web. */
   const showDialog = useCallback((title: string, message?: string, buttons?: DialogButton[]) => {
     setDialog({
@@ -465,7 +473,7 @@ export default function JobChatScreen() {
     }
   };
 
-  // Cancel button on the request card / header menu.
+  // Cancel button on the request card.
   const cancelLabel =
     lifecycle.cancellation === 'pull-out'
       ? isTechnician ? 'Pull Out' : 'Cancel Request'
@@ -473,7 +481,9 @@ export default function JobChatScreen() {
         ? 'Decline Request'
         : lifecycle.cancellation === 'cancel-open-job'
           ? 'Cancel Request'
-          : null;
+          : lifecycle.cancellation === 'restricted'
+            ? isTechnician ? 'Request cancellation' : 'Cancel Job'
+            : null;
   const startCancel = () => {
     if (lifecycle.cancellation === 'none') return;
     setReasonFlow({ flow: lifecycle.cancellation });
@@ -539,22 +549,6 @@ export default function JobChatScreen() {
         if (reasonFlow.offer) await workspace.declineOffer(reasonFlow.offer.id, reason);
         return;
     }
-  };
-
-  const openMenu = () => {
-    const options: Array<{ text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }> = [];
-    if (otherPhone) options.push({ text: `Call ${otherName}`, onPress: () => void Linking.openURL(`tel:${otherPhone}`) });
-    if (lifecycle.cancellation === 'restricted') {
-      options.push({
-        text: isTechnician ? 'Request cancellation' : 'Cancel job',
-        style: 'destructive',
-        onPress: () => setReasonFlow({ flow: 'restricted' }),
-      });
-    } else if (cancelLabel) {
-      options.push({ text: cancelLabel, style: 'destructive', onPress: startCancel });
-    }
-    options.push({ text: 'Close', style: 'cancel' });
-    showDialog(otherName, summary?.service, options);
   };
 
   const openAttachment = (message: ChatTimelineMessage) => {
@@ -864,11 +858,7 @@ export default function JobChatScreen() {
           summary={summary}
           badge={lifecycle.badge}
           cancelLabel={cancelLabel}
-          cancelHint={
-            lifecycle.cancellation === 'restricted'
-              ? isTechnician ? 'Price agreed · cancellation needs review' : 'Price agreed · cancel from the menu'
-              : null
-          }
+          cancelHint={lifecycle.cancellation === 'restricted' && isTechnician ? 'Needs admin review' : null}
           onCancel={startCancel}
           onPreviewImage={setPreviewUri}
         />
@@ -931,13 +921,13 @@ export default function JobChatScreen() {
 
   const inputPlaceholder = !room
     ? pendingOffer
-      ? 'Accept the request to message the client'
-      : 'Messaging opens once a technician is assigned'
+      ? 'Accept to start chatting'
+      : 'Opens once assigned'
     : lockReason
-      ? 'Messaging is turned off'
+      ? 'Messaging is off'
       : feeBlocksClient
-        ? feeStatus === 'checking' ? 'Verifying booking fee…' : 'Pay the booking fee to message your technician'
-        : 'Type a message…';
+        ? feeStatus === 'checking' ? 'Checking payment…' : 'Pay the fee to chat'
+        : 'Message';
 
   const actionLabel = lifecycle.action ? ACTION_LABEL[lifecycle.action.kind] : null;
   const actionBusy =
@@ -996,20 +986,18 @@ export default function JobChatScreen() {
               <Ionicons name="call" size={17} color={colors.primary} />
             </Pressable>
           ) : null}
-          <Pressable
-            accessibilityLabel="More options"
-            testID="chat-header-menu"
-            onPress={openMenu}
-            style={[styles.headerIconBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
-          >
-            <Ionicons name="ellipsis-vertical" size={17} color={colors.foreground} />
-          </Pressable>
+          <ProgressToggle
+            expanded={progressOpen}
+            onPress={() => setProgressOpen((open) => !open)}
+            lifecycle={lifecycle}
+          />
         </View>
       </View>
 
       {/* Progress stepper */}
       <JobProgressStepper
         lifecycle={lifecycle}
+        expanded={progressOpen}
         actionLabel={stepperActionAllowed ? actionLabel : null}
         onAction={lifecycle.action ? () => runLifecycleAction(lifecycle.action!) : undefined}
         actionBusy={actionBusy}
@@ -1171,11 +1159,25 @@ export default function JobChatScreen() {
           onBlur={() => chat.setTyping(false)}
           maxLength={CHAT_TEXT_MAX_LENGTH}
           multiline
+          // Web renders a <textarea>; one row keeps it the same height as the buttons.
+          {...(Platform.OS === 'web' ? { rows: 1 } : {})}
+          onContentSizeChange={(event) => {
+            const next = Math.min(INPUT_MAX_HEIGHT, Math.max(INPUT_MIN_HEIGHT, Math.ceil(event.nativeEvent.contentSize.height)));
+            setInputHeight((current) => (current === next ? current : next));
+          }}
           placeholder={inputPlaceholder}
           placeholderTextColor={colors.mutedForeground}
           style={[
             styles.textInput,
-            { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground, opacity: canMessage ? 1 : 0.6 },
+            {
+              height: draft ? inputHeight : INPUT_MIN_HEIGHT,
+              // Scroll only once the text is taller than the box can grow.
+              ...(Platform.OS === 'web' ? ({ overflowY: inputHeight >= INPUT_MAX_HEIGHT ? 'auto' : 'hidden' } as object) : {}),
+              backgroundColor: colors.background,
+              borderColor: colors.border,
+              color: colors.foreground,
+              opacity: canMessage ? 1 : 0.6,
+            },
           ]}
           testID="chat-message-input"
         />
@@ -1296,12 +1298,28 @@ const styles = StyleSheet.create({
   lockedBannerTop: { flexDirection: 'row', alignItems: 'center' },
   lockedIconCircle: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   lockedBannerTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 13, lineHeight: 18 },
+  // Buttons and the one-line box share one height; as the text grows the buttons stay on its last line.
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, borderTopWidth: 1, gap: 8 },
-  actionIconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  textInput: { flex: 1, minHeight: 40, maxHeight: 120, borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, fontFamily: 'Inter_400Regular', fontSize: 14 },
+  actionIconBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  textInput: {
+    flex: 1,
+    minHeight: 42,
+    maxHeight: 120,
+    borderWidth: 1,
+    borderRadius: 21,
+    paddingHorizontal: 16,
+    // 10 + 20 + 10 plus the 1pt borders is exactly the 42pt button height.
+    paddingTop: 10,
+    paddingBottom: 10,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlignVertical: 'center',
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', resize: 'none' } as object) : {}),
+  },
   answerBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1 },
   flex1: { flex: 1 },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   fullscreenOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
   fullscreenImage: { width: '100%', height: '80%' },
   closePreviewBtn: { position: 'absolute', top: 48, right: 20, padding: 8 },
