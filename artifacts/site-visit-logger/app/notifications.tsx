@@ -1,272 +1,262 @@
-import { Feather, Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { JobStatus, RequestLifecycleStatus } from '@/constants/jobs';
 import { BackButton } from '@/components/ui/BackButton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { PageHeading } from '@/components/ui/PageHeading';
-import { WorkAlerts } from '@/components/work/WorkAlerts';
-import { WorkLocked } from '@/components/work/WorkLocked';
+import { shortDate } from '@/components/jobs/JobListItem';
+import type { Job } from '@/constants/jobs';
+import { useFundi } from '@/context/FundiContext';
+import { useNotifications, type NotificationGroup } from '@/context/NotificationContext';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
-import { useFundi } from '@/context/FundiContext';
-import { useNotifications } from '@/context/NotificationContext';
+import { getServiceIcon } from '@/lib/categories-api';
+import type { NotificationKind } from '@/lib/notifications-api';
 
-/** Icon per journey event, so each update is recognisable at a glance. */
-const STATUS_ICON: Partial<Record<JobStatus | RequestLifecycleStatus, keyof typeof Ionicons.glyphMap>> = {
-  REQUESTED: 'paper-plane-outline',
-  MATCHING: 'search-outline',
-  SEARCHING_DISPATCH: 'radio-outline',
-  OFFERED: 'person-add-outline',
-  ACCEPTED: 'checkmark-circle-outline',
-  PAYMENT_PENDING: 'wallet-outline',
-  PAID: 'card-outline',
-  VISIT_PAID: 'card-outline',
-  DISPATCHED: 'paper-plane-outline',
-  NEGOTIATING: 'chatbubbles-outline',
-  COOPERATION_CONFIRMED: 'shield-checkmark-outline',
-  EN_ROUTE: 'navigate-outline',
-  ARRIVED: 'location-outline',
-  DIAGNOSING: 'build-outline',
-  DIAGNOSIS_COMPLETE: 'clipboard-outline',
-  QUOTE_PENDING: 'document-text-outline',
-  QUOTE_APPROVED: 'thumbs-up-outline',
-  REPAIR_IN_PROGRESS: 'construct-outline',
-  ADDITIONAL_APPROVAL_REQUIRED: 'alert-circle-outline',
-  REPAIR_COMPLETED: 'checkmark-done-outline',
-  PAYMENT_REPORTED: 'receipt-outline',
-  COMPLETED: 'star-outline',
-  CANCELLED: 'close-circle-outline',
-  PENDING_RESPONSE: 'time-outline',
-  OFFER_MADE: 'pricetag-outline',
-  DECLINED: 'close-circle-outline',
+/** Icon for an update that is not tied to a known job. */
+const KIND_ICON: Record<NotificationKind, keyof typeof Ionicons.glyphMap> = {
+  JOB_OFFER: 'briefcase-outline',
+  JOB_ASSIGNED: 'person-add-outline',
+  JOB_ACCEPTED: 'checkmark-circle-outline',
+  JOB_COMPLETED: 'checkmark-done-outline',
+  JOB_CANCELLED: 'close-circle-outline',
+  CONVERSATION_MESSAGE: 'chatbubble-ellipses-outline',
+  OFFER_SENT: 'pricetag-outline',
+  OFFER_ACCEPTED: 'ribbon-outline',
+  OFFER_DECLINED: 'close-circle-outline',
+  DISPUTE_OPENED: 'alert-circle-outline',
+  DISPUTE_RESOLVED: 'shield-checkmark-outline',
+  DOCUMENT_APPROVED: 'document-text-outline',
+  DOCUMENT_REJECTED: 'document-text-outline',
+  BROADCAST: 'megaphone-outline',
+  SYSTEM: 'information-circle-outline',
 };
 
-/** Stages still waiting on the customer, highlighted at the top of the feed. */
-const NEEDS_ACTION: JobStatus[] = ['OFFERED', 'ACCEPTED', 'QUOTE_PENDING', 'ADDITIONAL_APPROVAL_REQUIRED', 'REPAIR_COMPLETED', 'PAYMENT_PENDING'];
-
+/**
+ * The account's notifications from the server, one entry per job: the newest
+ * update on top and a count of the others, so following a job never floods
+ * the list. Opening an entry marks it read and goes to the job's chat.
+ */
 export default function NotificationsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { jobs, isHydrated: jobsHydrated } = useFundi();
-  const {
-    notifications,
-    isHydrated: notificationsHydrated,
-    unreadCount,
-    toggleRead,
-    markAllRead,
-    deleteNotification,
-  } = useNotifications();
-  const [filter, setFilter] = React.useState<'all' | 'unread'>('all');
-  const isHydrated = jobsHydrated && notificationsHydrated;
+  const { groups, unreadCount, isHydrated, loadError, refresh, markGroupRead, markAllRead } = useNotifications();
+  const { jobs } = useFundi();
+  const { offers, mine, done, cancelled } = useWork();
+  const [refreshing, setRefreshing] = useState(false);
 
-  const { mode, status } = useWork();
-  const working = mode === 'working' && status === 'verified';
-  // In working mode but not cleared yet: say so rather than showing customer screens.
-  const locked = mode === 'working' && status !== 'verified';
-  const inWork = mode === 'working';
+  // Fresh on every visit.
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh]),
+  );
 
-  const actionable = jobs.filter((job) => NEEDS_ACTION.includes(job.status));
-  const visibleNotifications = notifications.filter((item) => filter === 'all' || !item.read);
+  const jobById = useMemo(() => {
+    const map = new Map<string, Job>();
+    for (const job of [...jobs, ...offers, ...mine, ...done, ...cancelled]) map.set(job.id, job);
+    return map;
+  }, [jobs, offers, mine, done, cancelled]);
 
-  const openNotification = (item: (typeof notifications)[number]) => {
-    if (!item.read) toggleRead(item.id);
-    if (item.threadId) {
-      router.push({ pathname: '/chat/[id]', params: { id: item.jobId ?? item.threadId! } });
-    } else if (item.jobId) {
-      router.push(`/job/${item.jobId}`);
+  const fresh = groups.filter((group) => group.unread > 0);
+  const earlier = groups.filter((group) => group.unread === 0);
+
+  const open = (group: NotificationGroup) => {
+    markGroupRead(group);
+    if (group.jobId) {
+      router.push({ pathname: '/chat/[id]', params: { id: group.jobId } });
+    } else if (group.latest.type === 'DOCUMENT_APPROVED' || group.latest.type === 'DOCUMENT_REJECTED') {
+      router.navigate('/');
     }
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refresh();
+    setRefreshing(false);
+  };
+
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: colors.background }]}
-      contentContainerStyle={{ paddingTop: Platform.OS === 'web' ? 24 : insets.top + 8, paddingBottom: Platform.OS === 'web' ? 34 : insets.bottom + 30 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <BackButton onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} testID="notifications-back-button" />
-
-      <View style={styles.headerRow}>
-        <PageHeading eyebrow={inWork ? 'Your work' : 'Keep in the loop'} title="Notifications" />
-        <Feather name="bell" size={20} color={colors.mutedForeground} />
-      </View>
-
-      {working ? <WorkAlerts /> : locked ? <WorkLocked /> : null}
-
-      {actionable.length > 0 ? (
-        <Pressable
-          accessibilityRole="button"
-          testID="notifications-action-banner"
-          onPress={() => router.push(`/job/${actionable[0]!.id}`)}
-          style={({ pressed }) => [styles.actionBanner, { backgroundColor: colors.primary, opacity: pressed ? 0.85 : 1 }]}
-        >
-          <View style={[styles.actionIcon, { backgroundColor: colors.primaryForeground }]}>
-            <Ionicons name="alert-circle" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.actionCopy}>
-            <Text style={[styles.actionTitle, { color: colors.primaryForeground }]}>
-              {actionable.length === 1 ? '1 job needs you' : `${actionable.length} jobs need you`}
-            </Text>
-            <Text style={[styles.actionText, { color: colors.secondary }]} numberOfLines={1}>
-              {actionable[0]!.service} · {actionable.length > 1 ? 'tap to open the first' : 'tap to continue'}
-            </Text>
-          </View>
-          <Feather name="chevron-right" size={18} color={colors.primaryForeground} />
-        </Pressable>
-      ) : unreadCount === 0 && notifications.length > 0 ? (
-        <View style={[styles.unreadBanner, { backgroundColor: colors.secondary }]}>
-          <View style={[styles.unreadIcon, { backgroundColor: colors.primary }]}>
-            <Ionicons name="notifications-outline" size={17} color={colors.primaryForeground} />
-          </View>
-          <Text style={[styles.unreadText, { color: colors.foreground }]}>You are all caught up on important updates.</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.filterRow}>
-        {(['all', 'unread'] as const).map((value) => {
-          const selected = filter === value;
-          const count = value === 'all' ? notifications.length : unreadCount;
-          return (
-            <Pressable
-              key={value}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              testID={`notifications-filter-${value}`}
-              onPress={() => setFilter(value)}
-              style={[
-                styles.filterButton,
-                { backgroundColor: selected ? colors.primary : colors.card, borderColor: colors.border },
-              ]}
-            >
-              <Text style={[styles.filterLabel, { color: selected ? colors.primaryForeground : colors.foreground }]}>
-                {value === 'all' ? 'All' : 'Unread'}
-              </Text>
-              <View style={[styles.filterBadge, { backgroundColor: selected ? colors.primaryForeground : colors.secondary }]}>
-                <Text style={[styles.filterCount, { color: selected ? colors.primary : colors.foreground }]}>{count}</Text>
-              </View>
-            </Pressable>
-          );
-        })}
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 18 : insets.top + 8 }]}>
+        <BackButton onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} testID="notifications-back-button" />
+        <Text style={[styles.title, { color: colors.foreground }]}>Notifications</Text>
         {unreadCount > 0 ? (
-          <Pressable
-            accessibilityRole="button"
-            testID="notifications-mark-all-read"
-            onPress={markAllRead}
-            style={styles.markAllButton}
-          >
-            <Text style={[styles.markAllText, { color: colors.primary }]}>Mark all as read</Text>
+          <Pressable accessibilityRole="button" onPress={markAllRead} hitSlop={8} testID="notifications-mark-all-read">
+            <Text style={[styles.markAll, { color: colors.primary }]}>Mark all read</Text>
           </Pressable>
-        ) : null}
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
       </View>
 
-      {!isHydrated ? (
-        <LoadingState label="Loading updates…" />
-      ) : visibleNotifications.length === 0 ? (
-        <EmptyState
-          icon="bell-off"
-          title={filter === 'unread' ? 'No unread notifications' : 'Nothing yet'}
-          text={filter === 'unread' ? 'You have read all your notifications.' : 'Updates about requests, offers, arrival, quotes and payments will appear here.'}
-        />
-      ) : (
-        visibleNotifications.map((item) => (
-          <View
-            key={item.id}
-            testID={`notification-row-${item.id}`}
-            style={[styles.alertCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: item.read ? 0.75 : 1 }]}
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={item.title}
-              testID={`notification-${item.id}`}
-              onPress={() => openNotification(item)}
-              style={styles.alertMain}
-            >
-              <View style={[styles.alertIcon, { backgroundColor: colors.secondary }]}>
-                <Ionicons name={STATUS_ICON[item.status] ?? 'information-circle-outline'} size={20} color={colors.primary} />
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: Platform.OS === 'web' ? 34 : insets.bottom + 30 }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />}
+      >
+        {!isHydrated ? (
+          <LoadingState label="Loading notifications…" />
+        ) : groups.length === 0 ? (
+          loadError ? (
+            <EmptyState
+              icon="wifi-off"
+              title="Couldn't load notifications"
+              text={loadError}
+              action={{ label: 'Try again', onPress: () => void refresh() }}
+            />
+          ) : (
+            <EmptyState
+              icon="bell"
+              title="You're all caught up"
+              text="Updates about your requests, prices and jobs will appear here."
+            />
+          )
+        ) : (
+          <>
+            {fresh.length > 0 ? (
+              <Section title="New" groups={fresh} jobById={jobById} onOpen={open} />
+            ) : (
+              <View style={[styles.caughtUp, { backgroundColor: colors.secondary }]}>
+                <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                <Text style={[styles.caughtUpText, { color: colors.foreground }]}>You're all caught up.</Text>
               </View>
-              <View style={styles.alertCopy}>
-                <View style={styles.alertTitleRow}>
-                  <Text style={[styles.alertTitle, { color: colors.foreground }]} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  {!item.read ? <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} /> : null}
-                  <Text style={[styles.alertTime, { color: colors.mutedForeground }]}>{relativeTime(item.at)}</Text>
-                </View>
-                <Text style={[styles.alertText, { color: colors.mutedForeground }]}>{item.text}</Text>
-                <Text style={[styles.alertService, { color: colors.primary }]}>{item.service}</Text>
-              </View>
-            </Pressable>
-            <View style={styles.notificationActions}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={item.read ? 'Mark as unread' : 'Mark as read'}
-                testID={`notification-toggle-read-${item.id}`}
-                onPress={() => toggleRead(item.id)}
-                hitSlop={6}
-              >
-                <Ionicons name={item.read ? 'mail-outline' : 'mail-open-outline'} size={17} color={colors.mutedForeground} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Delete notification"
-                testID={`notification-delete-${item.id}`}
-                onPress={() => deleteNotification(item.id)}
-                hitSlop={6}
-              >
-                <Feather name="trash-2" size={17} color={colors.destructive} />
-              </Pressable>
-            </View>
-          </View>
-        ))
-      )}
-    </ScrollView>
+            )}
+            {earlier.length > 0 ? <Section title="Earlier" groups={earlier} jobById={jobById} onOpen={open} /> : null}
+          </>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
-/** Short "3 min ago" style stamp for the feed. */
-function relativeTime(iso: string): string {
-  const seconds = Math.max(Math.floor((Date.now() - new Date(iso).getTime()) / 1000), 0);
-  if (seconds < 60) return 'Just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return 'Yesterday';
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function Section({
+  title,
+  groups,
+  jobById,
+  onOpen,
+}: {
+  title: string;
+  groups: NotificationGroup[];
+  jobById: Map<string, Job>;
+  onOpen: (group: NotificationGroup) => void;
+}) {
+  const colors = useColors();
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>{title.toUpperCase()}</Text>
+      <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {groups.map((group, index) => (
+          <NotificationRow
+            key={group.key}
+            group={group}
+            job={group.jobId ? jobById.get(group.jobId) : undefined}
+            first={index === 0}
+            onPress={() => onOpen(group)}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function NotificationRow({
+  group,
+  job,
+  first,
+  onPress,
+}: {
+  group: NotificationGroup;
+  job?: Job;
+  first: boolean;
+  onPress: () => void;
+}) {
+  const colors = useColors();
+  const { latest } = group;
+  const unread = group.unread > 0;
+  const heading = job?.service ?? (group.jobId ? 'Your job' : latest.title);
+  const line = group.jobId ? latest.title : latest.body;
+  const detail = group.jobId ? latest.body : null;
+  const more = group.items.length - 1;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${heading}. ${latest.title}. ${latest.body}`}
+      onPress={onPress}
+      testID={`notification-${group.key}`}
+      style={({ pressed }) => [
+        styles.row,
+        !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+        { backgroundColor: pressed ? colors.secondary : unread ? colors.primary + '0D' : 'transparent' },
+      ]}
+    >
+      <View style={[styles.icon, { backgroundColor: colors.secondary }]}>
+        {job ? (
+          <MaterialCommunityIcons name={getServiceIcon(job.service) as any} size={20} color={colors.primary} />
+        ) : (
+          <Ionicons name={KIND_ICON[latest.type] ?? 'notifications-outline'} size={20} color={colors.primary} />
+        )}
+        {unread ? <View style={[styles.dot, { backgroundColor: colors.primary, borderColor: colors.card }]} /> : null}
+      </View>
+      <View style={styles.body}>
+        <View style={styles.topLine}>
+          <Text
+            style={[styles.heading, { color: colors.foreground, fontFamily: unread ? 'Inter_700Bold' : 'Inter_600SemiBold' }]}
+            numberOfLines={1}
+          >
+            {heading}
+          </Text>
+          <Text style={[styles.time, { color: unread ? colors.primary : colors.mutedForeground }]}>
+            {shortDate(latest.createdAt)}
+          </Text>
+        </View>
+        <Text
+          style={[styles.line, { color: colors.foreground, fontFamily: unread ? 'Inter_600SemiBold' : 'Inter_500Medium' }]}
+          numberOfLines={1}
+        >
+          {line}
+        </Text>
+        {detail ? (
+          <Text style={[styles.detail, { color: colors.mutedForeground }]} numberOfLines={2}>
+            {detail}
+          </Text>
+        ) : null}
+        {more > 0 ? (
+          <Text style={[styles.more, { color: colors.mutedForeground }]}>
+            {group.unread > 1 ? `${group.unread} new updates` : `+${more} earlier update${more === 1 ? '' : 's'}`}
+          </Text>
+        ) : null}
+      </View>
+      {group.jobId ? <Feather name="chevron-right" size={16} color={colors.mutedForeground} style={styles.chevron} /> : null}
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, paddingHorizontal: 20 },
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: 4, marginBottom: 18 },
-  actionBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, padding: 14, marginBottom: 14 },
-  actionIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  actionCopy: { flex: 1 },
-  actionTitle: { fontFamily: 'Inter_700Bold', fontSize: 14 },
-  actionText: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 2 },
-  filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
-  filterButton: { flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderRadius: 20, paddingVertical: 7, paddingHorizontal: 11 },
-  filterLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  filterBadge: { minWidth: 19, height: 19, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  filterCount: { fontFamily: 'Inter_700Bold', fontSize: 10 },
-  markAllButton: { marginLeft: 'auto', paddingVertical: 7 },
-  markAllText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  unreadBanner: { flexDirection: 'row', alignItems: 'center', gap: 11, borderRadius: 14, padding: 14, marginBottom: 14 },
-  unreadIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  unreadText: { fontFamily: 'Inter_500Medium', fontSize: 13, flex: 1 },
-  alertCard: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 10 },
-  alertMain: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
-  notificationActions: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingLeft: 3 },
-  alertIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  alertCopy: { flex: 1 },
-  alertTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  alertTitle: { fontFamily: 'Inter_700Bold', fontSize: 14, flex: 1 },
-  unreadDot: { width: 7, height: 7, borderRadius: 4 },
-  alertTime: { fontFamily: 'Inter_400Regular', fontSize: 12 },
-  alertText: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, marginTop: 3 },
-  alertService: { fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 6 },
+  screen: { flex: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingBottom: 12 },
+  title: { flex: 1, fontFamily: 'Inter_700Bold', fontSize: 20, letterSpacing: -0.4 },
+  markAll: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  headerSpacer: { width: 1 },
+  content: { paddingHorizontal: 20, paddingTop: 4, gap: 18 },
+  caughtUp: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, padding: 14 },
+  caughtUpText: { fontFamily: 'Inter_500Medium', fontSize: 13 },
+  section: { gap: 8 },
+  sectionTitle: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 0.6 },
+  sectionCard: { borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
+  row: { flexDirection: 'row', gap: 12, paddingHorizontal: 14, paddingVertical: 13 },
+  icon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  dot: { position: 'absolute', top: -2, right: -2, width: 11, height: 11, borderRadius: 6, borderWidth: 2 },
+  body: { flex: 1, minWidth: 0, gap: 2 },
+  topLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  heading: { flex: 1, fontSize: 14 },
+  time: { fontFamily: 'Inter_500Medium', fontSize: 11 },
+  line: { fontSize: 13 },
+  detail: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
+  more: { fontFamily: 'Inter_500Medium', fontSize: 11, marginTop: 3 },
+  chevron: { alignSelf: 'center' },
 });

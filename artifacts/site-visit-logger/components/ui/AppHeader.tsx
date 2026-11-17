@@ -1,13 +1,12 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useMemo } from 'react';
+import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ModeSlider } from '@/components/ui/ModeSlider';
 import { DEFAULT_LOCATION } from '@/constants/profile';
-import { isClosed } from '@/constants/jobs';
 import { useProfile } from '@/context/ProfileContext';
-import { useFundi } from '@/context/FundiContext';
+import { useNotifications } from '@/context/NotificationContext';
 import { useColors } from '@/hooks/useColors';
 import { useTheme } from '@/context/ThemeContext';
 
@@ -36,10 +35,9 @@ export function AppHeader() {
   // it wraps; there the bell keeps only its own width and the text gets the rest.
   const narrow = width < 360;
   const { profile: account } = useProfile();
-  const { jobs } = useFundi();
+  const { unreadCount } = useNotifications();
 
   const firstName = account?.name.split(' ')[0] ?? '';
-  const hasActiveJob = useMemo(() => jobs.some((job) => !isClosed(job.status)), [jobs]);
 
   return (
     <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 4 : insets.top }]}>
@@ -76,7 +74,7 @@ export function AppHeader() {
           )}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Open notifications"
+            accessibilityLabel={unreadCount ? `Open notifications, ${unreadCount} unread` : 'Open notifications'}
             testID="home-notifications-button"
             onPress={() => router.navigate('/notifications')}
             style={({ pressed }) => [
@@ -85,7 +83,13 @@ export function AppHeader() {
             ]}
           >
             <Feather name="bell" size={18} color={colors.foreground} />
-            {hasActiveJob ? <View style={[styles.dot, { backgroundColor: colors.primary }]} /> : null}
+            {unreadCount > 0 ? (
+              <View style={[styles.badge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
+                <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            ) : null}
           </Pressable>
         </View>
       </View>
@@ -112,5 +116,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
   },
-  dot: { width: 7, height: 7, borderRadius: 4, position: 'absolute', top: 8, right: 8 },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    paddingHorizontal: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { fontFamily: 'Inter_700Bold', fontSize: 9 },
 });

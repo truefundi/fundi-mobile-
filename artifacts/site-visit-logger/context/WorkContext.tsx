@@ -26,7 +26,6 @@ import {
   type ServiceRequest,
 } from '@/constants/jobs';
 import { useAuth } from '@/context/AuthContext';
-import { useNotifications } from '@/context/NotificationContext';
 import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
 import { cleanAndNormalizePhone, refreshTokens, updateUserRole } from '@/lib/auth-api';
@@ -362,7 +361,6 @@ const WorkContext = createContext<WorkContextValue | null>(null);
 export function WorkProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
   const fundi = useContext(FundiContext);
-  const { addNotification } = useNotifications();
   const [state, setState] = useState<Stored>(EMPTY);
   const [techJobs, setTechJobs] = useState<Job[]>([]);
   const techJobsRef = useRef<Job[]>([]);
@@ -631,20 +629,9 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           } catch {}
         });
 
-        addNotification({
-          id: `start-${jobId}-${Date.now()}`,
-          jobId,
-          threadId: targetJob.chatThreadId,
-          status: 'IN_PROGRESS',
-          service: targetJob.service,
-          title: 'Technician started your job',
-          text: `The technician has started work on ${targetJob.service}.`,
-          at: now,
-          recipientPhones: [targetJob.clientPhone],
-        });
       }
     },
-    [account?.phone, addNotification, fundi],
+    [account?.phone, fundi],
   );
 
   const cancelJob = useCallback(
@@ -706,20 +693,9 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           } catch {}
         });
 
-        addNotification({
-          id: `cancel-${jobId}-${Date.now()}`,
-          jobId,
-          threadId: targetJob.chatThreadId,
-          status: 'CANCELLED',
-          service: targetJob.service,
-          title: 'Job cancelled by technician',
-          text: `The technician cancelled the in-progress job: ${reason}`,
-          at: now,
-          recipientPhones: [targetJob.clientPhone],
-        });
       }
     },
-    [account?.phone, addNotification, fundi],
+    [account?.phone, fundi],
   );
 
   const completeJob = useCallback(
@@ -783,20 +759,9 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           } catch {}
         });
 
-        addNotification({
-          id: `complete-${jobId}-${Date.now()}`,
-          jobId,
-          threadId: targetJob.chatThreadId,
-          status: 'COMPLETED',
-          service: targetJob.service,
-          title: 'Job completed',
-          text: `Your technician has completed the service (${targetJob.service}). Agreed fee: RWF ${(targetJob.agreedPrice || targetJob.bookingFee?.amount || getServiceBookingFee(targetJob.service)).toLocaleString()}.`,
-          at: now,
-          recipientPhones: [targetJob.clientPhone],
-        });
       }
     },
-    [account?.phone, addNotification, fundi],
+    [account?.phone, fundi],
   );
 
   const update = useCallback(
