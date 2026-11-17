@@ -4,7 +4,6 @@ import { jobsKey, LEGACY_JOBS_KEY } from '@/constants/storage';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { getServiceBookingFee } from '@/constants/services';
 import { useAuth } from '@/context/AuthContext';
-import { useNotifications } from '@/context/NotificationContext';
 import {
   cancelCustomerJob,
   confirmJobCooperation,
@@ -308,7 +307,6 @@ async function loadJobs(key: string): Promise<Job[]> {
 
 export function FundiProvider({ children }: { children: ReactNode }) {
   const { account, isHydrated: sessionReady } = useAuth();
-  const { addNotification, linkJobThread } = useNotifications();
   const [jobs, setJobs] = useState<Job[]>([]);
   const jobsRef = useRef<Job[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
@@ -389,24 +387,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     const updatedJobs = jobsRef.current.map((job) => (job.id === id ? updatedJob : job));
     jobsRef.current = updatedJobs;
     setJobs(updatedJobs);
-
-    if (updatedJob.status !== currentJob.status) {
-      const event = updatedJob.events[updatedJob.events.length - 1];
-      if (event) {
-        addNotification({
-          id: event.id,
-          jobId: updatedJob.id,
-          threadId: updatedJob.chatThreadId,
-          status: event.status,
-          service: updatedJob.service,
-          title: event.title,
-          text: event.text,
-          at: event.at,
-          ...(recipientPhones ? { recipientPhones } : {}),
-        });
-      }
-    }
-  }, [addNotification]);
+  }, []);
 
   const advance = useCallback(
     (id: string, next: JobStatus) => {
@@ -445,9 +426,8 @@ export function FundiProvider({ children }: { children: ReactNode }) {
           ...(job.bookingFee?.status === 'PAID' ? { chatId: threadId } : {}),
         };
       });
-      linkJobThread(id, threadId);
     },
-    [linkJobThread, update],
+    [update],
   );
 
   const initializeChatId = useCallback(
@@ -534,20 +514,11 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       setJobs(updatedJobs);
 
       if (draft.events[0]) {
-        addNotification({
-          id: draft.events[0].id,
-          jobId: draft.id,
-          status: initialStatus,
-          service: draft.service,
-          title: draft.events[0].title,
-          text: draft.events[0].text,
-          at: now,
-        });
       }
 
       return id;
     },
-    [addNotification],
+    [],
   );
 
   const markBookingFeePaid = useCallback(
@@ -682,17 +653,8 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     const updatedJobs = [base, ...jobsRef.current];
     jobsRef.current = updatedJobs;
     setJobs(updatedJobs);
-    addNotification({
-      id: base.events[0]!.id,
-      jobId: base.id,
-      status: 'REQUESTED',
-      service: base.service,
-      title: copy.title,
-      text: copy.text,
-      at: now,
-    });
     return id;
-  }, [addNotification]);
+  }, []);
 
   const cancelJob = useCallback(
     async (id: string, reason?: string, recipientPhones?: string[]) => {

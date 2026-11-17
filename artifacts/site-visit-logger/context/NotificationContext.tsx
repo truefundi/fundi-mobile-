@@ -1,198 +1,152 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ExpoNotifications from 'expo-notifications';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { jobsKey, LEGACY_JOBS_KEY } from '@/constants/storage';
-import type { JobStatus, RequestLifecycleStatus } from '@/constants/jobs';
+import { AppState, Platform } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
+import {
+  fetchNotifications,
+  markAllNotificationsRead,
+  markJobNotificationsRead,
+  markNotificationRead,
+  type ServerNotification,
+} from '@/lib/notifications-api';
 
-export type AppNotification = {
-  id: string;
+/**
+ * One entry in the notification feed. Every update about the same job is
+ * folded into a single entry (newest update on top, with a count), so a busy
+ * job reads like one conversation instead of a stream of separate alerts.
+ * Notifications that are not about a job stand on their own.
+ */
+export type NotificationGroup = {
+  key: string;
   jobId?: string;
-  threadId?: string;
-  status: JobStatus | RequestLifecycleStatus;
-  service: string;
-  title: string;
-  text: string;
-  at: string;
-  read: boolean;
-  recipientPhones?: string[];
+  latest: ServerNotification;
+  items: ServerNotification[];
+  unread: number;
 };
 
-type NewNotification = Omit<AppNotification, 'read'> & { read?: boolean };
-
 type NotificationContextValue = {
-  notifications: AppNotification[];
-  isHydrated: boolean;
+  groups: NotificationGroup[];
+  /** Entries with at least one unread update. */
   unreadCount: number;
-  addNotification: (notification: NewNotification) => void;
-  linkJobThread: (jobId: string, threadId: string) => void;
-  toggleRead: (id: string) => void;
+  isHydrated: boolean;
+  loadError: string | null;
+  refresh: () => Promise<void>;
+  /** Marks everything in the entry as read. */
+  markGroupRead: (group: NotificationGroup) => void;
   markAllRead: () => void;
-  deleteNotification: (id: string) => void;
 };
 
 const NotificationContext = createContext<NotificationContextValue | undefined>(undefined);
-const NOTIFICATIONS_KEY = '@fundi/notifications';
 
-type LegacyJob = {
-  id: string;
-  service: string;
-  chatThreadId?: string;
-  events?: Array<{
-    id: string;
-    status: JobStatus;
-    title: string;
-    text: string;
-    at: string;
-  }>;
-};
+/** How often the feed is refreshed while the app is open. */
+const POLL_MS = 30_000;
+/** The old on-device log that recorded every local status change. */
+const LEGACY_KEY = '@fundi/notifications';
 
-function parseNotifications(raw: string | null): AppNotification[] {
-  if (!raw) return [];
-  const parsed: unknown = JSON.parse(raw);
-  if (!Array.isArray(parsed)) throw new Error('Stored notifications are not a list.');
-  return parsed.filter(
-    (item): item is AppNotification =>
-      !!item &&
-      typeof item === 'object' &&
-      typeof item.id === 'string' &&
-      typeof item.status === 'string' &&
-      typeof item.service === 'string' &&
-      typeof item.title === 'string' &&
-      typeof item.text === 'string' &&
-      typeof item.at === 'string',
-  ).map((item) => ({ ...item, read: item.read === true }));
-}
-
-async function loadNotifications(phone: string): Promise<AppNotification[]> {
-  const key = `${NOTIFICATIONS_KEY}/${phone}`;
-  const stored = await AsyncStorage.getItem(key);
-  if (stored !== null) return parseNotifications(stored);
-
-  const jobsRaw = (await AsyncStorage.getItem(jobsKey(phone))) ?? (await AsyncStorage.getItem(LEGACY_JOBS_KEY));
-  if (!jobsRaw) return [];
-  const jobs: unknown = JSON.parse(jobsRaw);
-  if (!Array.isArray(jobs)) throw new Error('Stored jobs are not a list.');
-  return (jobs as LegacyJob[]).flatMap((job) =>
-    (job.events ?? []).map((event) => ({
-      ...event,
-      jobId: job.id,
-      threadId: job.chatThreadId,
-      service: job.service,
-      read: false,
-    })),
-  );
+export function groupNotifications(items: ServerNotification[]): NotificationGroup[] {
+  const groups = new Map<string, NotificationGroup>();
+  // Newest first, so the first item seen for a job is its latest update.
+  const sorted = [...items].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  for (const item of sorted) {
+    const jobId = typeof item.data?.jobId === 'string' ? item.data.jobId : undefined;
+    const key = jobId ? `job:${jobId}` : `n:${item.id}`;
+    const group = groups.get(key);
+    if (group) {
+      group.items.push(item);
+      if (!item.readAt) group.unread += 1;
+    } else {
+      groups.set(key, { key, jobId, latest: item, items: [item], unread: item.readAt ? 0 : 1 });
+    }
+  }
+  return [...groups.values()];
 }
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [loadedKey, setLoadedKey] = useState<string | null>(null);
-  const [loadFailedKey, setLoadFailedKey] = useState<string | null>(null);
-  const queued = useRef<{ key: string | null; items: AppNotification[] }>({ key: null, items: [] });
-  const storageKey = account ? `${NOTIFICATIONS_KEY}/${account.phone}` : null;
-  const isHydrated = storageKey === null || loadedKey === storageKey;
+  const [items, setItems] = useState<ServerNotification[]>([]);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const accountId = account?.id ?? null;
+  const currentAccount = useRef(accountId);
+  currentAccount.current = accountId;
 
-  useEffect(() => {
-    if (!storageKey || !account) {
-      setNotifications([]);
-      setLoadedKey(null);
-      setLoadFailedKey(null);
-      return;
+  const refresh = useCallback(async () => {
+    const forAccount = currentAccount.current;
+    if (!forAccount) return;
+    try {
+      const fresh = await fetchNotifications();
+      if (currentAccount.current !== forAccount) return;
+      setItems(fresh);
+      setLoadError(null);
+    } catch (error) {
+      if (currentAccount.current === forAccount) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load notifications.');
+      }
+    } finally {
+      if (currentAccount.current === forAccount) setLoadedFor(forAccount);
     }
-    let mounted = true;
-    if (queued.current.key !== storageKey) queued.current = { key: storageKey, items: [] };
-    setLoadedKey(null);
-    setLoadFailedKey(null);
-    loadNotifications(account.phone)
-      .then((stored) => {
-        if (!mounted) return;
-        const pending = queued.current.key === storageKey ? queued.current.items : [];
-        setNotifications([...pending, ...stored.filter((item) => !pending.some((queuedItem) => queuedItem.id === item.id))]);
-        queued.current = { key: storageKey, items: [] };
-        setLoadedKey(storageKey);
-        setLoadFailedKey(null);
-      })
-      .catch((error: unknown) => {
-        console.error('Unable to load notifications.', error);
-        if (mounted) {
-          setNotifications([]);
-          setLoadedKey(storageKey);
-          setLoadFailedKey(storageKey);
-        }
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [account, storageKey]);
+  }, []);
 
+  // Load on sign-in, clear on sign-out, and drop the old on-device log.
   useEffect(() => {
-    if (!storageKey || loadedKey !== storageKey || loadFailedKey === storageKey) return;
-    AsyncStorage.setItem(storageKey, JSON.stringify(notifications)).catch((error: unknown) => {
-      console.error('Unable to persist notifications.', error);
+    setItems([]);
+    setLoadedFor(null);
+    setLoadError(null);
+    if (!accountId) return;
+    if (account?.phone) void AsyncStorage.removeItem(`${LEGACY_KEY}/${account.phone}`).catch(() => undefined);
+    void refresh();
+  }, [accountId, account?.phone, refresh]);
+
+  // Keep the feed current while the app is in the foreground.
+  useEffect(() => {
+    if (!accountId) return;
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') void refresh();
+    }, POLL_MS);
+    const appState = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refresh();
     });
-  }, [loadedKey, loadFailedKey, notifications, storageKey]);
+    // A push arriving while the app is open means the feed changed.
+    const received =
+      Platform.OS === 'web' ? null : ExpoNotifications.addNotificationReceivedListener(() => void refresh());
+    return () => {
+      clearInterval(timer);
+      appState.remove();
+      received?.remove();
+    };
+  }, [accountId, refresh]);
 
-  const addNotification = useCallback((notification: NewNotification) => {
-    const item = { ...notification, read: notification.read ?? false };
-    if (storageKey && loadedKey !== storageKey) {
-      if (queued.current.key !== storageKey) queued.current = { key: storageKey, items: [] };
-      queued.current.items = [item, ...queued.current.items.filter((existing) => existing.id !== item.id)];
-      return;
-    }
-    setNotifications((current) => [
-      item,
-      ...current.filter((existing) => existing.id !== notification.id),
-    ]);
-
-    const otherRecipients = [...new Set(notification.recipientPhones ?? [])].filter(
-      (phone) => phone !== account?.phone,
-    );
-    void Promise.all(
-      otherRecipients.map(async (phone) => {
-        const recipientKey = `${NOTIFICATIONS_KEY}/${phone}`;
-        try {
-          const stored = parseNotifications(await AsyncStorage.getItem(recipientKey));
-          await AsyncStorage.setItem(
-            recipientKey,
-            JSON.stringify([item, ...stored.filter((existing) => existing.id !== item.id)]),
-          );
-        } catch (error) {
-          console.error(`Unable to persist notification for ${phone}.`, error);
-        }
-      }),
-    );
-  }, [account?.phone, loadedKey, storageKey]);
-
-  const linkJobThread = useCallback((jobId: string, threadId: string) => {
-    setNotifications((current) =>
-      current.map((item) => (item.jobId === jobId && !item.threadId ? { ...item, threadId } : item)),
-    );
-  }, []);
-
-  const toggleRead = useCallback((id: string) => {
-    setNotifications((current) => current.map((item) => (item.id === id ? { ...item, read: !item.read } : item)));
-  }, []);
+  const markGroupRead = useCallback((group: NotificationGroup) => {
+    if (!group.unread) return;
+    const ids = new Set(group.items.filter((item) => !item.readAt).map((item) => item.id));
+    const now = new Date().toISOString();
+    setItems((current) => current.map((item) => (ids.has(item.id) ? { ...item, readAt: now } : item)));
+    const request = group.jobId
+      ? markJobNotificationsRead(group.jobId)
+      : Promise.all([...ids].map((id) => markNotificationRead(id)));
+    void request.catch(() => void refresh());
+  }, [refresh]);
 
   const markAllRead = useCallback(() => {
-    setNotifications((current) => current.map((item) => ({ ...item, read: true })));
-  }, []);
+    const now = new Date().toISOString();
+    setItems((current) => current.map((item) => (item.readAt ? item : { ...item, readAt: now })));
+    void markAllNotificationsRead().catch(() => void refresh());
+  }, [refresh]);
 
-  const deleteNotification = useCallback((id: string) => {
-    setNotifications((current) => current.filter((item) => item.id !== id));
-  }, []);
+  const groups = useMemo(() => groupNotifications(items), [items]);
 
   const value = useMemo(
     () => ({
-      notifications,
-      isHydrated,
-      unreadCount: notifications.filter((item) => !item.read).length,
-      addNotification,
-      linkJobThread,
-      toggleRead,
+      groups,
+      unreadCount: groups.filter((group) => group.unread > 0).length,
+      isHydrated: !accountId || loadedFor === accountId,
+      loadError,
+      refresh,
+      markGroupRead,
       markAllRead,
-      deleteNotification,
     }),
-    [notifications, isHydrated, addNotification, linkJobThread, toggleRead, markAllRead, deleteNotification],
+    [groups, accountId, loadedFor, loadError, refresh, markGroupRead, markAllRead],
   );
 
   return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>;
