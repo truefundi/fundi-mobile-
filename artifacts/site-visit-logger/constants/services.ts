@@ -11,7 +11,10 @@ export type Service = {
   /** Flat booking fee in standard local currency units (RWF) */
   bookingFee: number;
   description?: string;
+  /** Name of the parent group, e.g. "Home Services". */
   category?: string;
+  /** Id of the parent group (GET /catalog/categories). */
+  groupId?: string;
 };
 
 /** Baseline platform Service Booking Fee in standard local currency units (RWF). */

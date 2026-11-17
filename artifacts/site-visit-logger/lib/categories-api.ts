@@ -11,7 +11,9 @@ export interface DatabaseCategory {
   name: string;
   slug: string;
   description: string | null;
-  category: string | null;
+  /** The parent group from GET /catalog/services (e.g. "Home Services"). */
+  categoryId?: string | null;
+  category: { id: string; name: string } | string | null;
   keywords: string | null;
   bookingFee: number;
   sosBookingFee: number | null;
@@ -150,7 +152,14 @@ export function mapDatabaseCategoryToService(dbCategory: DatabaseCategory): Serv
     keywords: resolveCategoryKeywords(dbCategory.slug, dbCategory.name, dbCategory.keywords ?? ''),
     bookingFee: resolveDefaultBookingFee(dbCategory.slug, dbCategory.name, dbCategory.bookingFee ?? dbCategory.sosBookingFee ?? DEFAULT_BOOKING_FEE),
     description: dbCategory.description || undefined,
-    category: dbCategory.category || 'Home Services',
+    // The API sends the parent group as an object; older caches stored a plain name.
+    category:
+      (typeof dbCategory.category === 'object' && dbCategory.category ? dbCategory.category.name : dbCategory.category) ||
+      'Home Services',
+    groupId:
+      (typeof dbCategory.category === 'object' && dbCategory.category ? dbCategory.category.id : undefined) ??
+      dbCategory.categoryId ??
+      undefined,
   };
 }
 
@@ -242,6 +251,26 @@ export async function resolveServiceCategoryId(
 
   // Fallback to known live database UUID (Plumbing) if absolutely unreachable
   return '4492816c-7a62-47d3-8019-987419a8c69e';
+}
+
+/** A top-level service group from GET /api/v1/catalog/categories. */
+export type CatalogGroup = { id: string; name: string; description?: string | null };
+
+/** The service groups customers can filter by. */
+export async function fetchCatalogGroups(): Promise<CatalogGroup[]> {
+  const groups = await apiRequest<CatalogGroup[]>('/api/v1/catalog/categories');
+  return Array.isArray(groups) ? groups : [];
+}
+
+/**
+ * Server-side keyword search (GET /api/v1/catalog/services/search), which
+ * matches service names and the keywords admins set. Returns the matching ids.
+ */
+export async function searchCatalogServiceIds(name: string): Promise<string[]> {
+  const query = name.trim();
+  if (!query) return [];
+  const rows = await apiRequest<DatabaseCategory[]>(`/api/v1/catalog/services/search?name=${encodeURIComponent(query)}`);
+  return Array.isArray(rows) ? rows.map((row) => row.id) : [];
 }
 
 /** Fetches real categories from the database API with caching */
