@@ -365,3 +365,31 @@ export async function loginWithPassword(phoneNumber: string, password: string): 
 
   return response;
 }
+
+/**
+ * Replaces a forgotten PIN using the SMS code from requestLoginOtp, and signs in.
+ * Calls backend POST /api/v1/auth/pin/reset. Any other session for the account ends.
+ */
+export async function resetPin(phoneNumber: string, otp: string, newPin: string): Promise<AuthTokensResponse> {
+  const response = await apiRequest<AuthTokensResponse>('/api/v1/auth/pin/reset', {
+    method: 'POST',
+    body: { phoneNumber: cleanAndNormalizePhone(phoneNumber), otp: otp.trim(), newPin: newPin.trim() },
+  });
+  if (response.accessToken && response.refreshToken) {
+    await storeTokens(response.accessToken, response.refreshToken);
+    await setCachedUser(response.user);
+  }
+  return response;
+}
+
+/**
+ * Changes the signed-in account's PIN.
+ * Calls backend PATCH /api/v1/auth/pin.
+ */
+export function changePin(currentPin: string, newPin: string): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>('/api/v1/auth/pin', {
+    method: 'PATCH',
+    authenticated: true,
+    body: { currentPin: currentPin.trim(), newPin: newPin.trim() },
+  });
+}
