@@ -10,8 +10,9 @@ import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
-const FULL = { height: 58, padding: 5, initials: 16, badge: 17, glyph: 16, width: undefined as number | undefined };
-const COMPACT = { height: 46, padding: 4, initials: 14, badge: 15, glyph: 14, width: 104 };
+const FULL = { height: 58, padding: 5, initials: 16, badge: 17, glyph: 16, font: 15 };
+/** The app header: full width, a little slimmer, still spelling out the move. */
+const HEADER = { height: 50, padding: 4, initials: 14, badge: 15, glyph: 15, font: 14 };
 
 const COMMIT = 0.45;
 const FLICK = 0.4;
@@ -24,12 +25,13 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 type Props = {
-  compact?: boolean;
+  /** `header` is the slimmer bar under the greeting; `full` the larger one on Profile. */
+  variant?: 'full' | 'header';
   onPressAvatar?: () => void;
   testID?: string;
 };
 
-export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slider' }: Props) {
+export function ModeSlider({ variant = 'full', onPressAvatar, testID = 'mode-slider' }: Props) {
   const colors = useColors();
   const router = useRouter();
   const { profile: account } = useProfile();
@@ -37,13 +39,27 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
   const working = mode === 'working';
   const avatarUri = account?.photoUri || workProfile?.profilePictureUrl;
 
-  const size = compact ? COMPACT : FULL;
+  const size = variant === 'header' ? HEADER : FULL;
   const knob = size.height - size.padding * 2;
 
-  const [trackWidth, setTrackWidth] = useState(size.width ?? 0);
+  const [trackWidth, setTrackWidth] = useState(0);
   const travel = Math.max(0, trackWidth - knob - size.padding * 2);
   const x = useRef(new Animated.Value(0)).current;
   const sliding = useRef(false);
+
+  // The arrows lean towards where the knob would go, so the bar reads as something to drag.
+  const nudge = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(nudge, { toValue: 1, duration: 600, useNativeDriver: NATIVE }),
+        Animated.timing(nudge, { toValue: 0, duration: 600, useNativeDriver: NATIVE }),
+        Animated.delay(900),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [nudge]);
 
   useEffect(() => {
     Animated.spring(x, { toValue: working ? travel : 0, useNativeDriver: NATIVE, speed: 14, bounciness: 5 }).start();
@@ -99,7 +115,9 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
   const promptSide = working
     ? { left: size.padding, right: size.padding + knob }
     : { left: size.padding + knob, right: size.padding };
-  const target = working ? 'Hiring' : 'Working';
+  // Plain verbs: what sliding does, not the name of a mode.
+  const target = working ? 'hire' : 'work';
+  const arrowShift = nudge.interpolate({ inputRange: [0, 1], outputRange: [0, working ? -4 : 4] });
 
   return (
     <View
@@ -107,32 +125,38 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
       onLayout={(event: LayoutChangeEvent) => setTrackWidth(event.nativeEvent.layout.width)}
       style={[
         styles.track,
-        { height: size.height, borderRadius: size.height / 2, width: size.width, backgroundColor: colors.primary },
+        { height: size.height, borderRadius: size.height / 2, backgroundColor: colors.primary },
       ]}
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Switch to ${target}`}
+        accessibilityLabel={`Slide to ${target}`}
         testID={`${testID}-prompt`}
         onPress={change}
         style={[styles.prompt, promptSide]}
       >
         <Animated.View style={[styles.promptInner, { opacity: promptOpacity }]}>
-          {working ? <Feather name="chevrons-left" size={size.glyph} color={colors.primaryForeground} /> : null}
-          {compact ? null : (
-            <Text numberOfLines={1} style={[styles.label, { color: colors.primaryForeground }]}>
-              Slide to {target}
-            </Text>
-          )}
+          {working ? (
+            <Animated.View style={{ transform: [{ translateX: arrowShift }] }}>
+              <Feather name="chevrons-left" size={size.glyph + 2} color={colors.primaryForeground} />
+            </Animated.View>
+          ) : null}
           <Feather name={working ? 'search' : 'tool'} size={size.glyph} color={colors.primaryForeground} />
-          {working ? null : <Feather name="chevrons-right" size={size.glyph} color={colors.primaryForeground} />}
+          <Text numberOfLines={1} style={[styles.label, { color: colors.primaryForeground, fontSize: size.font }]}>
+            Slide to {target}
+          </Text>
+          {working ? null : (
+            <Animated.View style={{ transform: [{ translateX: arrowShift }] }}>
+              <Feather name="chevrons-right" size={size.glyph + 2} color={colors.primaryForeground} />
+            </Animated.View>
+          )}
         </Animated.View>
       </Pressable>
 
       <Animated.View
         accessibilityRole="adjustable"
         accessibilityLabel={working ? 'Working mode' : 'Hiring mode'}
-        accessibilityHint={`Slide to switch to ${target}`}
+        accessibilityHint={`Slide to ${target}`}
         testID={`${testID}-knob`}
         hitSlop={8}
         style={[
@@ -176,7 +200,7 @@ export function ModeSlider({ compact = false, onPressAvatar, testID = 'mode-slid
 const styles = StyleSheet.create({
   track: { justifyContent: 'center', overflow: 'hidden' },
   prompt: { position: 'absolute', top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
-  promptInner: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  promptInner: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   label: { fontFamily: 'Inter_700Bold', fontSize: 15, letterSpacing: -0.2 },
   knob: { alignItems: 'center', justifyContent: 'center' },
   knobText: { fontFamily: 'Inter_700Bold' },
