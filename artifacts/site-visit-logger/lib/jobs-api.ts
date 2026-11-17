@@ -7,8 +7,22 @@ import type { RequestType } from '@/constants/jobs';
 export interface BackendJobMedia {
   id: string;
   type: 'PHOTO' | 'VIDEO' | 'VOICE_NOTE' | 'DOCUMENT';
-  url: string;
+  /** Authenticated API path that streams the file (`/api/v1/jobs/:jobId/media/:mediaId`). */
+  downloadPath?: string | null;
+  /** Older responses carried a direct URL instead. */
+  url?: string | null;
+  mimeType?: string;
+  fileName?: string;
   createdAt: string;
+}
+
+/** Full address of a job attachment. Protected paths are loaded with the user's token. */
+export function jobMediaUrl(media: Pick<BackendJobMedia, 'downloadPath' | 'url'>): string {
+  if (media.downloadPath) {
+    const base = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '') ?? '';
+    return `${base}${media.downloadPath}`;
+  }
+  return media.url ?? '';
 }
 
 export interface BackendServiceCategory {

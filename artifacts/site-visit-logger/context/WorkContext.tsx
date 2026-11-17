@@ -43,6 +43,7 @@ import {
   updateJobProgress,
   type BackendJob,
   type TechnicianOfferItem,
+  jobMediaUrl,
 } from '@/lib/jobs-api';
 
 /** Fallback refresh interval for incoming requests while the push socket is unavailable. */
@@ -238,15 +239,21 @@ export const TECH_JOBS_KEY = '@fundi/technician-jobs';
 function mapBackendJobToTechnicianJob(backendJob: BackendJob): Job {
   const photoMedia = backendJob.media?.filter((m) => m.type === 'PHOTO') ?? [];
   const videoMedia = backendJob.media?.filter((m) => m.type === 'VIDEO') ?? [];
-  const photoUris = photoMedia.map((m) => m.url);
-  const videoUris = videoMedia.map((m) => m.url);
+  const photoUris = photoMedia.map(jobMediaUrl);
+  const videoUris = videoMedia.map(jobMediaUrl);
 
   let status: JobStatus = 'ACTIVE';
   if (backendJob.status === 'CANCELLED' || backendJob.status === 'FAILED') status = 'CANCELLED';
   else if (backendJob.status === 'COMPLETED') status = 'COMPLETED';
   else if (backendJob.status === 'IN_PROGRESS') status = 'IN_PROGRESS';
   else if (backendJob.status === 'OPEN') status = 'REQUESTED';
-  else if (backendJob.status === 'ASSIGNED') status = 'ACTIVE';
+  else if (backendJob.status === 'ASSIGNED') {
+    // STARTED means the request was accepted; work on site is IN_PROGRESS.
+    status =
+      backendJob.technicianProgress === 'IN_PROGRESS' || backendJob.technicianProgress === 'COMPLETED'
+        ? 'IN_PROGRESS'
+        : 'ACTIVE';
+  }
 
   return {
     id: backendJob.id,
@@ -293,16 +300,16 @@ function mapOfferToJob(offer: TechnicianOfferItem): Job {
     id: offer.job.id,
     offerId: offer.id,
     reference: `OFF-${offer.id.slice(-4).toUpperCase()}`,
-    service: offer.job.service || 'Incoming Offer',
+    service: offer.job.service || 'Service request',
     problem: offer.job.description,
     urgency: offer.job.priority === 'URGENT' ? 'Emergency' : 'Today',
     locationLabel: offer.job.locationAddress || 'Client Location',
     locationLatitude: offer.job.latitude,
     locationLongitude: offer.job.longitude,
-    photoUris: photoMedia.map((m) => m.url),
-    videoUris: videoMedia.map((m) => m.url),
-    photoUri: photoMedia[0]?.url,
-    videoUri: videoMedia[0]?.url,
+    photoUris: photoMedia.map(jobMediaUrl),
+    videoUris: videoMedia.map(jobMediaUrl),
+    photoUri: photoMedia[0] ? jobMediaUrl(photoMedia[0]) : undefined,
+    videoUri: videoMedia[0] ? jobMediaUrl(videoMedia[0]) : undefined,
     status: 'OFFERED',
     statusSince: offer.job.createdAt,
     createdAt: offer.job.createdAt,
@@ -1181,7 +1188,16 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         }
         await refreshApplication().catch(() => undefined);
       },
-      offers: technicianOffers.map(mapOfferToJob),
+      // Only requests still waiting for this technician's answer: one per job, none already taken.
+      offers: technicianOffers
+        .filter(
+          (offer, index, all) =>
+            offer.status === 'OFFERED' &&
+            (!offer.expiresAt || new Date(offer.expiresAt).getTime() > Date.now()) &&
+            !techJobs.some((j) => j.id === offer.job.id) &&
+            all.findIndex((o) => o.job.id === offer.job.id && o.status === 'OFFERED') === index,
+        )
+        .map(mapOfferToJob),
       technicianOffers,
       mine: techJobs.filter((j) => !isClosed(j.status) && !isTerminated(j.status)),
       done: techJobs.filter((j) => j.status === 'COMPLETED' || j.status === 'REPAIR_COMPLETED'),

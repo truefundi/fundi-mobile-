@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   BackHandler,
   FlatList,
   Image,
@@ -42,8 +41,11 @@ import { JobProgressStepper } from '@/components/chat/JobProgressStepper';
 import { OfferCard } from '@/components/chat/OfferCard';
 import { OfferSheet, ReasonSheet } from '@/components/chat/ChatSheets';
 import { RequestCard, buildRequestSummary } from '@/components/chat/RequestCard';
-import { IncomingRequestView } from '@/components/chat/IncomingRequestView';
-import { retryJobDispatch } from '@/lib/jobs-api';
+import { IncomingRequestIntro, buildOfferSummary, formatCountdown, useSecondsLeft } from '@/components/chat/IncomingRequestView';
+import { ActionDialog, type DialogRequest } from '@/components/ui/ActionDialog';
+import { retryJobDispatch, type TechnicianOfferItem } from '@/lib/jobs-api';
+
+type DialogButton = { text: string; style?: 'default' | 'cancel' | 'destructive'; onPress?: () => void };
 
 /**
  * Unified job chat: messages (`/chat/rooms` + the `/chat` socket) and the
@@ -158,9 +160,20 @@ export default function JobChatScreen() {
     );
   }, [isTechnician, room, technicianOffers, routeId, requestId]);
 
+  // After accepting, the request stays on screen in the same layout until the chat room loads.
+  const [acceptedOffer, setAcceptedOffer] = useState<TechnicianOfferItem | null>(null);
+  const [acceptingOffer, setAcceptingOffer] = useState(false);
+  const [decliningOffer, setDecliningOffer] = useState(false);
+  const pendingOffer: TechnicianOfferItem | undefined = room ? undefined : incomingOffer ?? acceptedOffer ?? undefined;
+  const offerSecondsLeft = useSecondsLeft(incomingOffer?.expiresAt);
+  const offerExpired = Boolean(incomingOffer) && !acceptedOffer && offerSecondsLeft === 0;
+  useEffect(() => {
+    if (offerExpired) void refreshJobs();
+  }, [offerExpired, refreshJobs]);
+
   const workspace = useJobWorkspace({
     // Unassigned technicians cannot read the job yet; the offer carries the request instead.
-    jobId: roomSettled && !incomingOffer ? jobId : undefined,
+    jobId: roomSettled && !pendingOffer ? jobId : undefined,
     conversationId: routeThread?.id,
     roomId: room?.id,
     active: true,
@@ -196,10 +209,22 @@ export default function JobChatScreen() {
     };
   }, [proposedTechnicianId]);
 
-  const lifecycle = useMemo(
-    () => deriveLifecycle({ role: isTechnician ? 'technician' : 'client', job, room, conversation }),
-    [isTechnician, job, room, conversation],
-  );
+  const lifecycle = useMemo(() => {
+    const derived = deriveLifecycle({ role: isTechnician ? 'technician' : 'client', job, room, conversation });
+    if (!pendingOffer) return derived;
+    // A request routed to this technician and not answered yet (or just accepted).
+    const countdown = formatCountdown(offerSecondsLeft);
+    return {
+      ...derived,
+      action: acceptedOffer || offerExpired ? null : ({ kind: 'accept-request' } as const),
+      cancellation: 'none' as const,
+      headline: acceptedOffer
+        ? 'Request accepted. Opening the chat…'
+        : offerExpired
+          ? 'This request expired before it was answered.'
+          : `New request. Accept it${countdown ? ` within ${countdown}` : ''} to agree on a price.`,
+    };
+  }, [isTechnician, job, room, conversation, pendingOffer, acceptedOffer, offerExpired, offerSecondsLeft]);
 
   const localJob = jobId ? getJob(jobId) : undefined;
   const cachedFeePaid = localJob?.bookingFee?.status === 'PAID';
@@ -223,6 +248,15 @@ export default function JobChatScreen() {
   const [offerSheet, setOfferSheet] = useState<{ mode: 'offer' | 'counter'; reference?: PriceOfferItem } | null>(null);
   const [reasonFlow, setReasonFlow] = useState<{ flow: ReasonFlow; offer?: PriceOfferItem } | null>(null);
   const listRef = useRef<FlatList<TimelineItem>>(null);
+  const [dialog, setDialog] = useState<DialogRequest | null>(null);
+  /** Same shape as `Alert.alert`, drawn in-app so it also works on web. */
+  const showDialog = useCallback((title: string, message?: string, buttons?: DialogButton[]) => {
+    setDialog({
+      title,
+      message,
+      actions: (buttons ?? [{ text: 'OK', style: 'cancel' }]).map((b) => ({ label: b.text, style: b.style, onPress: b.onPress })),
+    });
+  }, []);
 
   // ── Navigation guards: never return into checkout screens ───────────────
   const goToList = useCallback(() => router.replace('/(tabs)/chat'), [router]);
@@ -241,11 +275,14 @@ export default function JobChatScreen() {
     : room?.job.technician ?? conversation?.technician ?? null;
   const otherName =
     otherParty?.fullName ||
+    (pendingOffer ? pendingOffer.customer?.fullName?.trim() : undefined) ||
     (!isTechnician
       ? job?.currentTechnician?.fullName || proposedTechnician?.name || routing?.technicianName || localJob?.technician?.name
       : undefined) ||
     (isTechnician ? 'Client' : 'Technician');
-  const otherAvatar = !isTechnician
+  const otherAvatar = pendingOffer
+    ? pendingOffer.customer?.profilePictureUrl ?? undefined
+    : !isTechnician
     ? job?.currentTechnician?.profile?.profilePictureUrl ||
       (!room ? proposedTechnician?.avatarUrl || routing?.technicianProfilePictureUrl : undefined) ||
       localJob?.technician?.avatarUrl ||
@@ -263,8 +300,13 @@ export default function JobChatScreen() {
       : room?.job.customer?.fullName ?? conversation?.customer?.fullName ?? 'Client';
 
   const summary = useMemo(
-    () => (jobId ? buildRequestSummary(jobId, job, conversation, room) : null),
-    [jobId, job, conversation, room],
+    () =>
+      pendingOffer
+        ? buildOfferSummary(pendingOffer)
+        : jobId
+          ? buildRequestSummary(jobId, job, conversation, room)
+          : null,
+    [pendingOffer, jobId, job, conversation, room],
   );
 
   // ── Merged timeline (newest first for the inverted list) ────────────────
@@ -294,7 +336,7 @@ export default function JobChatScreen() {
 
   // ── Actions ─────────────────────────────────────────────────────────────
   const fail = (title: string) => (err: unknown) =>
-    Alert.alert(title, err instanceof Error ? err.message : 'Please try again.');
+    showDialog(title, err instanceof Error ? err.message : 'Please try again.');
 
   const handleSend = () => {
     const text = draft.trim();
@@ -338,7 +380,7 @@ export default function JobChatScreen() {
 
   const handleAttach = () => {
     if (!canMessage) return;
-    Alert.alert(`Share with your ${isTechnician ? 'client' : 'technician'}`, undefined, [
+    showDialog(`Share with your ${isTechnician ? 'client' : 'technician'}`, undefined, [
       { text: 'Photo', onPress: () => void pickImage() },
       { text: 'Document', onPress: () => void pickDocument() },
       { text: 'Cancel', style: 'cancel' },
@@ -348,7 +390,7 @@ export default function JobChatScreen() {
   const openOfferComposer = () => {
     if (!canNegotiate) return;
     if (remainingOffers <= 0) {
-      Alert.alert('Offer limit reached', 'You have used all your offers for this negotiation.');
+      showDialog('Offer limit reached', 'You have used all your offers for this negotiation.');
       return;
     }
     const pending = conversation?.currentOffer?.status === 'PENDING' ? conversation.currentOffer : undefined;
@@ -356,7 +398,7 @@ export default function JobChatScreen() {
   };
 
   const acceptOffer = (offer: PriceOfferItem) => {
-    Alert.alert(
+    showDialog(
       'Agree on this price?',
       `${offer.currency} ${offer.amount.toLocaleString()} becomes the agreed repair price and the job is confirmed straight away. The booking fee is separate and is used up. Pulling out is no longer possible after this.`,
       [
@@ -368,7 +410,7 @@ export default function JobChatScreen() {
 
   const denyOffer = (offer: PriceOfferItem) => {
     const canCounter = remainingOffers > 0;
-    Alert.alert(
+    showDialog(
       'Deny this offer?',
       `Denying ends the price negotiation for this job.${canCounter ? ' To keep negotiating, send a counter-offer instead.' : ''}`,
       [
@@ -382,6 +424,10 @@ export default function JobChatScreen() {
   const runLifecycleAction = (action: LifecycleAction) => {
     switch (action.kind) {
       case 'accept-request':
+        if (pendingOffer) {
+          void acceptIncoming(pendingOffer);
+          return;
+        }
         void workspace.acceptRequest().catch(fail('Could not accept request'));
         return;
       case 'make-offer':
@@ -391,7 +437,7 @@ export default function JobChatScreen() {
         listRef.current?.scrollToOffset({ offset: 0, animated: true });
         return;
       case 'confirm-cooperation':
-        Alert.alert(
+        showDialog(
           'Confirm and start?',
           'Once both of you confirm, the job is locked in and pulling out is no longer possible.',
           [
@@ -401,11 +447,11 @@ export default function JobChatScreen() {
         );
         return;
       case 'start-job':
-        void workspace.updateProgress('STARTED').catch(fail('Could not start the job'));
+        void workspace.updateProgress('IN_PROGRESS').catch(fail('Could not start the job'));
         return;
       case 'finish-job':
       case 'confirm-completion':
-        Alert.alert(
+        showDialog(
           action.kind === 'finish-job' ? 'Mark the job finished?' : 'Confirm the job is done?',
           action.kind === 'finish-job'
             ? 'The client will be asked to confirm completion.'
@@ -485,7 +531,7 @@ export default function JobChatScreen() {
       case 'restricted': {
         const result = await workspace.cancelAfterAgreement(reason);
         if (isTechnician) {
-          Alert.alert('Cancellation requested', result?.message ?? 'An administrator will review your request.');
+          showDialog('Cancellation requested', result?.message ?? 'An administrator will review your request.');
         }
         return;
       }
@@ -497,7 +543,6 @@ export default function JobChatScreen() {
 
   const openMenu = () => {
     const options: Array<{ text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }> = [];
-    if (jobId) options.push({ text: 'Track job', onPress: () => router.push(`/job/${jobId}` as any) });
     if (otherPhone) options.push({ text: `Call ${otherName}`, onPress: () => void Linking.openURL(`tel:${otherPhone}`) });
     if (lifecycle.cancellation === 'restricted') {
       options.push({
@@ -509,7 +554,7 @@ export default function JobChatScreen() {
       options.push({ text: cancelLabel, style: 'destructive', onPress: startCancel });
     }
     options.push({ text: 'Close', style: 'cancel' });
-    Alert.alert(otherName, summary?.service, options);
+    showDialog(otherName, summary?.service, options);
   };
 
   const openAttachment = (message: ChatTimelineMessage) => {
@@ -519,11 +564,11 @@ export default function JobChatScreen() {
       setPreviewUri(url);
       return;
     }
-    Linking.openURL(url).catch(() => Alert.alert('Unable to open attachment', 'Try again in a moment.'));
+    Linking.openURL(url).catch(() => showDialog('Unable to open attachment', 'Try again in a moment.'));
   };
 
   const handleFailedPress = (message: ChatTimelineMessage) => {
-    Alert.alert('Message not sent', message.deliveryError ?? 'The message could not be delivered.', [
+    showDialog('Message not sent', message.deliveryError ?? 'The message could not be delivered.', [
       { text: 'Retry', onPress: () => chat.retryMessage(message.id) },
       { text: 'Delete', style: 'destructive', onPress: () => chat.discardMessage(message.id) },
       { text: 'Cancel', style: 'cancel' },
@@ -570,38 +615,23 @@ export default function JobChatScreen() {
     }
   };
 
-  // ── Technician: an unanswered request routed to them ───────────────────
-  if (incomingOffer) {
-    return (
-      <>
-        <IncomingRequestView
-          offer={incomingOffer}
-          onBack={goToList}
-          onAccept={async () => {
-            await acceptTechnicianOffer(incomingOffer.id);
-            // The job is now assigned: load its chat room and negotiation.
-            chat.retryResolve();
-          }}
-          onDecline={async (reason) => {
-            await rejectOffer(incomingOffer.id, reason || 'Technician unavailable');
-            goToList();
-          }}
-          onExpired={() => void refreshJobs()}
-          onPreviewImage={setPreviewUri}
-        />
-        {previewUri ? (
-          <Modal visible transparent animationType="fade" onRequestClose={() => setPreviewUri(null)}>
-            <Pressable style={styles.fullscreenOverlay} onPress={() => setPreviewUri(null)}>
-              <Image source={{ uri: previewUri }} style={styles.fullscreenImage} resizeMode="contain" />
-            </Pressable>
-          </Modal>
-        ) : null}
-      </>
-    );
+  // ── Technician: answer a request routed to them ─────────────────────────
+  async function acceptIncoming(offer: TechnicianOfferItem) {
+    setAcceptingOffer(true);
+    try {
+      await acceptTechnicianOffer(offer.id);
+      // Keep showing the request until the job's chat room loads.
+      setAcceptedOffer(offer);
+      chat.retryResolve();
+    } catch (err) {
+      fail('Could not accept this request')(err);
+    } finally {
+      setAcceptingOffer(false);
+    }
   }
 
   // ── Loading / not found ─────────────────────────────────────────────────
-  const hasAnything = Boolean(room || conversation || job);
+  const hasAnything = Boolean(room || conversation || job || pendingOffer);
   const stillLoading =
     chat.resolution === 'resolving' || (roomSettled && !room && workspace.isLoading && Boolean(jobId));
   if (!hasAnything) {
@@ -822,7 +852,14 @@ export default function JobChatScreen() {
           )}
         </Pressable>
       ) : null}
-      {summary ? (
+      {pendingOffer ? (
+        <IncomingRequestIntro
+          offer={pendingOffer}
+          secondsLeft={offerSecondsLeft}
+          accepted={Boolean(acceptedOffer)}
+          onPreviewImage={setPreviewUri}
+        />
+      ) : summary ? (
         <RequestCard
           summary={summary}
           badge={lifecycle.badge}
@@ -893,7 +930,9 @@ export default function JobChatScreen() {
   );
 
   const inputPlaceholder = !room
-    ? 'Messaging opens once a technician is assigned'
+    ? pendingOffer
+      ? 'Accept the request to message the client'
+      : 'Messaging opens once a technician is assigned'
     : lockReason
       ? 'Messaging is turned off'
       : feeBlocksClient
@@ -903,11 +942,11 @@ export default function JobChatScreen() {
   const actionLabel = lifecycle.action ? ACTION_LABEL[lifecycle.action.kind] : null;
   const actionBusy =
     lifecycle.action?.kind === 'accept-request'
-      ? workspace.busy === 'accept-request'
+      ? workspace.busy === 'accept-request' || acceptingOffer
       : lifecycle.action?.kind === 'confirm-cooperation'
         ? workspace.busy === 'confirm'
         : lifecycle.action?.kind === 'start-job'
-          ? workspace.busy === 'progress-STARTED'
+          ? workspace.busy === 'progress-IN_PROGRESS'
           : workspace.busy === 'complete';
   // Clients must pay before acting on the negotiation.
   const stepperActionAllowed = !(feeBlocksClient && lifecycle.action && lifecycle.action.kind !== 'confirm-completion');
@@ -1075,7 +1114,32 @@ export default function JobChatScreen() {
         </View>
       ) : null}
 
-      {/* Composer */}
+      {pendingOffer && !acceptedOffer && !offerExpired ? (
+        <View
+          style={[
+            styles.answerBar,
+            { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 12) },
+          ]}
+        >
+          <Button
+            label="Decline"
+            variant="outline"
+            onPress={() => setDecliningOffer(true)}
+            disabled={acceptingOffer}
+            style={styles.flex1}
+            testID="incoming-request-decline"
+          />
+          <Button
+            label="Accept request"
+            onPress={() => void acceptIncoming(pendingOffer)}
+            loading={acceptingOffer}
+            disabled={acceptingOffer}
+            style={styles.flex1}
+            testID="incoming-request-accept"
+          />
+        </View>
+      ) : (
+      /* Composer */
       <View
         style={[
           styles.inputBar,
@@ -1125,6 +1189,7 @@ export default function JobChatScreen() {
           <Ionicons name="send" size={18} color={canMessage && draft.trim() ? colors.primaryForeground : colors.mutedForeground} />
         </Pressable>
       </View>
+      )}
 
       <OfferSheet
         visible={Boolean(offerSheet)}
@@ -1138,6 +1203,21 @@ export default function JobChatScreen() {
           await workspace.sendOffer(amount, notes);
         }}
       />
+      <ReasonSheet
+        visible={decliningOffer}
+        title="Decline this request"
+        description="The client will be able to choose another technician. A short reason helps them."
+        confirmLabel="Decline request"
+        required={false}
+        busy={false}
+        onClose={() => setDecliningOffer(false)}
+        onSubmit={async (reason) => {
+          if (!pendingOffer) return;
+          await rejectOffer(pendingOffer.id, reason || 'Technician unavailable');
+          goToList();
+        }}
+      />
+      <ActionDialog request={dialog} onClose={() => setDialog(null)} />
       <ReasonSheet
         visible={Boolean(reasonFlow)}
         title={reasonFlow ? reasonCopy[reasonFlow.flow].title : ''}
@@ -1219,6 +1299,8 @@ const styles = StyleSheet.create({
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, borderTopWidth: 1, gap: 8 },
   actionIconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   textInput: { flex: 1, minHeight: 40, maxHeight: 120, borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, fontFamily: 'Inter_400Regular', fontSize: 14 },
+  answerBar: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1 },
+  flex1: { flex: 1 },
   sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   fullscreenOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
   fullscreenImage: { width: '100%', height: '80%' },

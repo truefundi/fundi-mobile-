@@ -18,7 +18,6 @@ import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
-import { PageHeading } from '@/components/ui/PageHeading';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { useFundi } from '@/context/FundiContext';
 import { useAuth } from '@/context/AuthContext';
@@ -130,6 +129,7 @@ export default function CheckoutPaymentScreen() {
   const bookingAmount = job?.bookingFee?.amount ?? (params.amount ? parseFloat(params.amount) : getServiceBookingFee(targetService));
   const bookingCurrency = job?.bookingFee?.currency ?? params.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
+  const [showTerms, setShowTerms] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<PaymentChannel>('MTN_MOMO');
   const [phoneNumber, setPhoneNumber] = useState(
     cleanAndNormalizePhone(params.verifiedPhone || account?.phone || '0788123456'),
@@ -390,7 +390,7 @@ export default function CheckoutPaymentScreen() {
         ]}
       >
         <BackButton onPress={handleCancel} />
-        <Text style={[styles.titleTop, { color: colors.foreground }]}>Checkout Payment</Text>
+        <Text style={[styles.titleTop, { color: colors.foreground }]}>Pay booking fee</Text>
         <View style={{ width: 34 }} />
       </View>
 
@@ -401,12 +401,6 @@ export default function CheckoutPaymentScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <PageHeading
-          eyebrow="SECURE PLATFORM PAYMENT"
-          title="Pay Booking Fee"
-          subtitle="Choose your preferred payment method to complete the booking."
-        />
-
         {/* Amount Summary Banner */}
         <SectionCard emphasis>
           <Text style={[styles.amountLabel, { color: colors.primaryForeground }]}>
@@ -420,8 +414,18 @@ export default function CheckoutPaymentScreen() {
           </Text>
         </SectionCard>
 
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showTerms }}
+          onPress={() => setShowTerms((open) => !open)}
+          style={styles.termsToggle}
+          testID="booking-fee-terms-toggle"
+        >
+          <Text style={[styles.termsToggleText, { color: colors.primary }]}>How the booking fee works</Text>
+          <Ionicons name={showTerms ? 'chevron-up' : 'chevron-down'} size={15} color={colors.primary} />
+        </Pressable>
+        {showTerms ? (
         <View style={[styles.termsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.termsTitle, { color: colors.foreground }]}>How the booking fee works</Text>
           {[
             { icon: 'time-outline' as const, text: 'Valid for 7 days from payment. The clock pauses while a technician is working with you.' },
             { icon: 'swap-horizontal-outline' as const, text: 'If the technician declines or does not answer, the same fee covers sending the request to someone else.' },
@@ -434,6 +438,7 @@ export default function CheckoutPaymentScreen() {
             </View>
           ))}
         </View>
+        ) : null}
 
         {paymentError && (
           <Notice tone="warning" icon="alert-circle-outline" text={paymentError} />
@@ -441,7 +446,7 @@ export default function CheckoutPaymentScreen() {
 
         {/* Payment Methods */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Select Payment Channel</Text>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Pay with</Text>
         </View>
 
         <View style={[styles.channelGroup, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -504,7 +509,7 @@ export default function CheckoutPaymentScreen() {
               />
             </View>
             <Text style={[styles.inputHint, { color: colors.mutedForeground }]}>
-              A USSD prompt will be sent to this phone to enter your PIN.
+              You will confirm with your PIN on this phone.
             </Text>
           </View>
         )}
@@ -522,18 +527,9 @@ export default function CheckoutPaymentScreen() {
                 style={[styles.textInput, { color: colors.foreground }]}
               />
             </View>
-            <Text style={[styles.inputHint, { color: colors.mutedForeground }]}>
-              Fast 256-bit encrypted card charge or wallet deduction.
-            </Text>
+
           </View>
         )}
-
-        {/* Disclaimer / Settlement Note */}
-        <Notice
-          tone="neutral"
-          icon="shield-checkmark-outline"
-          text="This booking fee unlocks real-time chat with your technician. The final cost of the repair/service will be agreed upon and settled directly between you and the technician."
-        />
       </ScrollView>
 
       {/* Sticky Bottom Pay CTA */}
@@ -695,7 +691,8 @@ export default function CheckoutPaymentScreen() {
 
 const styles = StyleSheet.create({
   termsCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 10, marginTop: 4 },
-  termsTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  termsToggle: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 2 },
+  termsToggleText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   termRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   termText: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18 },
   screen: { flex: 1 },
