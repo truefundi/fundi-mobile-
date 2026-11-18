@@ -128,7 +128,7 @@ export default function JobChatScreen() {
   const { account } = useAuth();
   const { getJob, proposeTechnicianToJob } = useFundi();
   const { threads } = useChat();
-  const { technicianOffers, acceptOffer: acceptTechnicianOffer, rejectOffer, refreshJobs } = useWork();
+  const { technicianOffers, acceptOffer: acceptTechnicianOffer, rejectOffer, refreshJobs, actingAsTechnician } = useWork();
   const { id: routeId, requestId, firstMessage, technicianId: technicianParam, proposalError, rate } = useLocalSearchParams<{
     id?: string;
     /** Opens the rating sheet straight away (from a completed job elsewhere in the app). */
@@ -140,15 +140,21 @@ export default function JobChatScreen() {
     /** Set when routing the request to the technician failed at submission. */
     proposalError?: string;
   }>();
-  const isTechnician = account?.role === 'TECHNICIAN';
-  const viewerSide = isTechnician ? 'TECHNICIAN' : 'CUSTOMER';
-
   // A negotiation id in the route resolves to its job.
   const routeThread = useMemo(() => threads.find((t) => t.id === routeId), [threads, routeId]);
   const jobHint = requestId || routeThread?.jobId || undefined;
 
   const chat = useChatRoom(routeId, jobHint);
   const { room } = chat;
+  // A technician can also hire, so the side comes from this chat: the room's member list,
+  // then the negotiation, and only for a brand-new request from the current mode.
+  const roomSide = room?.members.find((member) => member.userId === account?.id)?.role;
+  const isTechnician = roomSide
+    ? roomSide === 'TECHNICIAN'
+    : routeThread
+      ? routeThread.otherParticipantRole === 'client'
+      : actingAsTechnician;
+  const viewerSide = isTechnician ? 'TECHNICIAN' : 'CUSTOMER';
   const roomSettled = chat.resolution === 'found' || chat.resolution === 'not-found';
   // Once known, the job stays fixed for this screen so later data never swaps the chat underneath.
   const pinnedJob = useRef<{ route?: string; jobId?: string }>({});
@@ -187,6 +193,7 @@ export default function JobChatScreen() {
     conversationId: routeThread?.id,
     roomId: room?.id,
     active: true,
+    asTechnician: isTechnician,
   });
   const { job, conversation } = workspace;
 

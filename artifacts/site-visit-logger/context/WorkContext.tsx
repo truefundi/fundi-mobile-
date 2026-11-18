@@ -28,7 +28,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
-import { cleanAndNormalizePhone, refreshTokens, updateUserRole } from '@/lib/auth-api';
+import { cleanAndNormalizePhone, refreshTokens } from '@/lib/auth-api';
 import { getAccessToken } from '@/lib/auth-session';
 import { acquireEventsSocket, onAppEvent } from '@/lib/events-socket';
 
@@ -331,7 +331,14 @@ function mapOfferToJob(offer: TechnicianOfferItem): Job {
 
 type WorkContextValue = {
   mode: Mode;
-  setMode: (mode: Mode) => void;
+  /**
+   * Moves between hiring and working. For an approved technician this also switches the
+   * account's role on the server. Hiring is never refused: while technician jobs are
+   * still active the API keeps the TECHNICIAN role, and the app hires under it.
+   */
+  setMode: (mode: Mode) => Promise<void>;
+  /** True when the app shows the technician side: working mode with an approved application. */
+  actingAsTechnician: boolean;
   isAvailable: boolean;
   setAvailable: (available: boolean) => Promise<void>;
   status: WorkStatus;
@@ -365,7 +372,9 @@ const WorkContext = createContext<WorkContextValue | null>(null);
 
 /** Technician profile and verification state are server-owned; local storage keeps only the draft. */
 export function WorkProvider({ children }: { children: ReactNode }) {
-  const { account } = useAuth();
+  const { account, updateRole } = useAuth();
+  const accountRef = useRef(account);
+  accountRef.current = account;
   const fundi = useContext(FundiContext);
   const [state, setState] = useState<Stored>(EMPTY);
   const [techJobs, setTechJobs] = useState<Job[]>([]);
@@ -791,10 +800,8 @@ export function WorkProvider({ children }: { children: ReactNode }) {
   const refreshApplication = useCallback(async () => {
     if (!storageKey) return;
     if (uploadsInFlight.current > 0) return;
-    if (account?.role !== 'TECHNICIAN' && !isWorkPending(state.status)) {
-      setState((current) => ({ ...current, status: 'none' }));
-      return;
-    }
+    // Applying keeps the account a customer until it switches roles, so the application
+    // is read whatever the role: a 404 simply means there is none.
     try {
       const serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
         authenticated: true,
@@ -808,10 +815,8 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         const hasNationalId = documents.some((document) => document.type === 'NATIONAL_ID');
         const applicationNeedsFiles = !hasNationalId;
         const nextStatus = statusFromApi(serverProfile.verificationStatus);
-        const nextMode = isWorkVerified(nextStatus) ? 'working' : current.mode;
         const next: Stored = {
           ...current,
-          mode: nextMode,
           status: nextStatus,
           isAvailable: serverProfile.availabilityStatus === 'ONLINE',
           profile: mapProfile(serverProfile, documents, current.profile),
@@ -844,7 +849,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setState((current) => ({ ...current, applicationError: message }));
       throw error;
     }
-  }, [account?.role, state.status, storageKey]);
+  }, [storageKey]);
 
   useEffect(() => {
     if (!storageKey) {
@@ -856,16 +861,8 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       .then((raw) => {
         if (!mounted) return;
         const parsed = parseStored(raw);
-        // Non-technicians must complete the technician application first
-        if (
-          account?.role !== 'TECHNICIAN' &&
-          !isWorkPending(parsed.status) &&
-          !isWorkRejected(parsed.status) &&
-          !isWorkVerified(parsed.status)
-        ) {
-          setState({ ...parsed, status: 'none' });
-          return;
-        }
+        // Nothing saved on this device yet: a technician account starts in working mode.
+        if (!raw && accountRef.current?.role === 'TECHNICIAN') parsed.mode = 'working';
         setState(parsed);
         void refreshApplication().catch(() => undefined);
       })
@@ -877,10 +874,57 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [account?.role, storageKey, refreshApplication]);
+  }, [storageKey, refreshApplication]);
 
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  /** Set while a role switch is in flight, so the sync below never undoes it halfway. */
+  const roleSyncing = useRef(false);
+
+  const setMode = useCallback(
+    async (mode: Mode) => {
+      const role = mode === 'working' ? 'TECHNICIAN' : 'CUSTOMER';
+      // Only an approved application can work; anyone else stays a customer and uses
+      // working mode to apply or follow their application.
+      const mustSwitch =
+        account != null &&
+        account.role !== role &&
+        (role === 'CUSTOMER' || isWorkVerified(stateRef.current.status));
+      roleSyncing.current = true;
+      try {
+        if (mustSwitch) {
+          try {
+            await updateRole(role);
+          } catch (error) {
+            // The API keeps the TECHNICIAN role while technician jobs are active. Hiring
+            // works under either role, so the switch goes ahead and the role follows later.
+            const keepsTechnicianRole =
+              role === 'CUSTOMER' && error instanceof ApiRequestError && error.status === 409;
+            if (!keepsTechnicianRole) throw error;
+          }
+        }
+        update((current) => ({ ...current, mode }));
+      } finally {
+        roleSyncing.current = false;
+      }
+    },
+    [account, updateRole, update],
+  );
+
+  // Someone already in working mode, following their application, starts working as
+  // soon as it is approved. (A technician account may hire, so the reverse never applies.)
+  useEffect(() => {
+    if (!account || !isWorkVerified(state.status) || roleSyncing.current) return;
+    if (account.role !== 'TECHNICIAN' && state.mode === 'working') {
+      roleSyncing.current = true;
+      updateRole('TECHNICIAN')
+        .catch(() => update((current) => ({ ...current, mode: 'hiring' })))
+        .finally(() => {
+          roleSyncing.current = false;
+        });
+    }
+  }, [account, state.status, state.mode, update, updateRole]);
 
   // Background status polling: polls refreshApplication every 4 seconds when application is pending review
   useEffect(() => {
@@ -910,7 +954,8 @@ export function WorkProvider({ children }: { children: ReactNode }) {
   const value = useMemo<WorkContextValue>(() => {
     return {
       mode: state.mode,
-      setMode: (mode) => update((current) => ({ ...current, mode })),
+      setMode,
+      actingAsTechnician: state.mode === 'working' && isWorkVerified(state.status),
       isAvailable: state.isAvailable,
       setAvailable: async (isAvailable) => {
         try {
@@ -1097,9 +1142,6 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', { authenticated: true }),
             apiRequest<ApiTechnicianDocument[]>('/api/v1/technicians/profile/documents', { authenticated: true }),
           ]);
-          if (account?.phone) {
-            await updateUserRole(account.phone, 'TECHNICIAN');
-          }
           savedState = {
             ...savedState,
             mode: 'working',

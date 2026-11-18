@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { vibrate } from '@/lib/haptics';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, PanResponder, Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActionDialog, type DialogRequest } from '@/components/ui/ActionDialog';
 import { initialsOf } from '@/constants/auth';
 import { useProfile } from '@/context/ProfileContext';
 import { useWork } from '@/context/WorkContext';
@@ -35,8 +36,10 @@ export function ModeSlider({ variant = 'full', onPressAvatar, testID = 'mode-sli
   const colors = useColors();
   const router = useRouter();
   const { profile: account } = useProfile();
-  const { mode, setMode, profile: workProfile } = useWork();
+  const { mode, setMode, profile: workProfile, mine } = useWork();
   const working = mode === 'working';
+  // Hiring while technician jobs are still open: the knob carries a warning badge.
+  const openWork = working ? 0 : mine.length;
   const avatarUri = account?.photoUri || workProfile?.profilePictureUrl;
 
   const size = variant === 'header' ? HEADER : FULL;
@@ -46,6 +49,8 @@ export function ModeSlider({ variant = 'full', onPressAvatar, testID = 'mode-sli
   const travel = Math.max(0, trackWidth - knob - size.padding * 2);
   const x = useRef(new Animated.Value(0)).current;
   const sliding = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [dialog, setDialog] = useState<DialogRequest | null>(null);
 
   // The arrows lean towards where the knob would go, so the bar reads as something to drag.
   const nudge = useRef(new Animated.Value(0)).current;
@@ -67,11 +72,24 @@ export function ModeSlider({ variant = 'full', onPressAvatar, testID = 'mode-sli
 
   const change = useMemo(
     () => () => {
+      if (busy) return;
       vibrate('medium');
-      setMode(working ? 'hiring' : 'working');
-      router.navigate('/');
+      setBusy(true);
+      setMode(working ? 'hiring' : 'working')
+        .then(() => router.navigate('/'))
+        .catch((error: unknown) => {
+          // The server refused the switch (for example, technician jobs still active):
+          // the knob goes back and the reason is shown as the API gives it.
+          Animated.spring(x, { toValue: working ? travel : 0, useNativeDriver: NATIVE, speed: 14, bounciness: 5 }).start();
+          setDialog({
+            title: working ? 'Can’t switch to hiring yet' : 'Can’t switch to working yet',
+            message: error instanceof Error ? error.message : 'Please try again.',
+            actions: [{ label: 'OK', style: 'cancel' }],
+          });
+        })
+        .finally(() => setBusy(false));
     },
-    [working, router, setMode],
+    [busy, working, travel, x, router, setMode],
   );
 
   const pan = useMemo(() => {
@@ -155,7 +173,13 @@ export function ModeSlider({ variant = 'full', onPressAvatar, testID = 'mode-sli
 
       <Animated.View
         accessibilityRole="adjustable"
-        accessibilityLabel={working ? 'Working mode' : 'Hiring mode'}
+        accessibilityLabel={
+          working
+            ? 'Working mode'
+            : openWork > 0
+              ? `Hiring mode, ${openWork} technician job${openWork === 1 ? '' : 's'} still open`
+              : 'Hiring mode'
+        }
         accessibilityHint={`Slide to ${target}`}
         testID={`${testID}-knob`}
         hitSlop={8}
@@ -185,14 +209,20 @@ export function ModeSlider({ variant = 'full', onPressAvatar, testID = 'mode-sli
               width: size.badge,
               height: size.badge,
               borderRadius: size.badge / 2,
-              backgroundColor: colors.primary,
+              backgroundColor: openWork > 0 ? colors.warning : colors.primary,
               borderColor: colors.card,
             },
           ]}
+          testID={openWork > 0 ? `${testID}-open-work-badge` : undefined}
         >
-          <Feather name={working ? 'tool' : 'search'} size={size.badge / 2} color={colors.primaryForeground} />
+          {openWork > 0 ? (
+            <Feather name="alert-circle" size={size.badge - 5} color="#ffffff" />
+          ) : (
+            <Feather name={working ? 'tool' : 'search'} size={size.badge / 2} color={colors.primaryForeground} />
+          )}
         </View>
       </Animated.View>
+      <ActionDialog request={dialog} onClose={() => setDialog(null)} />
     </View>
   );
 }

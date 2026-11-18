@@ -229,11 +229,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const role = account?.role;
+  const accountId = account?.id;
+  const fallbackRole = account?.role;
+  // A technician can also hire, so the side comes from each conversation, not the account.
+  const role = useCallback(
+    (conversation: BackendConversation) =>
+      accountId && conversation.customer?.id
+        ? conversation.customer.id === accountId
+          ? 'CUSTOMER'
+          : 'TECHNICIAN'
+        : fallbackRole,
+    [accountId, fallbackRole],
+  );
 
   const upsert = useCallback(
     (conversation: BackendConversation) => {
-      const mapped = mapBackendConversationToThread(conversation, role);
+      const mapped = mapBackendConversationToThread(conversation, role(conversation));
       setThreads((current) => sortThreads([mapped, ...current.filter((t) => t.id !== mapped.id)]));
       return mapped;
     },
@@ -245,7 +256,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       const conversations = await listConversations();
-      setThreads(sortThreads(conversations.map((c) => mapBackendConversationToThread(c, role))));
+      setThreads(sortThreads(conversations.map((c) => mapBackendConversationToThread(c, role(c)))));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load negotiations.');

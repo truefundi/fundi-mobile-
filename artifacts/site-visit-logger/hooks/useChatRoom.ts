@@ -374,7 +374,10 @@ export function useChatRoom(routeId?: string, jobIdHint?: string) {
       id: localId(),
       roomId: roomId ?? '',
       senderId: viewerId ?? null,
-      senderRole: account?.role === 'TECHNICIAN' ? 'TECHNICIAN' : 'CUSTOMER',
+      senderRole:
+        (room?.members.find((member) => member.userId === viewerId)?.role ?? account?.role) === 'TECHNICIAN'
+          ? 'TECHNICIAN'
+          : 'CUSTOMER',
       type: 'TEXT',
       text: null,
       fileName: null,
@@ -394,7 +397,7 @@ export function useChatRoom(routeId?: string, jobIdHint?: string) {
       delivery: 'sending',
       ...partial,
     }),
-    [roomId, viewerId, account?.role],
+    [roomId, viewerId, room, account?.role],
   );
 
   const deliver = useCallback(
