@@ -22,6 +22,7 @@ import { WorkHome } from '@/components/work/WorkHome';
 import { useColors } from '@/hooks/useColors';
 import { useFloatingActionVisibility } from '@/hooks/useFloatingActionVisibility';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
+import { useAuth } from '@/context/AuthContext';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
 import { isWorkVerified } from '@/constants/work';
@@ -66,7 +67,11 @@ export default function HomeScreen({
   const cardWidth = Math.floor((contentWidth - GRID_GAP * (columns - 1)) / columns);
   const router = useRouter();
   const { jobs } = useFundi();
-  const { mode, status } = useWork();
+  const { mode, status, setMode, mine } = useWork();
+  const { account } = useAuth();
+  // Approved, but the account is still in hiring mode: offer the switch to working.
+  const canStartWorking = mode === 'hiring' && isWorkVerified(status) && account?.role !== 'TECHNICIAN';
+  const [switchError, setSwitchError] = useState<string | null>(null);
   // Only a verified worker has a job list to search.
   const searchingJobs = mode === 'working' && isWorkVerified(status);
   const [jobQuery, setJobQuery] = useState('');
@@ -155,6 +160,61 @@ export default function HomeScreen({
           <WorkHome query={jobQuery} />
         ) : (
           <>
+            {mine.length > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Back to your technician jobs"
+                testID="home-open-work-button"
+                onPress={() => {
+                  setSwitchError(null);
+                  setMode('working').catch((error: unknown) =>
+                    setSwitchError(error instanceof Error ? error.message : 'Could not switch to working mode.'),
+                  );
+                }}
+                style={({ pressed }) => [styles.activeCard, { backgroundColor: colors.card, borderColor: colors.warning, opacity: pressed ? 0.8 : 1 }]}
+              >
+                <Ionicons name="alert-circle" size={26} color={colors.warning} />
+                <View style={styles.activeCopy}>
+                  <Text style={[styles.activeKicker, { color: colors.warning }]}>STILL WORKING</Text>
+                  <Text style={[styles.activeTitle, { color: colors.foreground }]}>
+                    {mine.length === 1 ? '1 technician job is open' : `${mine.length} technician jobs are open`}
+                  </Text>
+                  <Text style={[styles.approvedHint, { color: switchError ? colors.destructive : colors.mutedForeground }]}>
+                    {switchError ?? 'You can hire while it runs. Switch back any time to carry on.'}
+                  </Text>
+                </View>
+                <View style={[styles.activeOpen, { backgroundColor: colors.secondary }]}>
+                  <Text style={[styles.activeOpenText, { color: colors.primary }]}>Jobs</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+                </View>
+              </Pressable>
+            ) : null}
+            {canStartWorking ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Start working"
+                testID="home-start-working-button"
+                onPress={() => {
+                  setSwitchError(null);
+                  setMode('working').catch((error: unknown) =>
+                    setSwitchError(error instanceof Error ? error.message : 'Could not switch to working mode.'),
+                  );
+                }}
+                style={({ pressed }) => [styles.activeCard, { backgroundColor: colors.card, borderColor: colors.success, opacity: pressed ? 0.8 : 1 }]}
+              >
+                <View style={styles.activeCopy}>
+                  <Text style={[styles.activeKicker, { color: colors.success }]}>APPLICATION APPROVED</Text>
+                  <Text style={[styles.activeTitle, { color: colors.foreground }]}>You can now take jobs</Text>
+                  <Text style={[styles.approvedHint, { color: switchError ? colors.destructive : colors.mutedForeground }]}>
+                    {switchError ?? 'Switch to working mode to receive requests.'}
+                  </Text>
+                </View>
+                <View style={[styles.activeOpen, { backgroundColor: colors.secondary }]}>
+                  <Text style={[styles.activeOpenText, { color: colors.primary }]}>Start</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+                </View>
+              </Pressable>
+            ) : null}
             {activeJob ? (
               <Pressable
                 accessibilityRole="button"
@@ -338,6 +398,7 @@ const styles = StyleSheet.create({
   recentEmptyText: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19 },
   activeCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1.5, borderRadius: 14, padding: 14 },
   activeCopy: { flex: 1 },
+  approvedHint: { fontFamily: 'Inter_500Medium', fontSize: 13, marginTop: 4 },
   activeKicker: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.3 },
   activeTitle: { fontFamily: 'Inter_700Bold', fontSize: 16, marginTop: 5 },
   activeBadgeRow: { marginTop: 8 },

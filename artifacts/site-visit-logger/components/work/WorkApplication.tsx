@@ -74,7 +74,7 @@ export function WorkApplication() {
   const { apply, profile, applicationError, status } = useWork();
   // After a full rejection this form sends a brand-new application to review.
   const reapplying = isWorkRejected(status);
-  const { account, updateRole, adoptVerifiedPhone } = useAuth();
+  const { account, adoptVerifiedPhone } = useAuth();
 
   // ── Step Navigation ───────────────────────────────────────────────────────
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
@@ -487,9 +487,6 @@ export function WorkApplication() {
         })),
       });
 
-      if (account?.phone) {
-        await updateRole('TECHNICIAN');
-      }
     } catch (err) {
       setGeneralError(err instanceof Error ? err.message : 'Application submission failed. Please try again.');
     } finally {

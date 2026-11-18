@@ -270,12 +270,17 @@ export async function deleteCurrentAccount(): Promise<void> {
 }
 
 /**
- * Synchronizes or updates the user role locally after role changes (e.g. technician profile creation).
+ * Switches the signed-in account between hiring (CUSTOMER) and working (TECHNICIAN).
+ * Calls backend PATCH /api/v1/users/me/role. The API allows TECHNICIAN only once the
+ * technician application is approved, and refuses CUSTOMER while technician jobs are
+ * still assigned or paused (409 with a message the app shows as it is).
  */
-export async function updateUserRole(
-  phoneNumber: string,
-  newRole: 'CUSTOMER' | 'TECHNICIAN' = 'TECHNICIAN',
-): Promise<ApiUser | null> {
+export async function switchUserRole(newRole: 'CUSTOMER' | 'TECHNICIAN'): Promise<ApiUser | null> {
+  await apiRequest<{ role: 'CUSTOMER' | 'TECHNICIAN'; changed: boolean }>('/api/v1/users/me/role', {
+    method: 'PATCH',
+    authenticated: true,
+    body: { role: newRole },
+  });
   const cached = await getCachedUser();
   if (cached) {
     const updated: ApiUser = { ...cached, role: newRole };

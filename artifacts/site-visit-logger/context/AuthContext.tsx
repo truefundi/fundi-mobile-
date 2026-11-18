@@ -18,7 +18,7 @@ import {
   resetPin as resetPinApi,
   restoreSession,
   setCachedUser,
-  updateUserRole,
+  switchUserRole,
   verifyOtp,
   type ApiUser,
 } from '@/lib/auth-api';
@@ -206,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateRole = useCallback(
     async (newRole: 'CUSTOMER' | 'TECHNICIAN') => {
       if (!account) return;
-      await updateUserRole(account.phone, newRole);
+      await switchUserRole(newRole);
       setAccount((prev) => (prev ? { ...prev, role: newRole } : null));
     },
     [account],

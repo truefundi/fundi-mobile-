@@ -39,11 +39,13 @@ export function useJobWorkspace(params: {
   roomId?: string;
   /** Pause polling once the job is closed. */
   active: boolean;
+  /** Which side of this job the viewer is on; defaults to the account's role. */
+  asTechnician?: boolean;
 }) {
   const { jobId, conversationId, roomId, active } = params;
   const { account } = useAuth();
   const { refreshConversations } = useChat();
-  const isTechnician = account?.role === 'TECHNICIAN';
+  const isTechnician = params.asTechnician ?? account?.role === 'TECHNICIAN';
 
   const [job, setJob] = useState<BackendJob | null>(null);
   const [conversation, setConversation] = useState<BackendConversation | null>(null);

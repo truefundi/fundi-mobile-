@@ -69,8 +69,9 @@ export default function ChatTabScreen() {
   const { getJob, jobs } = useFundi();
   const { threads, refreshConversations, error: negotiationError } = useChat();
   const rooms = useChatRooms();
-  const isTechnician = account?.role === 'TECHNICIAN';
-  const { technicianOffers, refreshJobs } = useWork();
+  const { technicianOffers, refreshJobs, actingAsTechnician } = useWork();
+  // The list follows the mode: a technician who is hiring sees the client side.
+  const isTechnician = actingAsTechnician;
 
   // Re-render periodically so request countdowns stay current and expired ones drop off.
   const [now, setNow] = useState(() => Date.now());
