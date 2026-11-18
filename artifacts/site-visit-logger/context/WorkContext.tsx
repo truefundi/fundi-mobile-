@@ -896,10 +896,11 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(intervalId);
   }, [account?.phone, state.status, refreshApplication]);
 
-  // Listener to immediately refresh application state when app returns to foreground
+  // Re-read the application whenever the app returns to the foreground, whatever its
+  // status: an admin can approve, reject or revoke at any time.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active' && isWorkPending(stateRef.current.status)) {
+      if (nextAppState === 'active' && stateRef.current.status !== 'none') {
         void refreshApplication().catch(() => undefined);
       }
     });
