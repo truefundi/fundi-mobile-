@@ -3,10 +3,11 @@ import { unregisterPushNotifications } from '@/lib/push-notifications';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { normaliseName, PHONE_RULE } from '@/constants/auth';
 import { DEFAULT_LOCATION } from '@/constants/profile';
-import { jobsKey, PENDING_KEY, workKey } from '@/constants/storage';
+import { jobsKey, PENDING_KEY, phoneScopedKeys, workKey } from '@/constants/storage';
 import {
   cleanAndNormalizePhone,
   deleteCurrentAccount,
+  getCachedUser,
   loginWithPin,
   logout as logoutApi,
   refreshTokens,
@@ -16,6 +17,7 @@ import {
   resendOtp,
   resetPin as resetPinApi,
   restoreSession,
+  setCachedUser,
   updateUserRole,
   verifyOtp,
   type ApiUser,
@@ -65,6 +67,11 @@ type AuthContextValue = {
   cancelVerification: () => Promise<void>;
   /** Replaces a forgotten PIN with the SMS code, then signs in with the new session. */
   resetPin: (phone: string, code: string, newPin: string) => Promise<void>;
+  /**
+   * Switches the signed-in account to a phone number the server has just
+   * verified by SMS, carrying this device's saved data over to the new number.
+   */
+  adoptVerifiedPhone: (phone: string) => Promise<void>;
   /** Ends the session by revoking the refresh token and clearing local tokens. */
   signOut: () => Promise<void>;
   /** Permanently deletes the account on the backend. */
@@ -241,6 +248,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
   }, []);
 
+  const adoptVerifiedPhone = useCallback(
+    async (phoneInput: string) => {
+      if (!account) return;
+      const next = cleanAndNormalizePhone(phoneInput);
+      const previous = account.phone;
+      if (!next || next === previous) return;
+      // Jobs, the technician application and the profile are stored per number; move them first
+      // so the screens reload the same data under the new number.
+      const nextKeys = phoneScopedKeys(next);
+      for (const [index, from] of phoneScopedKeys(previous).entries()) {
+        const to = nextKeys[index];
+        const saved = await AsyncStorage.getItem(from).catch(() => null);
+        if (saved !== null) {
+          await AsyncStorage.setItem(to, saved).catch(() => undefined);
+          await AsyncStorage.removeItem(from).catch(() => undefined);
+        }
+      }
+      const cached = await getCachedUser().catch(() => null);
+      if (cached) await setCachedUser({ ...cached, phoneNumber: next }).catch(() => undefined);
+      setAccount((current) => (current ? { ...current, phone: next } : current));
+    },
+    [account],
+  );
+
   const cancelVerification = useCallback(async () => {
     setVerification(null);
     await AsyncStorage.removeItem(PENDING_KEY).catch(() => undefined);
@@ -282,12 +313,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resendCode,
       verifyCode,
       cancelVerification,
+      adoptVerifiedPhone,
       resetPin,
       signOut,
       deleteAccount,
     }),
     [
       account,
+      adoptVerifiedPhone,
       cancelVerification,
       deleteAccount,
       isHydrated,

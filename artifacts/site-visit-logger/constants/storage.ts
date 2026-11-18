@@ -41,3 +41,13 @@ export function workKey(phone: string): string {
 export function profileKey(phone: string): string {
   return `@fundi/profile/${phone}`;
 }
+
+/** A technician's own job list on this device. */
+export function techJobsKey(phone: string): string {
+  return `@fundi/technician-jobs/${phone}`;
+}
+
+/** Every per-number key; moved together when an account switches to a newly verified number. */
+export function phoneScopedKeys(phone: string): string[] {
+  return [jobsKey(phone), workKey(phone), profileKey(phone), techJobsKey(phone)];
+}
