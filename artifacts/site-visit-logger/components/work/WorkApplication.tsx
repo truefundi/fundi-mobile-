@@ -17,7 +17,7 @@ import {
   type ScrollViewInstance,
   View,
 } from 'react-native';
-import { TRADES } from '@/constants/work';
+import { isWorkRejected, TRADES } from '@/constants/work';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { OTP_LENGTH, RESEND_AFTER_MS } from '@/constants/auth';
 import { useWork } from '@/context/WorkContext';
@@ -71,7 +71,9 @@ async function capture(): Promise<FileData | null> {
 
 export function WorkApplication() {
   const colors = useColors();
-  const { apply, profile, applicationError } = useWork();
+  const { apply, profile, applicationError, status } = useWork();
+  // After a full rejection this form sends a brand-new application to review.
+  const reapplying = isWorkRejected(status);
   const { account, updateRole } = useAuth();
 
   // ── Step Navigation ───────────────────────────────────────────────────────
@@ -95,6 +97,12 @@ export function WorkApplication() {
 
   // ── Step 2: Verification & KYC Documents ─────────────────────────────────
   const [nationalIdNumber, setNationalIdNumber] = useState('');
+  /**
+   * The API never sends a saved ID number back in full, only "****1234". That
+   * is kept here as the last four digits instead of filling the field with an
+   * invalid value; leaving the field empty keeps the number on file.
+   */
+  const [idOnFileLast4, setIdOnFileLast4] = useState<string | null>(null);
   const [idPhoto, setIdPhoto] = useState<FileData | null>(null);
   const [idPhotoSelectionError, setIdPhotoSelectionError] = useState('');
 
@@ -135,7 +143,11 @@ export function WorkApplication() {
     if (profile.phoneNumber) setPhoneNumber(profile.phoneNumber);
     if (profile.email) setEmail(profile.email);
     if (profile.gender) setGender(profile.gender);
-    if (profile.nationalIdNumber) setNationalIdNumber(profile.nationalIdNumber);
+    if (profile.nationalIdNumber) {
+      const masked = /^\*+(\d{4})$/.exec(profile.nationalIdNumber.trim());
+      if (masked) setIdOnFileLast4(masked[1]);
+      else setNationalIdNumber(profile.nationalIdNumber);
+    }
     if (profile.baseAddress) setBaseAddress(profile.baseAddress);
     if (profile.paymentMethod) setPaymentMethod(profile.paymentMethod);
     if (profile.paymentNumber) setPaymentNumber(profile.paymentNumber);
@@ -433,7 +445,7 @@ export function WorkApplication() {
       setGeneralError('Please verify your phone number with the SMS code.');
       return;
     }
-    if (!nationalIdNumber.trim() || idError) {
+    if ((!nationalIdNumber.trim() && !idOnFileLast4) || idError) {
       setGeneralError('Please enter a valid 16-digit National ID number.');
       return;
     }
@@ -476,7 +488,8 @@ export function WorkApplication() {
         certificateMimeTypes: certificates.map((c) => c.mimeType),
         email: email.trim() || undefined,
         gender: gender || 'PREFER_NOT_TO_SAY',
-        nationalIdNumber: nationalIdNumber.trim(),
+        // Empty keeps the number already on file (only allowed when there is one).
+        nationalIdNumber: nationalIdNumber.trim() || undefined,
         baseAddress: baseAddress.trim(),
         paymentMethod,
         paymentNumber: activePayment,
@@ -1198,7 +1211,7 @@ export function WorkApplication() {
               onChangeText={setNationalIdNumber}
               keyboardType="number-pad"
               maxLength={16}
-              placeholder="1 1990 8 0012345 6 78"
+              placeholder={idOnFileLast4 ? `On file: ending ${idOnFileLast4}` : '1 1990 8 0012345 6 78'}
               placeholderTextColor={colors.mutedForeground}
               style={[
                 styles.input,
@@ -1211,6 +1224,10 @@ export function WorkApplication() {
             />
             {idError ? (
               <Text style={[styles.fieldError, { color: colors.destructive }]}>{idError}</Text>
+            ) : idOnFileLast4 && !nationalIdNumber.trim() ? (
+              <Text testID="national-id-on-file" style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                Your ID ending {idOnFileLast4} is on file. Leave this empty to keep it, or type the full number to change it.
+              </Text>
             ) : null}
 
             {/* National ID Document Picker */}
@@ -1373,7 +1390,7 @@ export function WorkApplication() {
               <ActivityIndicator color={colors.primaryForeground} size="small" />
             ) : (
               <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
-                Submit Application for Review
+                {reapplying ? 'Submit New Application' : 'Submit Application for Review'}
               </Text>
             )}
           </Pressable>

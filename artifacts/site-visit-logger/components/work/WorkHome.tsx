@@ -117,11 +117,13 @@ function WorkRejected({ onlyDocuments }: { onlyDocuments: boolean }) {
   return (
     <View style={[styles.statusCard, { backgroundColor: colors.destructiveMuted }]}>
       <Feather name="alert-circle" size={26} color={colors.destructive} />
-      <Text style={[styles.title, { color: colors.foreground }]}>Application needs changes</Text>
+      <Text style={[styles.title, { color: colors.foreground }]}>
+        {onlyDocuments ? 'Application needs changes' : 'Application not approved'}
+      </Text>
       <Text style={[styles.body, { color: colors.mutedForeground }]}>
         {onlyDocuments
           ? 'Replace the documents marked below. Each one goes back to review as soon as you send it.'
-          : 'Review the feedback on your documents or specific trades, update your details, then retry your submission.'}
+          : 'Read the feedback, update your details below and submit a new application. It goes back to review as a fresh application.'}
       </Text>
 
       {profile?.rejectionFeedback && !onlyDocuments ? (
@@ -202,11 +204,12 @@ function WorkRejectedHome() {
 export function WorkHome(_props: { query?: string }) {
   const { status, submissionFailed } = useWork();
 
+  // A rejected application always shows why, with the form to apply again below it.
+  if (isWorkRejected(status)) return <WorkRejectedHome />;
+
   if (submissionFailed) return <WorkApplication />;
   
   if (isWorkPending(status)) return <WorkPending />;
-  
-  if (isWorkRejected(status)) return <WorkRejectedHome />;
   
   if (isWorkVerified(status)) return <WorkApproved />;
   
