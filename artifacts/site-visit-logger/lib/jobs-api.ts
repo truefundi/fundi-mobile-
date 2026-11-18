@@ -174,7 +174,9 @@ export interface PhoneVerificationRequestResponse {
 
 export interface VerifyPhoneResponse {
   verificationId: string;
-  verified: boolean;
+  /** The number that was verified; it is now the account's sign-in number. */
+  phoneNumber: string;
+  verified?: boolean;
   verifiedAt: string;
 }
 

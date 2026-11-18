@@ -23,8 +23,8 @@ import { OTP_LENGTH, RESEND_AFTER_MS } from '@/constants/auth';
 import { useWork } from '@/context/WorkContext';
 import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
-import { requestLoginOtp, verifyOtp, cleanAndNormalizePhone } from '@/lib/auth-api';
-import { apiRequest, ApiRequestError } from '@/lib/api';
+import { cleanAndNormalizePhone } from '@/lib/auth-api';
+import { fetchJobPhoneStatus, requestJobPhoneVerification, verifyJobPhone } from '@/lib/jobs-api';
 
 type FileData = {
   uri: string;
@@ -74,7 +74,7 @@ export function WorkApplication() {
   const { apply, profile, applicationError, status } = useWork();
   // After a full rejection this form sends a brand-new application to review.
   const reapplying = isWorkRejected(status);
-  const { account, updateRole } = useAuth();
+  const { account, updateRole, adoptVerifiedPhone } = useAuth();
 
   // ── Step Navigation ───────────────────────────────────────────────────────
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
@@ -110,7 +110,11 @@ export function WorkApplication() {
   const [certificateSelectionError, setCertificateSelectionError] = useState('');
 
   // ── Phone Verification ────────────────────────────────────────────────────
-  const [isPhoneVerified, setIsPhoneVerified] = useState(() => Boolean(account?.phone));
+  // Only the server knows whether this number was ever confirmed by SMS; signing in with a PIN does not.
+  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  /** The account number as last confirmed verified by the server. */
+  const [verifiedNumber, setVerifiedNumber] = useState<string | null>(null);
+  const [verificationId, setVerificationId] = useState<string | null>(null);
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpSending, setOtpSending] = useState(false);
@@ -129,18 +133,32 @@ export function WorkApplication() {
     if (account) {
       if (account.name && !fullName) setFullName(account.name);
       if (account.phone) {
-        if (!phoneNumber) setPhoneNumber(account.phone);
+        setPhoneNumber(account.phone);
         if (!paymentNumber) setPaymentNumber(account.phone);
-        setIsPhoneVerified(true);
       }
     }
   }, [account]);
+
+  // Ask the server whether the account phone has been verified by SMS.
+  useEffect(() => {
+    if (!account) return;
+    let cancelled = false;
+    fetchJobPhoneStatus()
+      .then((result) => {
+        if (cancelled) return;
+        setIsPhoneVerified(result.verified);
+        setVerifiedNumber(result.verified ? result.phoneNumber : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [account?.id]);
 
   // Pre-fill from existing profile draft
   useEffect(() => {
     if (!profile) return;
     if (profile.fullName) setFullName(profile.fullName);
-    if (profile.phoneNumber) setPhoneNumber(profile.phoneNumber);
     if (profile.email) setEmail(profile.email);
     if (profile.gender) setGender(profile.gender);
     if (profile.nationalIdNumber) {
@@ -311,11 +329,6 @@ export function WorkApplication() {
       errors.fullName = 'Please enter your full name.';
     }
 
-    const cleanPhone = cleanAndNormalizePhone(phoneNumber.trim() || account?.phone || '');
-    if (!cleanPhone || cleanPhone.length < 10) {
-      errors.phoneNumber = 'Please enter a valid phone number (+25078/79/72/73...).';
-    }
-
     if (!baseAddress.trim()) {
       errors.baseAddress = 'Please enter your base address or city.';
     }
@@ -342,74 +355,36 @@ export function WorkApplication() {
     setCurrentStep(2);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
 
-    // If phone isn't verified yet, trigger public registration OTP automatically
-    if (!isPhoneVerified && !otpSent) {
-      void handleSendOtp();
-    }
   };
 
   // ── OTP Helpers (Step 2) ──────────────────────────────────────────────────
+  const changeVerifyNumber = (value: string) => {
+    setPhoneNumber(value);
+    setOtpSent(false);
+    setOtpCode('');
+    setOtpError('');
+    setVerificationId(null);
+    setIsPhoneVerified(Boolean(verifiedNumber) && cleanAndNormalizePhone(value) === verifiedNumber);
+  };
+
   const handleSendOtp = async () => {
-    const rawPhone = phoneNumber.trim() || account?.phone || '';
-    if (!rawPhone) {
-      setOtpError('Phone number missing. Please check Step 1.');
+    const target = cleanAndNormalizePhone(phoneNumber.trim() || account?.phone || '');
+    if (!/^\+2507[2389]\d{7}$/.test(target)) {
+      setOtpError('Enter a valid Rwandan mobile number, e.g. +250788123456.');
       return;
     }
-    const cleanPhone = cleanAndNormalizePhone(rawPhone);
-
     setOtpSending(true);
     setOtpError('');
     setOtpCode('');
-
     try {
-      let baseLatitude = -1.9441;
-      let baseLongitude = 30.0619;
-      try {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.granted) {
-          const position = await Location.getCurrentPositionAsync({});
-          baseLatitude = position.coords.latitude;
-          baseLongitude = position.coords.longitude;
-        }
-      } catch {}
-
-      const formattedExperiences = serviceExperiences.map((exp) => ({
-        customName: exp.trade === 'Others' ? (exp.customName.trim() || 'Other') : exp.trade,
-        yearsOfExperience: Number(exp.yearsOfExperience) || 0,
-      }));
-
-      const activePayment = cleanAndNormalizePhone(paymentNumber.trim() || cleanPhone);
-
-      try {
-        await apiRequest('/api/v1/technicians/register', {
-          method: 'POST',
-          body: {
-            user: {
-              fullName: fullName.trim() || account?.name || 'Technician',
-              phoneNumber: cleanPhone,
-              ...(email.trim() ? { email: email.trim().toLowerCase() } : {}),
-            },
-            profile: {
-              gender: gender || 'PREFER_NOT_TO_SAY',
-              nationalIdNumber: nationalIdNumber.trim() || '1199080000000000',
-              baseAddress: baseAddress.trim() || 'Kigali, Rwanda',
-              publicLocationLabel: (baseAddress.trim() || 'Kigali').split(',')[0].trim(),
-              baseLatitude,
-              baseLongitude,
-              paymentMethod,
-              paymentNumber: activePayment,
-              serviceExperiences: formattedExperiences,
-            },
-          },
-        });
-      } catch (regErr) {
-        if (regErr instanceof ApiRequestError && regErr.status === 409) {
-          await requestLoginOtp(cleanPhone);
-        } else {
-          throw regErr;
-        }
+      // The code goes to the number in the field; once confirmed it becomes the sign-in number.
+      const result = await requestJobPhoneVerification(target);
+      if ((result as { verified?: boolean }).verified) {
+        setIsPhoneVerified(true);
+        setVerifiedNumber(target);
+        return;
       }
-
+      setVerificationId(result.verificationId);
       setOtpSent(true);
       setResendCooldown(30);
       setTimeout(() => otpInputRef.current?.focus(), 300);
@@ -421,16 +396,26 @@ export function WorkApplication() {
   };
 
   const handleVerifyOtp = async (enteredCode: string) => {
-    const rawPhone = phoneNumber.trim() || account?.phone || '';
-    const cleanPhone = cleanAndNormalizePhone(rawPhone);
+    if (!verificationId) {
+      setOtpError('Send a code first.');
+      return;
+    }
     setOtpVerifying(true);
     setOtpError('');
     try {
-      const res = await verifyOtp(cleanPhone, enteredCode);
-      if (res.user) {
-        setIsPhoneVerified(true);
-        setOtpSent(false);
+      const result = await verifyJobPhone(verificationId, enteredCode);
+      const verified = cleanAndNormalizePhone(result.phoneNumber || phoneNumber);
+      const previous = account?.phone;
+      // The server has made this the account's sign-in number; mirror that here.
+      await adoptVerifiedPhone(verified);
+      if (previous && cleanAndNormalizePhone(paymentNumber) === cleanAndNormalizePhone(previous)) {
+        setPaymentNumber(verified);
       }
+      setPhoneNumber(verified);
+      setVerifiedNumber(verified);
+      setIsPhoneVerified(true);
+      setOtpSent(false);
+      setVerificationId(null);
     } catch (err) {
       setOtpError(err instanceof Error ? err.message : 'Incorrect verification code. Please try again.');
       setOtpCode('');
@@ -469,7 +454,7 @@ export function WorkApplication() {
         }
       } catch {}
 
-      const cleanPhone = cleanAndNormalizePhone(phoneNumber.trim() || account?.phone || '');
+      const cleanPhone = cleanAndNormalizePhone(account?.phone || phoneNumber.trim());
       const activePayment = cleanAndNormalizePhone(paymentNumber.trim() || cleanPhone);
 
       await apply({
@@ -716,42 +701,6 @@ export function WorkApplication() {
             />
             {step1Errors.fullName ? (
               <Text style={[styles.fieldError, { color: colors.destructive }]}>{step1Errors.fullName}</Text>
-            ) : null}
-
-            {/* Phone Number */}
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              Phone Number <Text style={{ color: colors.destructive }}>*</Text>
-            </Text>
-            <TextInput
-              value={phoneNumber}
-              onChangeText={(val) => {
-                setPhoneNumber(val);
-                const currentClean = cleanAndNormalizePhone(val || '');
-                const accountClean = cleanAndNormalizePhone(account?.phone ?? '');
-                if (account?.phone && currentClean === accountClean) {
-                  setIsPhoneVerified(true);
-                } else {
-                  setIsPhoneVerified(false);
-                  setOtpSent(false);
-                }
-                if (step1Errors.phoneNumber) setStep1Errors({ ...step1Errors, phoneNumber: '' });
-              }}
-              keyboardType="phone-pad"
-              placeholder="+250788123456"
-              placeholderTextColor={colors.mutedForeground}
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.background,
-                  borderColor: step1Errors.phoneNumber ? colors.destructive : colors.border,
-                  color: colors.foreground,
-                },
-              ]}
-            />
-            {step1Errors.phoneNumber ? (
-              <Text style={[styles.fieldError, { color: colors.destructive }]}>
-                {step1Errors.phoneNumber}
-              </Text>
             ) : null}
 
             {/* Email Address */}
@@ -1050,7 +999,7 @@ export function WorkApplication() {
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.cardTitle, { color: colors.foreground }]}>Phone Verification</Text>
             <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-              A verified phone number is required to receive technician job dispatches.
+              Job requests reach you on this number. The number you verify becomes your sign-in number.
             </Text>
 
             {isPhoneVerified ? (
@@ -1069,17 +1018,57 @@ export function WorkApplication() {
                     {cleanAndNormalizePhone(phoneNumber || account?.phone || '')}
                   </Text>
                 </View>
+                <Pressable
+                  accessibilityRole="button"
+                  testID="verify-phone-change"
+                  onPress={() => {
+                    setIsPhoneVerified(false);
+                    setOtpSent(false);
+                    setOtpError('');
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.resendAction, { color: colors.primary }]}>Use a different number</Text>
+                </Pressable>
               </View>
             ) : (
               <View style={styles.otpBlock}>
-                <View style={styles.unverifiedNotice}>
-                  <Text style={[styles.bodyText, { color: colors.foreground }]}>
-                    Send a 6-digit SMS verification code to:{' '}
-                    <Text style={{ fontFamily: 'Inter_700Bold' }}>
-                      {cleanAndNormalizePhone(phoneNumber || account?.phone || '')}
-                    </Text>
+                <Text style={[styles.label, { color: colors.foreground, marginTop: 4 }]}>
+                  Phone Number <Text style={{ color: colors.destructive }}>*</Text>
+                </Text>
+                <TextInput
+                  testID="verify-phone-input"
+                  value={phoneNumber}
+                  onChangeText={changeVerifyNumber}
+                  editable={!otpSent && !otpSending}
+                  keyboardType="phone-pad"
+                  placeholder="+250788123456"
+                  placeholderTextColor={colors.mutedForeground}
+                  style={[
+                    styles.input,
+                    { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
+                    otpSent && { opacity: 0.6 },
+                  ]}
+                />
+                {otpSent ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    testID="verify-phone-edit"
+                    onPress={() => changeVerifyNumber(phoneNumber)}
+                    hitSlop={8}
+                  >
+                    <Text style={[styles.resendAction, { color: colors.primary }]}>Change number</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                    {cleanAndNormalizePhone(phoneNumber) === account?.phone
+                      ? 'Your current sign-in number. Enter another number to switch to it.'
+                      : `After you verify, you will sign in with this number instead of ${account?.phone ?? 'your current one'}.`}
                   </Text>
-                </View>
+                )}
+                {!otpSent && otpError ? (
+                  <Text style={[styles.fieldError, { color: colors.destructive }]}>{otpError}</Text>
+                ) : null}
 
                 {!otpSent ? (
                   <Pressable

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
-import { workKey, jobsKey } from '@/constants/storage';
+import { jobsKey, techJobsKey, workKey } from '@/constants/storage';
 import { getServiceBookingFee } from '@/constants/services';
 import {
   type TechnicianApplication,
@@ -233,6 +233,7 @@ async function appendLocalFile(form: FormData, uri: string, fileName: string, mi
   } as any);
 }
 
+/** Prefix of techJobsKey(phone) in constants/storage. */
 export const TECH_JOBS_KEY = '@fundi/technician-jobs';
 
 function mapBackendJobToTechnicianJob(backendJob: BackendJob): Job {
@@ -471,7 +472,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       techJobsRef.current = mappedJobs;
       setTechJobs(mappedJobs);
       setTechnicianOffers(offers);
-      const key = `${TECH_JOBS_KEY}/${account.phone}`;
+      const key = techJobsKey(account.phone);
       await AsyncStorage.setItem(key, JSON.stringify(mappedJobs)).catch(() => {});
     } catch (err) {
       console.warn('Could not refresh technician jobs/offers:', err);
@@ -485,7 +486,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setTechnicianOffers([]);
       return;
     }
-    const key = `${TECH_JOBS_KEY}/${account.phone}`;
+    const key = techJobsKey(account.phone);
     void AsyncStorage.getItem(key).then((raw) => {
       if (raw) {
         try {
@@ -531,7 +532,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     setTechJobs(updated);
     setTechnicianOffers((prev) => prev.filter((o) => o.id !== offerId));
     if (account?.phone) {
-      await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated)).catch(() => {});
+      await AsyncStorage.setItem(techJobsKey(account.phone), JSON.stringify(updated)).catch(() => {});
     }
     return backendJob;
   }, [account?.phone]);
@@ -549,7 +550,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     techJobsRef.current = updated;
     setTechJobs(updated);
     if (account?.phone) {
-      await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated)).catch(() => {});
+      await AsyncStorage.setItem(techJobsKey(account.phone), JSON.stringify(updated)).catch(() => {});
     }
     return backendJob;
   }, [account?.phone]);
@@ -563,7 +564,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
         setTechJobs(updated);
       }
       if (targetPhone) {
-        const key = `${TECH_JOBS_KEY}/${targetPhone}`;
+        const key = techJobsKey(targetPhone);
         try {
           const raw = await AsyncStorage.getItem(key);
           const currentList: Job[] = raw ? JSON.parse(raw) : [];
@@ -611,7 +612,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       techJobsRef.current = updated;
       setTechJobs(updated);
       if (account?.phone) {
-        await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
+        await AsyncStorage.setItem(techJobsKey(account.phone), JSON.stringify(updated));
       }
       if (fundi) {
         fundi.updateJob(jobId, { status: 'IN_PROGRESS' });
@@ -668,7 +669,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       techJobsRef.current = updated;
       setTechJobs(updated);
       if (account?.phone) {
-        await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
+        await AsyncStorage.setItem(techJobsKey(account.phone), JSON.stringify(updated));
       }
       if (fundi) {
         fundi.cancelJob(jobId, reason, [targetJob?.clientPhone].filter(Boolean) as string[]);
@@ -733,7 +734,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       techJobsRef.current = updated;
       setTechJobs(updated);
       if (account?.phone) {
-        await AsyncStorage.setItem(`${TECH_JOBS_KEY}/${account.phone}`, JSON.stringify(updated));
+        await AsyncStorage.setItem(techJobsKey(account.phone), JSON.stringify(updated));
       }
       if (fundi) {
         fundi.updateJob(jobId, { status: 'COMPLETED', completedPhotoUri, completedAt: now });
