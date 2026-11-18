@@ -1,7 +1,7 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useRouter, type Href } from 'expo-router';
-import React, { useState } from 'react';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -50,7 +50,13 @@ export default function ProfileScreen() {
   const topInset = Platform.OS === 'web' ? 0 : insets.top;
   const router = useRouter();
   const { jobs } = useFundi();
-  const { mode, setMode, status, profile, mine, done, earnings } = useWork();
+  const { mode, setMode, status, profile, mine, done, earnings, refreshApplication } = useWork();
+  // Opening Profile re-reads the application, so an admin's latest decision shows here.
+  useFocusEffect(
+    useCallback(() => {
+      if (mode === 'working') void refreshApplication().catch(() => undefined);
+    }, [mode, refreshApplication]),
+  );
   const { signOut, deleteAccount } = useAuth();
   const { profile: account, updateProfile } = useProfile();
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
@@ -113,7 +119,7 @@ export default function ProfileScreen() {
   const modeHint = !working
     ? 'Find and hire a technician'
     : isWorkVerified(status)
-      ? `Taking jobs${profile?.serviceExperiences?.length ? ` · ${profile.serviceExperiences.length} trades` : ''}`
+      ? `Taking jobs${profile?.serviceExperiences?.length ? ` · ${profile.serviceExperiences.length} ${profile.serviceExperiences.length === 1 ? 'trade' : 'trades'}` : ''}`
       : isWorkPending(status)
         ? 'Documents under review'
         : isWorkRejected(status)
@@ -229,7 +235,12 @@ export default function ProfileScreen() {
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your trades</Text>
           {profile?.serviceExperiences && profile.serviceExperiences.length > 0 ? (
             profile.serviceExperiences.map((exp, index) => {
-              const expStatus = exp.status ?? 'PENDING';
+              // The API reviews the application as a whole; a trade only carries its own status
+              // when an admin decided on it separately. Otherwise it follows the application.
+              const ownDecision = exp.status && exp.status !== 'PENDING' ? exp.status : null;
+              const expStatus =
+                ownDecision ??
+                (isWorkVerified(status) ? 'APPROVED' : isWorkRejected(status) ? 'DENIED' : 'PENDING');
               const isApproved = expStatus === 'APPROVED';
               const isRejected = expStatus === 'DENIED' || expStatus === 'SUSPENDED';
               
