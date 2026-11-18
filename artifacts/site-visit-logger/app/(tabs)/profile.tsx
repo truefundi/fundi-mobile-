@@ -8,7 +8,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { ModeSlider } from '@/components/ui/ModeSlider';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { formatPhone, initialsOf } from '@/constants/auth';
-import { formatMoney, isClosed } from '@/constants/jobs';
+import { isClosed } from '@/constants/jobs';
 import { useColors } from '@/hooks/useColors';
 import { useTheme } from '@/context/ThemeContext';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
@@ -219,7 +219,8 @@ export default function ProfileScreen() {
       {working ? (
         <View style={styles.statRow}>
           <Stat value={String(mine.length + done.length)} label={mine.length + done.length === 1 ? 'Job taken' : 'Jobs taken'} />
-          <Stat value={formatMoney(earnings)} label="Earned" />
+          {/* The currency sits in the label so the figure stays on one line in the small tile. */}
+          <Stat value={Math.round(earnings).toLocaleString('en-US')} label="Earned (RWF)" />
           <Stat value={profile ? `${profile.yearsExperience}y` : '—'} label="Experience" />
         </View>
       ) : (
