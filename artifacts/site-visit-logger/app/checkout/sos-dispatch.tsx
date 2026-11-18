@@ -17,6 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import { usePaymentQuote } from '@/hooks/usePaymentQuote';
+import { PriceBreakdown } from '@/components/checkout/PriceBreakdown';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -196,7 +198,17 @@ export default function SosDispatchScreen() {
   const serviceName = activeJob?.service || params.service || 'Emergency Service';
   const problemDesc = activeJob?.problem || params.problem || 'Critical emergency assistance required';
   const locationLabel = activeJob?.locationLabel || params.locationLabel || params.address || 'Current GPS Location';
-  const dispatchFee = activeJob?.bookingFee?.amount ?? EMERGENCY_DISPATCH_FEE;
+  const sosPaid = activeJob?.bookingFee?.status === 'PAID';
+  // The API prices the emergency booking: SOS fee plus any charges the client pays.
+  const { quote: sosQuote } = usePaymentQuote({
+    service: serviceName,
+    categoryId: params.categoryId || activeJob?.serviceCategoryId,
+    requestType: 'SOS',
+    enabled: !sosPaid,
+  });
+  const dispatchFee = sosPaid
+    ? activeJob?.bookingFee?.amount ?? EMERGENCY_DISPATCH_FEE
+    : sosQuote?.customerTotal ?? activeJob?.bookingFee?.amount ?? EMERGENCY_DISPATCH_FEE;
 
   // Broadcast step logs for radar screen
   const [broadcastStep, setBroadcastStep] = useState(0);
@@ -285,7 +297,7 @@ export default function SosDispatchScreen() {
 
       const txId = bookingPayment.externalPaymentId || `TX-SOS-${Date.now().toString(36).toUpperCase()}`;
       setTransactionRef(txId);
-      markBookingFeePaid(createdBackendJob.id, txId);
+      markBookingFeePaid(createdBackendJob.id, txId, bookingPayment.amount);
       notify('success');
 
       // Switch to radar search pulse screen
@@ -497,6 +509,7 @@ export default function SosDispatchScreen() {
                   <Text style={styles.responseBadgeText}>5–15 MIN ETA</Text>
                 </View>
               </View>
+              <PriceBreakdown quote={sosQuote} testID="sos-fee-breakdown" />
               <Text style={[styles.feeSubtext, { color: colors.mutedForeground }]}>
                 Locks priority callout and initiates instant specialist broadcast.
               </Text>

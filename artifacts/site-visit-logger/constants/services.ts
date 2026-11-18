@@ -8,7 +8,7 @@ export type Service = {
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   /** Extra words a customer might search with, so "tap" still finds Plumbing. */
   keywords: string;
-  /** Flat booking fee in standard local currency units (RWF) */
+  /** What a customer pays to book (RWF): the fee plus any charges the customer pays. */
   bookingFee: number;
   description?: string;
   /** Name of the parent group, e.g. "Home Services". */

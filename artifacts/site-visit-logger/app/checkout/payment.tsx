@@ -15,6 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import { usePaymentQuote } from '@/hooks/usePaymentQuote';
+import { PriceBreakdown } from '@/components/checkout/PriceBreakdown';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -126,7 +128,17 @@ export default function CheckoutPaymentScreen() {
   }, [job?.technician]);
 
   const targetService = job?.service || params.service || technician?.service;
-  const bookingAmount = job?.bookingFee?.amount ?? (params.amount ? parseFloat(params.amount) : getServiceBookingFee(targetService));
+  const paidAlready = job?.bookingFee?.status === 'PAID';
+  // The API prices the booking: base fee plus any charges the client pays.
+  const { quote } = usePaymentQuote({
+    service: targetService,
+    categoryId: params.categoryId || job?.serviceCategoryId,
+    requestType: job?.type === 'SOS' ? 'SOS' : 'NORMAL',
+    enabled: !paidAlready,
+  });
+  const fallbackAmount =
+    job?.bookingFee?.amount ?? (params.amount ? parseFloat(params.amount) : getServiceBookingFee(targetService));
+  const bookingAmount = paidAlready ? fallbackAmount : quote?.customerTotal ?? fallbackAmount;
   const bookingCurrency = job?.bookingFee?.currency ?? params.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
   const [showTerms, setShowTerms] = useState(false);
@@ -329,7 +341,7 @@ export default function CheckoutPaymentScreen() {
 
       // 4. Update local state and show payment success, then continue in the chat.
       const txId = bookingPayment.externalPaymentId || `TX-${Date.now().toString(36).toUpperCase()}`;
-      markBookingFeePaid(targetRequestId, txId);
+      markBookingFeePaid(targetRequestId, txId, bookingPayment.amount);
       setTransactionRef(txId);
       setIsProcessing(false);
       setPaymentSuccess(true);
@@ -412,6 +424,7 @@ export default function CheckoutPaymentScreen() {
           <Text style={[styles.amountDesc, { color: colors.secondary }]}>
             Sends your request to the technician and opens the chat. This is not the job price.
           </Text>
+          <PriceBreakdown quote={quote} onEmphasis testID="payment-breakdown" />
         </SectionCard>
 
         <Pressable
