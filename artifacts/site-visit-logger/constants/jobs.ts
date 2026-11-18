@@ -310,6 +310,7 @@ export function balanceDue(job: Job): number {
   return Math.max(repairTotal(job) - paidBookingFee, 0);
 }
 
+/** Amounts in the app are Rwandan francs, which have no minor unit. */
 export function formatMoney(amount: number): string {
-  return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  return `RWF ${Math.round(amount).toLocaleString('en-US')}`;
 }
