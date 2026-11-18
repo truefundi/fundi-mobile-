@@ -12,6 +12,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import { usePaymentQuote } from '@/hooks/usePaymentQuote';
+import { PriceBreakdown } from '@/components/checkout/PriceBreakdown';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -134,7 +136,16 @@ export default function BookingFeeReviewScreen() {
   const locationText = job?.locationLabel || params.locationLabel || params.address || 'Kigali, Rwanda';
 
   const serviceBookingFee = getServiceBookingFee(serviceName);
-  const bookingAmount = job?.bookingFee?.amount ?? serviceBookingFee;
+  // The API prices the booking: base fee plus any charges the client pays.
+  const { quote } = usePaymentQuote({
+    service: serviceName,
+    categoryId: params.categoryId || job?.serviceCategoryId,
+    requestType: 'NORMAL',
+    enabled: !isAlreadyPaid,
+  });
+  const bookingAmount = isAlreadyPaid
+    ? job?.bookingFee?.amount ?? serviceBookingFee
+    : quote?.customerTotal ?? job?.bookingFee?.amount ?? serviceBookingFee;
   const bookingCurrency = job?.bookingFee?.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
   const handleProceedToPayment = () => {
@@ -317,9 +328,12 @@ export default function BookingFeeReviewScreen() {
               {formatBookingFee(bookingAmount, bookingCurrency)}
             </Text>
             <Text style={[styles.priceDesc, { color: colors.secondary }]}>
-              Single flat platform Service Booking Fee
+              {quote && quote.customerTotal !== quote.baseFee
+                ? 'Service Booking Fee with service charges'
+                : 'Single flat platform Service Booking Fee'}
             </Text>
           </View>
+          <PriceBreakdown quote={quote} onEmphasis testID="booking-fee-breakdown" />
 
           <View style={[styles.includedList, { borderTopColor: 'rgba(255,255,255,0.15)' }]}>
             <View style={styles.includedItem}>

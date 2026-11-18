@@ -174,7 +174,8 @@ type FundiContextValue = {
   events: (JobEvent & { jobId: string; service: string })[];
   addRequest: (request: NewRequest) => Promise<string>;
   createDraftRequest: (data: Partial<ServiceRequest>) => string;
-  markBookingFeePaid: (requestId: string, transactionId: string) => void;
+  /** `amount` is what the API charged; without it the fee already on the job is kept. */
+  markBookingFeePaid: (requestId: string, transactionId: string, amount?: number) => void;
   initializeChatId: (requestId: string, chatId?: string) => string;
   /** Customer saw the matched technician and wants to continue. */
   acceptOffer: (id: string) => void;
@@ -520,12 +521,12 @@ export function FundiProvider({ children }: { children: ReactNode }) {
   );
 
   const markBookingFeePaid = useCallback(
-    (requestId: string, transactionId: string) => {
+    (requestId: string, transactionId: string, amount?: number) => {
       update(requestId, (job) => {
         const now = new Date().toISOString();
         const updatedBookingFee: BookingFee = {
           ...job.bookingFee,
-          amount: job.bookingFee?.amount ?? getServiceBookingFee(job.service),
+          amount: amount ?? job.bookingFee?.amount ?? getServiceBookingFee(job.service),
           currency: job.bookingFee?.currency ?? 'RWF',
           status: 'PAID',
           paidAt: now,

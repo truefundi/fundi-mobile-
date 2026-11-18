@@ -17,6 +17,10 @@ export interface DatabaseCategory {
   keywords: string | null;
   bookingFee: number;
   sosBookingFee: number | null;
+  /** What a customer pays to book: the fee plus every charge the customer pays. */
+  customerBookingFee?: number | null;
+  /** The same for an SOS booking; null when the service has no SOS fee. */
+  customerSosBookingFee?: number | null;
   icon: string | null;
 }
 
@@ -150,7 +154,12 @@ export function mapDatabaseCategoryToService(dbCategory: DatabaseCategory): Serv
     slug: dbCategory.slug,
     icon: resolveCategoryIcon(dbCategory.slug, dbCategory.name, dbCategory.icon),
     keywords: resolveCategoryKeywords(dbCategory.slug, dbCategory.name, dbCategory.keywords ?? ''),
-    bookingFee: resolveDefaultBookingFee(dbCategory.slug, dbCategory.name, dbCategory.bookingFee ?? dbCategory.sosBookingFee ?? DEFAULT_BOOKING_FEE),
+    // Cards, filters and sorting show what the customer will actually pay.
+    bookingFee: resolveDefaultBookingFee(
+      dbCategory.slug,
+      dbCategory.name,
+      dbCategory.customerBookingFee ?? dbCategory.bookingFee ?? dbCategory.sosBookingFee ?? DEFAULT_BOOKING_FEE,
+    ),
     description: dbCategory.description || undefined,
     // The API sends the parent group as an object; older caches stored a plain name.
     category:

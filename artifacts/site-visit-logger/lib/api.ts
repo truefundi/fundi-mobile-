@@ -6,7 +6,12 @@ import { getAccessToken } from '@/lib/auth-session';
 let configured = false;
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+    /** The whole error body, e.g. `expectedAmount` and `pricingDetails` on a price mismatch. */
+    readonly details: Record<string, unknown> | null = null,
+  ) {
     super(message);
     this.name = 'ApiRequestError';
   }
@@ -61,6 +66,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     throw new ApiRequestError(
       Array.isArray(message) ? message.join(' ') : typeof message === 'string' ? message : `Request failed (${response.status}).`,
       response.status,
+      payload,
     );
   }
 
@@ -127,6 +133,7 @@ export async function apiUpload<T>(path: string, body: FormData, method = 'POST'
     throw new ApiRequestError(
       Array.isArray(message) ? message.join(' ') : typeof message === 'string' ? message : `Request failed (${response.status}).`,
       response.status,
+      payload,
     );
   }
 

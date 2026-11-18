@@ -190,6 +190,8 @@ export interface CreateBookingPaymentResponse {
   phoneNumber: string;
   amount: number;
   currency: string;
+  /** What the amount is made of: base fee and charges, as priced by the API. */
+  pricingDetails?: import('@/lib/payments-api').PaymentQuote;
   paidAt: string;
   validUntil: string;
 }
