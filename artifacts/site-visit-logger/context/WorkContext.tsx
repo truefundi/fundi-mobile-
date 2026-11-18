@@ -119,6 +119,8 @@ type ApiTechnicianProfile = {
     reviewNote?: string | null;
   }>;
   verificationStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+  /** The admin's note when the whole application was rejected. */
+  rejectionReason?: string | null;
   availabilityStatus: 'ONLINE' | 'OFFLINE';
   location: { address: string; latitude: number; longitude: number };
   profilePictureUrl: string | null;
@@ -159,9 +161,12 @@ function mapProfile(
 
   // General feedback only; notes on denied documents are shown on each document.
   const deniedExp = experiences.find((e) => e.status === 'DENIED' || e.status === 'SUSPENDED');
+  // The admin's reason comes from the server; the generic line is only for
+  // rejections made before reasons were recorded.
   const rejectionFeedback =
-    deniedExp?.reviewNote ??
-    (profile.verificationStatus === 'REJECTED' ? (local?.rejectionFeedback ?? 'Application was not approved.') : null);
+    profile.verificationStatus === 'REJECTED'
+      ? profile.rejectionReason?.trim() || deniedExp?.reviewNote || 'Application was not approved.'
+      : deniedExp?.reviewNote ?? null;
 
   return {
     ...local,
