@@ -121,9 +121,10 @@ export function OfferCard({
             onPress={onAccept}
             loading={busy === 'accept-offer'}
             disabled={Boolean(busy)}
-            style={styles.flex}
+            style={styles.primaryAction}
             testID={`offer-accept-${offer.id}`}
           />
+          {/* Accept gets its own row: three buttons side by side cut their labels on a phone. */}
           {canCounter ? (
             <Button
               label="Counter"
@@ -164,6 +165,7 @@ const styles = StyleSheet.create({
   notes: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18, marginTop: 8 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 8 },
   meta: { fontFamily: 'Inter_400Regular', fontSize: 11 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 10 },
-  flex: { flex: 1 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  primaryAction: { flexBasis: '100%' },
+  flex: { flex: 1, paddingHorizontal: 10 },
 });
