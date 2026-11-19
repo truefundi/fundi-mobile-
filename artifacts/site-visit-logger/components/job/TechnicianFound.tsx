@@ -37,7 +37,7 @@ export function TechnicianFound({
         </>
       }
     >
-      <TechnicianCard technician={job.technician} caption="Selected for this request" />
+      <TechnicianCard requestId={job.id} technician={job.technician} caption="Selected for this request" />
 
       <SectionCard title="What happens next">
         <Step

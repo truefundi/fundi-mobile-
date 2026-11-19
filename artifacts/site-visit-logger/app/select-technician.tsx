@@ -1,23 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { continueToCheckout } from '@/lib/checkout-nav';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
-import { toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
+import { type MarketplaceTechnician } from '@/constants/technicians';
 import { fetchPublicTechnicians } from '@/lib/technicians-api';
-import { fetchCustomerJob, previewMatchingTechnicians } from '@/lib/jobs-api';
+import { previewMatchingTechnicians } from '@/lib/jobs-api';
 import { useFundi } from '@/context/FundiContext';
-import { useChat } from '@/context/ChatContext';
+import { useBookTechnician } from '@/hooks/useBookTechnician';
+import { Notice } from '@/components/ui/Notice';
 import { distanceMeters, formatDistance } from '@/lib/location';
 import { getServiceIcon, resolveServiceCategoryId } from '@/lib/categories-api';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
-/** Jobs created on the API have UUIDs; local drafts have ids like job-123-abc. */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function SelectTechnicianScreen() {
   const colors = useColors();
@@ -46,8 +44,7 @@ export default function SelectTechnicianScreen() {
     latitude?: string;
     longitude?: string;
   }>();
-  const { getJob, selectTechnician, linkChatThread, addRequest, proposeTechnicianToJob } = useFundi();
-  const { createOrGetThread } = useChat();
+  const { getJob } = useFundi();
   const requestJob = jobId ? getJob(jobId) : undefined;
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
@@ -183,79 +180,20 @@ export default function SelectTechnicianScreen() {
       });
   }, [apiTechnicians, eligibleIds, availableOnly, locationLatitude, locationLongitude, service, sortBy]);
 
-  const handleSelectTech = async (tech: MarketplaceTechnician) => {
-    // A request that already exists on the API (e.g. after a technician pulled out)
-    // is reused with its booking fee, even when this phone has no copy of it.
-    if (jobId && UUID_PATTERN.test(jobId) && requestJob?.bookingFee?.status !== 'PAID') {
-      const backendJob = await fetchCustomerJob(jobId).catch(() => null);
-      if (backendJob?.bookingPayment && backendJob.status === 'OPEN') {
-        let proposalError: string | undefined;
-        try {
-          await proposeTechnicianToJob(jobId, tech.id);
-        } catch (err) {
-          proposalError = err instanceof Error ? err.message : 'The request could not be sent to this technician.';
-        }
-        router.replace({
-          pathname: '/chat/[id]',
-          params: { id: jobId, requestId: jobId, technicianId: tech.id, ...(proposalError ? { proposalError } : {}) },
-        });
-        return;
-      }
-    }
-
-    let targetJob = requestJob;
+  // Booking goes through one shared path so a request is never created twice.
+  const { book, booking, error: bookingError } = useBookTechnician();
+  const handleSelectTech = (tech: MarketplaceTechnician) => {
     const requestLocation =
       locationLatitude !== undefined && locationLongitude !== undefined
         ? { latitude: locationLatitude, longitude: locationLongitude }
         : undefined;
-
-    if (!targetJob) {
-      const newJobId = await addRequest({
-        service: service || 'General Maintenance',
-        problem: problem || 'General Service Request',
-        urgency: 'Today',
-        locationLabel: locationLabel || 'Location not specified',
-        locationLatitude,
-        locationLongitude,
-      });
-      targetJob = getJob(newJobId);
-    }
-
-    if (!targetJob) return;
-
-    const meters =
-      requestLocation && tech.location ? distanceMeters(requestLocation, tech.location) : null;
-    const distKm = meters !== null ? Math.round((meters / 1000) * 10) / 10 : undefined;
-
-    selectTechnician(targetJob.id, toJobTechnician(tech, distKm));
-
-    // Already paid: route the request straight to this technician's inbox (no second payment)
-    // and continue in the chat, which shows the delivery status.
-    if (targetJob.bookingFee?.status === 'PAID') {
-      let proposalError: string | undefined;
-      try {
-        await proposeTechnicianToJob(targetJob.id, tech.id);
-      } catch (err) {
-        proposalError = err instanceof Error ? err.message : 'The request could not be sent to this technician.';
-      }
-      router.replace({
-        pathname: '/chat/[id]',
-        params: {
-          id: targetJob.id,
-          requestId: targetJob.id,
-          technicianId: tech.id,
-          ...(proposalError ? { proposalError } : {}),
-        },
-      });
-      return;
-    }
-
-    // Booking fee next; an unverified phone is confirmed with a code first.
-    await continueToCheckout(router, {
-      requestId: targetJob.id,
-      technicianId: tech.id,
-      service: targetJob.service,
-      categoryId: targetJob.serviceCategoryId || categoryId,
+    const meters = requestLocation && tech.location ? distanceMeters(requestLocation, tech.location) : null;
+    void book({
+      requestId: jobId || requestJob?.id,
+      technician: tech,
+      distanceKm: meters !== null ? Math.round((meters / 1000) * 10) / 10 : undefined,
+      service,
+      categoryId: categoryHint,
     });
   };
 
@@ -278,6 +216,7 @@ export default function SelectTechnicianScreen() {
               title="Select an available technician"
               subtitle="Browse specialists by availability, rating, and proximity. Distance is straight-line."
             />
+            {bookingError ? <Notice tone="warning" icon="alert-circle-outline" text={bookingError} /> : null}
             {(service || problem || locationLabel) && (
               <View style={[styles.prefillBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.prefillBannerTop}>
@@ -380,7 +319,7 @@ export default function SelectTechnicianScreen() {
         }
         renderItem={({ item: { technician: item, distance } }) => (
           <Pressable
-            disabled={!item.isAvailable}
+            disabled={!item.isAvailable || booking}
             onPress={() => handleSelectTech(item)}
             style={[
               styles.card,
@@ -430,7 +369,7 @@ export default function SelectTechnicianScreen() {
                   router.push({
                     pathname: `/technician/${item.id}` as any,
                     params: {
-                      requestId: requestJob?.id,
+                      requestId: jobId || requestJob?.id,
                       service: service || item.service,
                       problem,
                       locationLabel,

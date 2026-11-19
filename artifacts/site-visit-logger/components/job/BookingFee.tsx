@@ -61,7 +61,7 @@ export function BookingFee({
           </Text>
         </SectionCard>
 
-        <TechnicianCard technician={job.technician} compact caption="Available now" />
+        <TechnicianCard requestId={job.id} technician={job.technician} compact caption="Available now" />
 
         <SectionCard title="Included">
           <MoneyRow label="Direct technician chat" value="Unlocked" />
