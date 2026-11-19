@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -17,6 +17,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { usePaymentQuote } from '@/hooks/usePaymentQuote';
 import { PriceBreakdown } from '@/components/checkout/PriceBreakdown';
+import { ClaimStatus, PayByCode } from '@/components/checkout/PayByCode';
+import { usePaymentClaim } from '@/hooks/usePaymentClaim';
+import type { PaymentClaimMethod } from '@/lib/payments-api';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -47,37 +50,13 @@ function requestMediaParts(uris: Array<string | undefined>, kind: 'photo' | 'vid
     });
 }
 
-type PaymentChannel = 'MTN_MOMO' | 'AIRTEL_MONEY' | 'CARD_WALLET';
-
-interface PaymentOption {
-  id: PaymentChannel;
-  title: string;
-  detail: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  badge?: string;
-}
-
-const PAYMENT_OPTIONS: PaymentOption[] = [
-  {
-    id: 'MTN_MOMO',
-    title: 'MTN Mobile Money',
-    detail: 'Instant push prompt (USSD PIN confirmation)',
-    icon: 'phone-portrait-outline',
-    badge: 'Popular in Rwanda',
-  },
-  {
-    id: 'AIRTEL_MONEY',
-    title: 'Airtel Money',
-    detail: 'Instant mobile wallet prompt',
-    icon: 'phone-portrait-outline',
-  },
-  {
-    id: 'CARD_WALLET',
-    title: 'Debit / Credit Card or Wallet',
-    detail: 'Visa, Mastercard & Fundi Wallet balance',
-    icon: 'card-outline',
-  },
-];
+/**
+ * Where the booking payment comes from: a claim an admin approved ("I have
+ * paid"), or, in development builds only, the API's test payment.
+ */
+type PaymentSource =
+  | { kind: 'claim'; paymentId: string; amount: number; externalPaymentId: string }
+  | { kind: 'test' };
 
 export default function CheckoutPaymentScreen() {
   const colors = useColors();
@@ -142,11 +121,13 @@ export default function CheckoutPaymentScreen() {
   const bookingCurrency = job?.bookingFee?.currency ?? params.currency ?? FLAT_BOOKING_FEE_CURRENCY;
 
   const [showTerms, setShowTerms] = useState(false);
-  const [selectedChannel, setSelectedChannel] = useState<PaymentChannel>('MTN_MOMO');
+  const [payMethod, setPayMethod] = useState<PaymentClaimMethod>('MTN');
   const [phoneNumber, setPhoneNumber] = useState(
-    cleanAndNormalizePhone(params.verifiedPhone || account?.phone || '0788123456'),
+    cleanAndNormalizePhone(params.verifiedPhone || account?.phone || ''),
   );
-  const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242');
+  const paymentClaim = usePaymentClaim(params.requestId || job?.id);
+  const sourceRef = useRef<PaymentSource>({ kind: 'test' });
+  const continuedClaimRef = useRef<string | null>(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
@@ -222,7 +203,8 @@ export default function CheckoutPaymentScreen() {
     }
   }, [paymentSuccess, isAlreadyPaid, destinationChatId, job?.id, params.requestId, router]);
 
-  const handlePay = async () => {
+  const handlePay = async (source: PaymentSource) => {
+    sourceRef.current = source;
     if (!params.requestId && !job?.id) {
       setPaymentError('Request reference is missing. Please go back and try again.');
       return;
@@ -289,6 +271,13 @@ export default function CheckoutPaymentScreen() {
       );
       return;
     }
+    // The API refuses a job described in fewer than 10 characters; catch it before charging.
+    const description = (job?.problem || '').trim();
+    if (description.length < 10) {
+      setIsProcessing(false);
+      setPaymentError('Describe the problem in at least 10 characters. Go back and edit the request, then pay.');
+      return;
+    }
 
     const targetRequestId = params.requestId || job!.id;
     const targetServiceCategoryId = await resolveServiceCategoryId(
@@ -298,12 +287,12 @@ export default function CheckoutPaymentScreen() {
     const normalizedPhone = cleanAndNormalizePhone(phoneNumber);
 
     try {
-      // 1. Create booking payment via real payment endpoint
-      const bookingPayment = await createBookingPayment(
-        targetServiceCategoryId,
-        job?.type === 'SOS' ? 'SOS' : 'NORMAL',
-        normalizedPhone,
-      );
+      // 1. The booking payment: the one an admin approved, or a test payment in development.
+      const source = sourceRef.current;
+      const bookingPayment =
+        source.kind === 'claim'
+          ? { id: source.paymentId, amount: source.amount, externalPaymentId: source.externalPaymentId }
+          : await createBookingPayment(targetServiceCategoryId, job?.type === 'SOS' ? 'SOS' : 'NORMAL', normalizedPhone);
 
       // 2. Create customer job on real backend
       // The price itself is agreed in the chat, so no amount is sent here.
@@ -313,7 +302,7 @@ export default function CheckoutPaymentScreen() {
         paymentId: bookingPayment.id,
         ...(verificationId ? { phoneVerificationId: verificationId } : {}),
         serviceCategoryId: targetServiceCategoryId,
-        description: job?.problem || params.service || 'Service Request',
+        description,
         locationAddress: job?.locationLabel?.trim() || `${latitude}, ${longitude}`,
         latitude: latitude as number,
         longitude: longitude as number,
@@ -342,6 +331,7 @@ export default function CheckoutPaymentScreen() {
       // 4. Update local state and show payment success, then continue in the chat.
       const txId = bookingPayment.externalPaymentId || `TX-${Date.now().toString(36).toUpperCase()}`;
       markBookingFeePaid(targetRequestId, txId, bookingPayment.amount);
+      if (source.kind === 'claim') await paymentClaim.clear();
       setTransactionRef(txId);
       setIsProcessing(false);
       setPaymentSuccess(true);
@@ -363,6 +353,54 @@ export default function CheckoutPaymentScreen() {
       setPaymentError(err instanceof Error ? err.message : 'Payment or job creation failed. Please retry.');
     }
   };
+
+  /** "I have paid": report the payment so an admin can match it. */
+  const handleReportPaid = async () => {
+    setPaymentError(null);
+    const payer = cleanAndNormalizePhone(phoneNumber);
+    if (payer.replace(/\D/g, '').length < 9) {
+      setPaymentError('Enter the mobile money number you paid from.');
+      return;
+    }
+    try {
+      const serviceCategoryId = await resolveServiceCategoryId(
+        targetService,
+        params.categoryId || job?.serviceCategoryId,
+      );
+      await paymentClaim.submit({
+        serviceCategoryId,
+        requestType: job?.type === 'SOS' ? 'SOS' : 'NORMAL',
+        amount: bookingAmount,
+        paymentMethod: payMethod,
+        paymentNumber: payer,
+      });
+    } catch (err) {
+      setPaymentError(err instanceof Error ? err.message : 'Your payment could not be reported. Please try again.');
+    }
+  };
+
+  // Once an admin confirms the payment, send the request with it (once; the
+  // status card offers "Send my request" if that attempt fails).
+  const approvedClaim = paymentClaim.claim?.status === 'APPROVED' ? paymentClaim.claim : null;
+  const continueWithClaim = () => {
+    const payment = approvedClaim?.bookingPayment;
+    if (!approvedClaim || !payment || payment.jobId) return;
+    continuedClaimRef.current = approvedClaim.id;
+    void handlePay({
+      kind: 'claim',
+      paymentId: payment.id,
+      amount: payment.amount,
+      externalPaymentId: `claim_${approvedClaim.id}`,
+    });
+  };
+  useEffect(() => {
+    if (!approvedClaim || continuedClaimRef.current === approvedClaim.id || isProcessing || paymentSuccess) return;
+    continueWithClaim();
+    // handlePay reads the latest state itself; only a newly approved claim should trigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvedClaim?.id, approvedClaim?.bookingPayment?.id]);
+
+  const claimOpen = paymentClaim.claim !== null;
 
   const handleCancel = () => {
     // If payment was already completed, redirect to chats always
@@ -453,117 +491,70 @@ export default function CheckoutPaymentScreen() {
         </View>
         ) : null}
 
-        {paymentError && (
-          <Notice tone="warning" icon="alert-circle-outline" text={paymentError} />
-        )}
+        {paymentError || paymentClaim.error ? (
+          <Notice tone="warning" icon="alert-circle-outline" text={(paymentError || paymentClaim.error)!} />
+        ) : null}
+
+        {paymentClaim.claim ? (
+          <ClaimStatus
+            claim={paymentClaim.claim}
+            checking={paymentClaim.checking}
+            onCheck={() => void paymentClaim.refresh()}
+            onRetry={() => {
+              continuedClaimRef.current = null;
+              void paymentClaim.clear();
+            }}
+            onContinue={continueWithClaim}
+            continuing={isProcessing || paymentSuccess || showOtpModal}
+          />
+        ) : null}
 
         {/* Payment Methods */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Pay with</Text>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Pay with mobile money</Text>
         </View>
-
-        <View style={[styles.channelGroup, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          {PAYMENT_OPTIONS.map((opt, idx) => {
-            const isSelected = selectedChannel === opt.id;
-            return (
-              <Pressable
-                key={opt.id}
-                onPress={() => setSelectedChannel(opt.id)}
-                style={[
-                  styles.channelItem,
-                  idx < PAYMENT_OPTIONS.length - 1 && { borderBottomColor: colors.border, borderBottomWidth: 1 },
-                ]}
-              >
-                <View style={[styles.channelIcon, { backgroundColor: isSelected ? colors.primary + '18' : colors.muted }]}>
-                  <Ionicons
-                    name={opt.icon}
-                    size={20}
-                    color={isSelected ? colors.primary : colors.mutedForeground}
-                  />
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <View style={styles.channelTitleRow}>
-                    <Text style={[styles.channelTitle, { color: colors.foreground }]}>{opt.title}</Text>
-                    {opt.badge && (
-                      <View style={[styles.optBadge, { backgroundColor: colors.primary + '18' }]}>
-                        <Text style={[styles.optBadgeText, { color: colors.primary }]}>{opt.badge}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={[styles.channelDetail, { color: colors.mutedForeground }]}>
-                    {opt.detail}
-                  </Text>
-                </View>
-
-                <View style={[styles.radioCircle, { borderColor: isSelected ? colors.primary : colors.input }]}>
-                  {isSelected && <View style={[styles.radioInner, { backgroundColor: colors.primary }]} />}
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* Channel Details Input */}
-        {(selectedChannel === 'MTN_MOMO' || selectedChannel === 'AIRTEL_MONEY') && (
-          <View style={[styles.inputBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>
-              {selectedChannel === 'MTN_MOMO' ? 'MTN Mobile Phone Number' : 'Airtel Money Phone Number'}
-            </Text>
-            <View style={[styles.textInputWrap, { backgroundColor: colors.background, borderColor: colors.border }]}>
-              <Ionicons name="call-outline" size={16} color={colors.mutedForeground} style={{ marginRight: 8 }} />
-              <TextInput
-                value={phoneNumber}
-                onChangeText={setPhoneNumber}
-                keyboardType="phone-pad"
-                placeholder="e.g. 0788 123 456"
-                placeholderTextColor={colors.mutedForeground}
-                style={[styles.textInput, { color: colors.foreground }]}
-              />
-            </View>
-            <Text style={[styles.inputHint, { color: colors.mutedForeground }]}>
-              You will confirm with your PIN on this phone.
-            </Text>
-          </View>
-        )}
-
-        {selectedChannel === 'CARD_WALLET' && (
-          <View style={[styles.inputBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.inputLabel, { color: colors.foreground }]}>Card or Fundi Wallet</Text>
-            <View style={[styles.textInputWrap, { backgroundColor: colors.background, borderColor: colors.border }]}>
-              <Ionicons name="card-outline" size={16} color={colors.mutedForeground} style={{ marginRight: 8 }} />
-              <TextInput
-                value={cardNumber}
-                onChangeText={setCardNumber}
-                placeholder="Card Number"
-                placeholderTextColor={colors.mutedForeground}
-                style={[styles.textInput, { color: colors.foreground }]}
-              />
-            </View>
-
-          </View>
-        )}
+        <PayByCode
+          method={payMethod}
+          onMethodChange={setPayMethod}
+          payerNumber={phoneNumber}
+          onPayerNumberChange={setPhoneNumber}
+          amount={bookingAmount}
+          disabled={claimOpen}
+        />
       </ScrollView>
 
-      {/* Sticky Bottom Pay CTA */}
-      <View
-        style={[
-          styles.bottomBar,
-          {
-            backgroundColor: colors.card,
-            borderTopColor: colors.border,
-            paddingBottom: Math.max(insets.bottom, 16),
-          },
-        ]}
-      >
-        <Button
-          label={`Pay ${formatBookingFee(bookingAmount, bookingCurrency)}`}
-          icon="lock-closed"
-          onPress={handlePay}
-          loading={isProcessing}
-          testID="confirm-payment-button"
-        />
-      </View>
+      {/* Sticky bottom CTA: hidden while a reported payment is being checked. */}
+      {claimOpen ? null : (
+        <View
+          style={[
+            styles.bottomBar,
+            {
+              backgroundColor: colors.card,
+              borderTopColor: colors.border,
+              paddingBottom: Math.max(insets.bottom, 16),
+            },
+          ]}
+        >
+          <Button
+            label={`I have paid ${formatBookingFee(bookingAmount, bookingCurrency)}`}
+            icon="checkmark-done"
+            onPress={() => void handleReportPaid()}
+            loading={paymentClaim.submitting}
+            disabled={isProcessing}
+            testID="i-have-paid-button"
+          />
+          {__DEV__ ? (
+            <Button
+              label="Test payment (development only)"
+              variant="outline"
+              size="small"
+              onPress={() => void handlePay({ kind: 'test' })}
+              disabled={isProcessing || paymentClaim.submitting}
+              testID="confirm-payment-button"
+            />
+          ) : null}
+        </View>
+      )}
 
       {/* Phone Verification OTP Modal */}
       <Modal visible={showOtpModal} transparent animationType="slide">
@@ -574,7 +565,7 @@ export default function CheckoutPaymentScreen() {
             </View>
             <Text style={[styles.modalTitle, { color: colors.foreground }]}>Verify Phone Number</Text>
             <Text style={[styles.modalDesc, { color: colors.mutedForeground }]}>
-              Enter the 6-digit verification code sent to {phoneNumber} to authenticate your service request.
+              Enter the 6-digit code we sent to your phone to confirm this request.
             </Text>
             {otpError && (
               <Text style={{ color: colors.destructive, fontSize: 13, textAlign: 'center', marginTop: 4 }}>
@@ -651,7 +642,7 @@ export default function CheckoutPaymentScreen() {
                 }}
               />
               <Button
-                label="Verify & Pay"
+                label="Verify & send"
                 size="small"
                 loading={isVerifyingOtp}
                 disabled={otpCode.trim().length < 6}
@@ -668,11 +659,9 @@ export default function CheckoutPaymentScreen() {
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Processing Payment</Text>
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Booking your request</Text>
             <Text style={[styles.modalDesc, { color: colors.mutedForeground }]}>
-              {selectedChannel === 'CARD_WALLET'
-                ? 'Authorizing your card transaction...'
-                : `Sending USSD prompt to ${phoneNumber}... Please enter your PIN on your phone.`}
+              Sending your request to the technician…
             </Text>
           </View>
         </View>
@@ -838,6 +827,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     paddingHorizontal: 20,
     paddingTop: 14,
+    gap: 8,
   },
   modalBackdrop: {
     flex: 1,
