@@ -1,6 +1,7 @@
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ReasonSheet } from '@/components/chat/ChatSheets';
 import { JobListItem } from '@/components/jobs/JobListItem';
 import { SectionNote, Segments } from '@/components/jobs/ListControls';
@@ -8,6 +9,10 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { Job } from '@/constants/jobs';
 import { useWork } from '@/context/WorkContext';
+import { useProfile } from '@/context/ProfileContext';
+import { useDisputes, type DisputeRecord } from '@/context/DisputeContext';
+import { ReportDisputeModal } from '@/components/dispute/ReportDisputeModal';
+import { DisputeDetailsModal } from '@/components/dispute/DisputeDetailsModal';
 import { useColors } from '@/hooks/useColors';
 import { summarizeTechnicianJob } from '@/lib/job-summary';
 
@@ -25,11 +30,15 @@ const newestFirst = (a: Job, b: Job) => new Date(lastActive(b)).getTime() - new 
 export function WorkJobs() {
   const colors = useColors();
   const router = useRouter();
+  const { profile: account } = useProfile();
+  const { getDisputeForJob } = useDisputes();
   const { offers, mine, done, cancelled, earnings, acceptOffer, rejectOffer } = useWork();
   const [tab, setTab] = useState<Tab>('Ongoing');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [declining, setDeclining] = useState<Job | null>(null);
+  const [disputeReportJob, setDisputeReportJob] = useState<Job | null>(null);
+  const [selectedDispute, setSelectedDispute] = useState<DisputeRecord | null>(null);
 
   const { ongoing, history } = useMemo(() => {
     const requests = offers.map((job) => ({ job, isRequest: true, summary: summarizeTechnicianJob(job, true) }));
@@ -100,6 +109,7 @@ export function WorkJobs() {
           ) : null}
           {rows.map(({ job, isRequest, summary }) => {
             const busy = busyId === job.id;
+            const dispute = getDisputeForJob(job.id);
             return (
               <View key={`${isRequest ? 'request' : 'job'}-${job.id}`} style={styles.item}>
                 <JobListItem
@@ -110,6 +120,32 @@ export function WorkJobs() {
                   at={lastActive(job)}
                   onPress={() => openChat(job.id)}
                   testID={`work-job-${job.id}`}
+                  disputeBadge={
+                    dispute ? (
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          setSelectedDispute(dispute);
+                        }}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 3,
+                          paddingHorizontal: 7,
+                          paddingVertical: 2,
+                          borderRadius: 6,
+                          backgroundColor: colors.primary + '18',
+                          borderColor: colors.primary,
+                          borderWidth: 1,
+                        }}
+                      >
+                        <Feather name="shield" size={9} color={colors.primary} />
+                        <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 10, color: colors.primary }}>
+                          Dispute: {dispute.status.replace('_', ' ')}
+                        </Text>
+                      </Pressable>
+                    ) : null
+                  }
                   footer={
                     isRequest ? (
                       <>
@@ -131,7 +167,30 @@ export function WorkJobs() {
                           testID={`accept-request-${job.id}`}
                         />
                       </>
-                    ) : undefined
+                    ) : (
+                      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', width: '100%', paddingTop: 2 }}>
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            if (dispute) setSelectedDispute(dispute);
+                            else setDisputeReportJob(job);
+                          }}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            paddingVertical: 4,
+                            paddingHorizontal: 8,
+                            borderRadius: 6,
+                          }}
+                        >
+                          <Feather name="shield" size={11} color={colors.primary} />
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: colors.primary }}>
+                            {dispute ? 'View Dispute' : 'Report Disagreement'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )
                   }
                 />
                 {errors[job.id] ? <Text style={[styles.error, { color: colors.destructive }]}>{errors[job.id]}</Text> : null}
@@ -154,6 +213,39 @@ export function WorkJobs() {
           await rejectOffer(declining.offerId || declining.id, reason || 'Technician unavailable');
         }}
       />
+
+      {disputeReportJob && (
+        <ReportDisputeModal
+          visible={!!disputeReportJob}
+          onClose={() => setDisputeReportJob(null)}
+          jobId={disputeReportJob.id}
+          jobReference={disputeReportJob.reference}
+          service={disputeReportJob.service}
+          role="technician"
+          submitterName={account?.name || 'Technician'}
+          submitterPhone={account?.phone || ''}
+          clientName={disputeReportJob.clientName || 'Client'}
+          clientPhone={disputeReportJob.clientPhone || ''}
+          technicianName={account?.name || 'Technician'}
+          technicianPhone={account?.phone || ''}
+          agreedPrice={disputeReportJob.agreedPrice}
+          existingDispute={getDisputeForJob(disputeReportJob.id)}
+        />
+      )}
+
+      {selectedDispute && (
+        <DisputeDetailsModal
+          visible={!!selectedDispute}
+          onClose={() => setSelectedDispute(null)}
+          dispute={selectedDispute}
+          currentRole="technician"
+          onOpenResponseModal={() => {
+            const allJobs = [...mine, ...done, ...cancelled];
+            const target = allJobs.find((j) => j.id === selectedDispute.jobId);
+            if (target) setDisputeReportJob(target);
+          }}
+        />
+      )}
     </View>
   );
 }

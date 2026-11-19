@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
@@ -9,11 +9,21 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { StageScreen } from '@/components/ui/StageScreen';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useColors } from '@/hooks/useColors';
+import { useDisputes } from '@/context/DisputeContext';
+import { useProfile } from '@/context/ProfileContext';
+import { ReportDisputeModal } from '@/components/dispute/ReportDisputeModal';
+import { DisputeDetailsModal } from '@/components/dispute/DisputeDetailsModal';
 
 /** Terminal view for a finished or cancelled job, reachable from My services. */
 export function JobClosed({ job, hideBack = false, onRebook }: { job: Job; hideBack?: boolean; onRebook?: () => void }) {
   const colors = useColors();
   const router = useRouter();
+  const { profile } = useProfile();
+  const { getDisputeForJob } = useDisputes();
+  const [showDisputeReport, setShowDisputeReport] = useState(false);
+  const [showDisputeDetails, setShowDisputeDetails] = useState(false);
+
+  const existingDispute = getDisputeForJob(job.id);
   const cancelled = job.status === 'CANCELLED';
   const declined = job.status === 'DECLINED';
   const terminated = cancelled || declined;
@@ -80,6 +90,29 @@ export function JobClosed({ job, hideBack = false, onRebook }: { job: Job; hideB
         )}
       </SectionCard>
 
+      {/* Disagreement / Dispute Section */}
+      <SectionCard title="Need Help or Have a Disagreement?">
+        <Text style={[styles.problem, { color: colors.mutedForeground, marginTop: 0 }]}>
+          {existingDispute
+            ? 'You have submitted a disagreement statement for this job. Our support team on the web admin dashboard will review and mediate.'
+            : 'If you experienced poor quality, an overcharging dispute, or an issue with the technician, you can submit a statement for web admin review.'}
+        </Text>
+        <Button
+          label={existingDispute ? 'View Dispute Details' : 'Report Disagreement with Technician'}
+          variant="outline"
+          size="small"
+          icon="shield-outline"
+          onPress={() => {
+            if (existingDispute) {
+              setShowDisputeDetails(true);
+            } else {
+              setShowDisputeReport(true);
+            }
+          }}
+          style={{ marginTop: 12 }}
+        />
+      </SectionCard>
+
       {job.rating ? (
         <SectionCard title="Your rating">
           <View style={styles.starsRow}>
@@ -96,6 +129,38 @@ export function JobClosed({ job, hideBack = false, onRebook }: { job: Job; hideB
           {job.rating.comment ? <Text style={[styles.comment, { color: colors.mutedForeground }]}>{job.rating.comment}</Text> : null}
         </SectionCard>
       ) : null}
+
+      {showDisputeReport && (
+        <ReportDisputeModal
+          visible={showDisputeReport}
+          onClose={() => setShowDisputeReport(false)}
+          jobId={job.id}
+          jobReference={job.reference}
+          service={job.service}
+          role="client"
+          submitterName={profile?.name || 'Client'}
+          submitterPhone={profile?.phone || ''}
+          clientName={profile?.name || 'Client'}
+          clientPhone={profile?.phone || ''}
+          technicianName={job.technician?.name || 'Assigned Technician'}
+          technicianPhone={job.technician?.phone || ''}
+          agreedPrice={job.agreedPrice}
+          existingDispute={existingDispute}
+        />
+      )}
+
+      {showDisputeDetails && existingDispute && (
+        <DisputeDetailsModal
+          visible={showDisputeDetails}
+          onClose={() => setShowDisputeDetails(false)}
+          dispute={existingDispute}
+          currentRole="client"
+          onOpenResponseModal={() => {
+            setShowDisputeDetails(false);
+            setShowDisputeReport(true);
+          }}
+        />
+      )}
     </StageScreen>
   );
 }

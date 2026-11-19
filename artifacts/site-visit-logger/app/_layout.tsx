@@ -24,6 +24,7 @@ import { configureApi, checkApiHealth } from '@/lib/api';
 import { ChatProvider } from '@/context/ChatContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AdsProvider } from '@/context/AdsContext';
+import { DisputeProvider } from '@/context/DisputeContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { useColors } from '@/hooks/useColors';
 
@@ -196,11 +197,13 @@ export default function RootLayout() {
                   <WorkProvider>
                     <ChatProvider>
                       <AdsProvider>
-                        <GestureHandlerRootView style={{ flex: 1 }}>
-                          <KeyboardProvider>
-                            <RootLayoutNav />
-                          </KeyboardProvider>
-                        </GestureHandlerRootView>
+                        <DisputeProvider>
+                          <GestureHandlerRootView style={{ flex: 1 }}>
+                            <KeyboardProvider>
+                              <RootLayoutNav />
+                            </KeyboardProvider>
+                          </GestureHandlerRootView>
+                        </DisputeProvider>
                       </AdsProvider>
                     </ChatProvider>
                   </WorkProvider>

@@ -17,14 +17,13 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const deviceColorScheme = useDeviceColorScheme();
-  const [theme, setThemeState] = useState<ThemePreference>('system');
+  const [theme, setThemeState] = useState<ThemePreference>('light');
   const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(THEME_KEY)
       .then((saved) => {
-        if (saved === 'light' || saved === 'dark' || saved === 'system') {
+        if (saved === 'dark' || saved === 'light') {
           setThemeState(saved);
         }
       })
@@ -42,11 +41,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resolvedTheme: ResolvedTheme = useMemo(() => {
-    if (theme === 'system') {
-      return deviceColorScheme === 'dark' ? 'dark' : 'light';
-    }
-    return theme;
-  }, [theme, deviceColorScheme]);
+    return theme === 'dark' ? 'dark' : 'light';
+  }, [theme]);
 
   const toggleTheme = async () => {
     const nextTheme: ThemePreference = resolvedTheme === 'dark' ? 'light' : 'dark';

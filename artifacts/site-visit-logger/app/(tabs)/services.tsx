@@ -28,6 +28,7 @@ import { useServiceSearch } from '@/hooks/useServiceSearch';
 import { groupOf } from '@/lib/service-search';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
+import { useTheme } from '@/context/ThemeContext';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
 
 const SCREEN_GUTTER = 20;
@@ -35,6 +36,7 @@ const GRID_GAP = 11;
 
 export default function ServicesScreen() {
   const colors = useColors();
+  const { isDark } = useTheme();
   const bottomPadding = useTabScreenPadding();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -185,10 +187,19 @@ export default function ServicesScreen() {
                 </View>
               ))
             )}
-            <View style={[styles.helpCard, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.helpKicker, { color: colors.secondary }]}>CAN&apos;T FIND IT?</Text>
-              <Text style={[styles.helpTitle, { color: colors.primaryForeground }]}>Tell us what you need</Text>
-              <Text style={[styles.helpText, { color: colors.secondary }]}>
+            <View
+              style={[
+                styles.helpCard,
+                {
+                  backgroundColor: isDark ? '#000000' : colors.primary,
+                  borderWidth: isDark ? 1.5 : 0,
+                  borderColor: colors.primary,
+                },
+              ]}
+            >
+              <Text style={[styles.helpKicker, { color: isDark ? colors.primary : colors.secondary }]}>CAN&apos;T FIND IT?</Text>
+              <Text style={[styles.helpTitle, { color: isDark ? colors.foreground : colors.primaryForeground }]}>Tell us what you need</Text>
+              <Text style={[styles.helpText, { color: isDark ? colors.mutedForeground : colors.secondary }]}>
                 Our general maintenance specialists can help diagnose unusual problems.
               </Text>
               <Pressable
@@ -196,7 +207,15 @@ export default function ServicesScreen() {
                 accessibilityLabel="Start a request"
                 testID="general-request-button"
                 onPress={() => router.push({ pathname: '/request', params: { service: 'General Maintenance' } })}
-                style={({ pressed }) => [styles.helpButton, { backgroundColor: colors.primaryForeground, opacity: pressed ? 0.8 : 1 }]}
+                style={({ pressed }) => [
+                  styles.helpButton,
+                  {
+                    backgroundColor: isDark ? '#000000' : colors.primaryForeground,
+                    borderWidth: isDark ? 1.5 : 0,
+                    borderColor: colors.primary,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
               >
                 <Text style={[styles.helpButtonText, { color: colors.primary }]}>Start a request</Text>
                 <Ionicons name="arrow-forward" size={16} color={colors.primary} />

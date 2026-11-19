@@ -97,6 +97,34 @@ export default function HelpScreen() {
 
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel="Dispute Settlement: Report issue to Web Admin"
+        testID="help-open-disputes"
+        onPress={() => router.push('/disputes' as any)}
+        style={({ pressed }) => [
+          styles.jobLink,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.primary,
+            borderWidth: 1.5,
+            marginBottom: 10,
+            opacity: pressed ? 0.75 : 1,
+          },
+        ]}
+      >
+        <View style={[styles.contactIcon, { backgroundColor: colors.primary + '20' }]}>
+          <Ionicons name="shield-checkmark" size={18} color={colors.primary} />
+        </View>
+        <View style={styles.contactCopy}>
+          <Text style={[styles.contactLabel, { color: colors.foreground }]}>Dispute Settlement</Text>
+          <Text style={[styles.contactDetail, { color: colors.mutedForeground }]}>
+            Disagreement during negotiation or poor service? Report directly to the Web Admin.
+          </Text>
+        </View>
+        <Feather name="chevron-right" size={18} color={colors.primary} />
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
         accessibilityLabel="Problem with a job? Open Activity"
         testID="help-open-activity"
         onPress={() => router.navigate('/activity')}

@@ -23,6 +23,7 @@ import { ProfileAvatar, computeParticipantInitials } from '@/components/ui/Profi
 import { getServiceIcon } from '@/lib/categories-api';
 import { describeChatMessage, pickRoomForJob } from '@/lib/chat-rooms-api';
 import { useChatRooms, type ChatRoomSummary } from '@/hooks/useChatRooms';
+import { useDisputes } from '@/context/DisputeContext';
 
 export { computeParticipantInitials as getParticipantInitial };
 
@@ -68,6 +69,7 @@ export default function ChatTabScreen() {
   const { account } = useAuth();
   const { getJob, jobs } = useFundi();
   const { threads, refreshConversations, error: negotiationError } = useChat();
+  const { getDisputeForJob } = useDisputes();
   const rooms = useChatRooms();
   const { technicianOffers, refreshJobs, actingAsTechnician } = useWork();
   // The list follows the mode: a technician who is hiring sees the client side.
@@ -145,7 +147,9 @@ export default function ChatTabScreen() {
           : negotiation && !negotiation.isAccepted && !negotiation.isEnded
             ? { label: 'Awaiting acceptance', tone: 'warning' }
             : undefined;
+      const dispute = getDisputeForJob(jobId);
       const statusTag =
+        (dispute ? { label: `Dispute: ${dispute.status.replace('_', ' ')}`, tone: 'warning' as const } : undefined) ??
         ROOM_STATUS_TAG[room.status] ??
         (room.assignment.endedAt ? { label: 'Reassigned', tone: 'warning' as const } : undefined) ??
         (job?.type === 'SOS' ? { label: 'SOS Priority', tone: 'sos' as const } : undefined) ??
