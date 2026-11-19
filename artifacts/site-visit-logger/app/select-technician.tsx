@@ -9,12 +9,15 @@ import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
 import { fetchPublicTechnicians } from '@/lib/technicians-api';
-import { previewMatchingTechnicians } from '@/lib/jobs-api';
+import { fetchCustomerJob, previewMatchingTechnicians } from '@/lib/jobs-api';
 import { useFundi } from '@/context/FundiContext';
 import { useChat } from '@/context/ChatContext';
 import { distanceMeters, formatDistance } from '@/lib/location';
 import { getServiceIcon, resolveServiceCategoryId } from '@/lib/categories-api';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
+
+/** Jobs created on the API have UUIDs; local drafts have ids like job-123-abc. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function SelectTechnicianScreen() {
   const colors = useColors();
@@ -181,6 +184,25 @@ export default function SelectTechnicianScreen() {
   }, [apiTechnicians, eligibleIds, availableOnly, locationLatitude, locationLongitude, service, sortBy]);
 
   const handleSelectTech = async (tech: MarketplaceTechnician) => {
+    // A request that already exists on the API (e.g. after a technician pulled out)
+    // is reused with its booking fee, even when this phone has no copy of it.
+    if (jobId && UUID_PATTERN.test(jobId) && requestJob?.bookingFee?.status !== 'PAID') {
+      const backendJob = await fetchCustomerJob(jobId).catch(() => null);
+      if (backendJob?.bookingPayment && backendJob.status === 'OPEN') {
+        let proposalError: string | undefined;
+        try {
+          await proposeTechnicianToJob(jobId, tech.id);
+        } catch (err) {
+          proposalError = err instanceof Error ? err.message : 'The request could not be sent to this technician.';
+        }
+        router.replace({
+          pathname: '/chat/[id]',
+          params: { id: jobId, requestId: jobId, technicianId: tech.id, ...(proposalError ? { proposalError } : {}) },
+        });
+        return;
+      }
+    }
+
     let targetJob = requestJob;
     const requestLocation =
       locationLatitude !== undefined && locationLongitude !== undefined

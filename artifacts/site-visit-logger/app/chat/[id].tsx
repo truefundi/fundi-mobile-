@@ -200,6 +200,13 @@ export default function JobChatScreen() {
   });
   const { job, conversation } = workspace;
 
+  // Client: after either side pulls out before a price is agreed, the job is open
+  // again with nobody assigned. The old chat room stays as read-only history, but
+  // the screen works as if there were no room, so the client can send the same
+  // paid request to another technician.
+  const releasedFromRoom = !isTechnician && Boolean(room) && job?.status === 'OPEN' && !job.currentTechnician;
+  const liveRoom = releasedFromRoom ? null : room;
+
   // Job events from the chat socket (progress, pull-out, cancel) trigger an immediate resync.
   useEffect(() => {
     if (!room) return;
@@ -210,10 +217,10 @@ export default function JobChatScreen() {
 
   // Client: who the request was routed to, shown until a technician is assigned.
   // The backend reports who an open request is routed to (or who last let it go).
-  const routing = !isTechnician && !room ? job?.activeOffer ?? job?.lastOffer ?? null : null;
+  const routing = !isTechnician && !liveRoom ? job?.activeOffer ?? job?.lastOffer ?? null : null;
   const proposedTechnicianId =
-    !isTechnician && !room
-      ? routing?.technicianId || technicianParam || getJob(jobId ?? '')?.technician?.id
+    !isTechnician && !liveRoom
+      ? routing?.technicianId || (releasedFromRoom ? undefined : technicianParam || getJob(jobId ?? '')?.technician?.id)
       : undefined;
   const [proposedTechnician, setProposedTechnician] = useState<MarketplaceTechnician | null>(null);
   useEffect(() => {
@@ -230,7 +237,7 @@ export default function JobChatScreen() {
   }, [proposedTechnicianId]);
 
   const lifecycle = useMemo(() => {
-    const derived = deriveLifecycle({ role: isTechnician ? 'technician' : 'client', job, room, conversation });
+    const derived = deriveLifecycle({ role: isTechnician ? 'technician' : 'client', job, room: liveRoom, conversation });
     if (!pendingOffer) return derived;
     // A request routed to this technician and not answered yet (or just accepted).
     const countdown = formatCountdown(offerSecondsLeft);
@@ -244,7 +251,7 @@ export default function JobChatScreen() {
           ? 'This request expired before it was answered.'
           : `New request. Accept it${countdown ? ` within ${countdown}` : ''} to agree on a price.`,
     };
-  }, [isTechnician, job, room, conversation, pendingOffer, acceptedOffer, offerExpired, offerSecondsLeft]);
+  }, [isTechnician, job, liveRoom, conversation, pendingOffer, acceptedOffer, offerExpired, offerSecondsLeft]);
 
   const localJob = jobId ? getJob(jobId) : undefined;
   const cachedFeePaid = localJob?.bookingFee?.status === 'PAID';
@@ -257,7 +264,8 @@ export default function JobChatScreen() {
         : 'unknown';
   const feeBlocksClient = !isTechnician && feeStatus !== 'PAID';
 
-  const lockReason = roomLockReason(room, isTechnician);
+  // After a pull-out the old room's "closed" notice no longer applies: the request is moving on.
+  const lockReason = releasedFromRoom ? null : roomLockReason(room, isTechnician);
   const canMessage = Boolean(room && chat.canWrite && !feeBlocksClient);
   const canNegotiate = lifecycle.canNegotiate && !feeBlocksClient;
   const remainingOffers = offersRemaining(conversation, viewerSide);
@@ -332,8 +340,11 @@ export default function JobChatScreen() {
   // ── Participants ────────────────────────────────────────────────────────
   const otherParty = isTechnician
     ? room?.job.customer ?? conversation?.customer ?? null
-    : room?.job.technician ?? conversation?.technician ?? null;
+    : releasedFromRoom
+      ? null
+      : room?.job.technician ?? conversation?.technician ?? null;
   const otherName =
+    (releasedFromRoom && !job?.activeOffer ? 'Choose a technician' : undefined) ||
     otherParty?.fullName ||
     (pendingOffer ? pendingOffer.customer?.fullName?.trim() : undefined) ||
     (!isTechnician
@@ -344,7 +355,11 @@ export default function JobChatScreen() {
     ? pendingOffer.customer?.profilePictureUrl ?? undefined
     : !isTechnician
     ? job?.currentTechnician?.profile?.profilePictureUrl ||
-      (!room ? proposedTechnician?.avatarUrl || routing?.technicianProfilePictureUrl : undefined) ||
+      (releasedFromRoom && !job?.activeOffer
+        ? undefined
+        : !liveRoom
+          ? proposedTechnician?.avatarUrl || routing?.technicianProfilePictureUrl
+          : undefined) ||
       localJob?.technician?.avatarUrl ||
       localJob?.technician?.photoUri ||
       undefined
@@ -528,7 +543,7 @@ export default function JobChatScreen() {
   // Cancel button on the request card.
   const cancelLabel =
     lifecycle.cancellation === 'pull-out'
-      ? isTechnician ? 'Pull Out' : 'Cancel Request'
+      ? 'Pull Out'
       : lifecycle.cancellation === 'decline-request'
         ? 'Decline Request'
         : lifecycle.cancellation === 'cancel-open-job'
@@ -543,11 +558,11 @@ export default function JobChatScreen() {
 
   const reasonCopy: Record<ReasonFlow, { title: string; description: string; confirm: string; required: boolean }> = {
     'pull-out': {
-      title: isTechnician ? 'Pull out of this job' : 'Cancel this request',
+      title: isTechnician ? 'Pull out of this job' : 'Choose a different technician',
       description: isTechnician
         ? 'You can pull out before the price is agreed. The job goes back to the client to find another technician.'
-        : 'You can cancel before the price is agreed. The technician is released from this job.',
-      confirm: isTechnician ? 'Pull out' : 'Cancel request',
+        : 'You can pull out before the price is agreed. Your booking fee stays valid, so you can send this request to another technician without paying again.',
+      confirm: 'Pull out',
       required: true,
     },
     'decline-request': {
@@ -622,7 +637,18 @@ export default function JobChatScreen() {
   };
 
   // ── Client: request routing state before a technician is assigned ──────
-  const awaitingTechnician = !isTechnician && !room && job?.status === 'OPEN' && !job.currentTechnician;
+  const awaitingTechnician = !isTechnician && !liveRoom && job?.status === 'OPEN' && !job.currentTechnician;
+  /**
+   * The last technician left during the negotiation and no request has gone out
+   * since. A request sent afterwards that was declined or expired is newer than
+   * the end of the old assignment, and then its own message shows instead.
+   */
+  const assignmentEndedAt = Date.parse(room?.assignment?.endedAt ?? room?.disabledAt ?? '');
+  const lastAnswerAt = Date.parse(routing?.respondedAt ?? routing?.expiresAt ?? '');
+  const leftNegotiation =
+    releasedFromRoom &&
+    job?.dispatchStatus !== 'OFFERED' &&
+    !(Number.isFinite(lastAnswerAt) && (!Number.isFinite(assignmentEndedAt) || lastAnswerAt > assignmentEndedAt));
   const requestDelivered = awaitingTechnician && job?.dispatchStatus === 'OFFERED';
   const routedName = proposedTechnician?.name ?? routing?.technicianName ?? localJob?.technician?.name ?? 'the technician';
   const routedAvatar = proposedTechnician?.avatarUrl ?? routing?.technicianProfilePictureUrl ?? undefined;
@@ -921,11 +947,19 @@ export default function JobChatScreen() {
           testID="chat-dispatch-status"
         >
           <View style={styles.dispatchRow}>
-            <ProfileAvatar uri={routedAvatar} name={routedName} size={36} />
+            {leftNegotiation ? (
+              <View style={[styles.dispatchIcon, { backgroundColor: colors.secondary }]}>
+                <Ionicons name="swap-horizontal" size={18} color={colors.primary} />
+              </View>
+            ) : (
+              <ProfileAvatar uri={routedAvatar} name={routedName} size={36} />
+            )}
             <View style={{ flex: 1 }}>
               <Text style={[styles.dispatchTitle, { color: colors.foreground }]}>
                 {requestDelivered
                   ? `Request sent to ${routedName}`
+                  : leftNegotiation
+                    ? 'This technician is no longer on the job'
                   : proposalError && !routing
                     ? 'Your request was not delivered'
                     : `${routedName === 'the technician' ? 'The technician' : routedName} didn't accept`}
@@ -933,6 +967,8 @@ export default function JobChatScreen() {
               <Text style={[styles.dispatchText, { color: colors.mutedForeground }]}>
                 {requestDelivered
                   ? 'It is in their inbox now. They have a few minutes to accept; you will be notified here.'
+                  : leftNegotiation
+                    ? 'The negotiation ended before a price was agreed. Your booking fee still covers this job, so you can send it to another technician without paying again.'
                   : proposalError && !routing
                     ? proposalError
                     : routing?.status === 'EXPIRED'
@@ -959,10 +995,18 @@ export default function JobChatScreen() {
                 testID="chat-auto-route"
               />
               <View style={styles.dispatchActions}>
-                {proposedTechnicianId ? (
+                {proposedTechnicianId && !leftNegotiation ? (
                   <Button label="Send again" size="small" variant="outline" onPress={() => void resendToSameTechnician()} disabled={autoRouting} style={{ flex: 1 }} />
                 ) : null}
-                <Button label="Choose myself" size="small" variant="outline" onPress={chooseAnotherTechnician} disabled={autoRouting} style={{ flex: 1 }} />
+                <Button
+                  label="Choose myself"
+                  size="small"
+                  variant="outline"
+                  onPress={chooseAnotherTechnician}
+                  disabled={autoRouting}
+                  style={{ flex: 1 }}
+                  testID="chat-choose-technician"
+                />
               </View>
             </>
           ) : null}
@@ -972,7 +1016,7 @@ export default function JobChatScreen() {
   );
 
   // Kept to a word or two: next to three buttons on a narrow phone, anything longer wraps.
-  const inputPlaceholder = !room
+  const inputPlaceholder = !liveRoom
     ? pendingOffer
       ? 'Accept first'
       : 'Not open yet'
@@ -1398,6 +1442,7 @@ const styles = StyleSheet.create({
   topBar: { paddingHorizontal: 16, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1 },
   headerIdentity: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
   headerAvatarWrap: { marginLeft: 6, marginRight: 10 },
+  dispatchIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   dispatchCard: { borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 12 },
   dispatchRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   dispatchTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
