@@ -38,6 +38,9 @@ import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 import { JobProgressStepper, ProgressToggle } from '@/components/chat/JobProgressStepper';
+import { useDisputes } from '@/context/DisputeContext';
+import { ReportDisputeModal } from '@/components/dispute/ReportDisputeModal';
+import { DisputeDetailsModal } from '@/components/dispute/DisputeDetailsModal';
 import { OfferCard } from '@/components/chat/OfferCard';
 import { OfferSheet, ReasonSheet } from '@/components/chat/ChatSheets';
 import { RequestCard, buildRequestSummary } from '@/components/chat/RequestCard';
@@ -266,6 +269,10 @@ export default function JobChatScreen() {
   const [reasonFlow, setReasonFlow] = useState<{ flow: ReasonFlow; offer?: PriceOfferItem } | null>(null);
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
+  const { getDisputeForJob } = useDisputes();
+  const chatDispute = jobId ? getDisputeForJob(jobId) : undefined;
+  const [showDisputeReport, setShowDisputeReport] = useState(false);
+  const [showDisputeDetails, setShowDisputeDetails] = useState(false);
 
   // ── Rating: the client rates the technician once the job is complete ────
   const canRate = !isTechnician && job?.status === 'COMPLETED' && Boolean(jobId);
@@ -1032,6 +1039,22 @@ export default function JobChatScreen() {
               <Ionicons name="call" size={17} color={colors.primary} />
             </Pressable>
           ) : null}
+          <Pressable
+            accessibilityLabel={chatDispute ? 'View dispute' : 'Report disagreement'}
+            onPress={() => {
+              if (chatDispute) setShowDisputeDetails(true);
+              else setShowDisputeReport(true);
+            }}
+            style={[
+              styles.headerIconBtn,
+              {
+                backgroundColor: chatDispute ? colors.primary + '20' : colors.secondary,
+                borderColor: chatDispute ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <Feather name="shield" size={16} color={colors.primary} />
+          </Pressable>
           <ProgressToggle
             expanded={progressOpen}
             onPress={() => setProgressOpen((open) => !open)}
@@ -1039,6 +1062,31 @@ export default function JobChatScreen() {
           />
         </View>
       </View>
+
+      {/* Active Dispute Banner */}
+      {chatDispute ? (
+        <Pressable
+          onPress={() => setShowDisputeDetails(true)}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: 16,
+            paddingVertical: 9,
+            backgroundColor: colors.primary + '18',
+            borderBottomWidth: 1,
+            borderBottomColor: colors.primary + '30',
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <Feather name="shield" size={14} color={colors.primary} />
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 12, color: colors.primary }}>
+              Dispute: {chatDispute.status.replace('_', ' ')} • Submitted to Web Admin
+            </Text>
+          </View>
+          <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 11, color: colors.primary }}>Details →</Text>
+        </Pressable>
+      ) : null}
 
       {/* Progress stepper */}
       <JobProgressStepper
@@ -1308,6 +1356,38 @@ export default function JobChatScreen() {
             </Pressable>
           </Pressable>
         </Modal>
+      ) : null}
+
+      {showDisputeReport && jobId ? (
+        <ReportDisputeModal
+          visible={showDisputeReport}
+          onClose={() => setShowDisputeReport(false)}
+          jobId={jobId}
+          jobReference={localJob?.reference || (job as any)?.reference || jobId}
+          service={job?.service || summary?.service || 'Service'}
+          role={isTechnician ? 'technician' : 'client'}
+          submitterName={viewerSide === 'TECHNICIAN' ? (account?.name || 'Technician') : (account?.name || 'Client')}
+          submitterPhone={account?.phone || ''}
+          clientName={isTechnician ? otherName : (account?.name || 'Client')}
+          clientPhone={(isTechnician ? otherPhone : account?.phone) || ''}
+          technicianName={isTechnician ? (account?.name || 'Technician') : otherName}
+          technicianPhone={(isTechnician ? account?.phone : otherPhone) || ''}
+          agreedPrice={lifecycle.agreedAmount ?? undefined}
+          existingDispute={chatDispute}
+        />
+      ) : null}
+
+      {showDisputeDetails && chatDispute ? (
+        <DisputeDetailsModal
+          visible={showDisputeDetails}
+          onClose={() => setShowDisputeDetails(false)}
+          dispute={chatDispute}
+          currentRole={isTechnician ? 'technician' : 'client'}
+          onOpenResponseModal={() => {
+            setShowDisputeDetails(false);
+            setShowDisputeReport(true);
+          }}
+        />
       ) : null}
     </KeyboardAvoidingView>
   );

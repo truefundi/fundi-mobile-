@@ -17,6 +17,8 @@ type Props = {
   onPress: () => void;
   /** Extra controls under the card (e.g. accept/decline a new request). */
   footer?: ReactNode;
+  /** Dispute status badge or indicator. */
+  disputeBadge?: ReactNode;
   testID?: string;
 };
 
@@ -58,7 +60,7 @@ export function shortDate(iso?: string) {
  * it stands in plain words, a four-step progress bar matching the chat
  * tracker, and who it is with. Tapping opens the job.
  */
-export function JobListItem({ service, summary, person, location, at, onPress, footer, testID }: Props) {
+export function JobListItem({ service, summary, person, location, at, onPress, footer, disputeBadge, testID }: Props) {
   const colors = useColors();
   const tint = toneColor(colors, summary.tone);
 
@@ -101,6 +103,7 @@ export function JobListItem({ service, summary, person, location, at, onPress, f
                 <Text style={[styles.turnText, { color: colors.primaryForeground }]}>Your turn</Text>
               </View>
             ) : null}
+            {disputeBadge}
           </View>
           <Text style={[styles.hint, { color: colors.mutedForeground }]} numberOfLines={2}>
             {summary.hint}

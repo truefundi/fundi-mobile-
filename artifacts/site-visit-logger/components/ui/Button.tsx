@@ -2,6 +2,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useColors } from '@/hooks/useColors';
+import { useTheme } from '@/context/ThemeContext';
 
 type Variant = 'primary' | 'secondary' | 'outline' | 'danger';
 
@@ -25,8 +26,8 @@ type Props = {
 };
 
 /**
- * The single call-to-action used across the journey. Solid fills only —
- * the Fundi brand rules exclude gradients everywhere.
+ * The single call-to-action used across the journey.
+ * In dark mode, buttons have a black fill with an orange outline to ensure high-contrast, comfortable visibility.
  */
 export function Button({
   label,
@@ -43,17 +44,42 @@ export function Button({
   textColor,
 }: Props) {
   const colors = useColors();
+  const { isDark } = useTheme();
   const isInactive = disabled || loading;
   const small = size === 'small';
 
-  const palette: Record<Variant, { background: string; text: string; border: string }> = {
-    primary: { background: colors.primary, text: colors.primaryForeground, border: colors.primary },
-    secondary: { background: colors.secondary, text: colors.secondaryForeground, border: colors.secondary },
-    outline: { background: colors.card, text: colors.foreground, border: colors.border },
-    danger: { background: colors.card, text: colors.destructive, border: colors.destructive },
-  };
+  const palette: Record<Variant, { background: string; text: string; border: string }> = isDark
+    ? {
+        primary: {
+          background: '#000000',
+          text: '#f97316',
+          border: '#f97316',
+        },
+        secondary: {
+          background: '#000000',
+          text: '#f97316',
+          border: '#f97316',
+        },
+        outline: {
+          background: '#000000',
+          text: '#f97316',
+          border: '#f97316',
+        },
+        danger: {
+          background: '#000000',
+          text: '#ef4444',
+          border: '#ef4444',
+        },
+      }
+    : {
+        primary: { background: colors.primary, text: colors.primaryForeground, border: colors.primary },
+        secondary: { background: colors.secondary, text: colors.secondaryForeground, border: colors.secondary },
+        outline: { background: colors.card, text: colors.foreground, border: colors.border },
+        danger: { background: colors.card, text: colors.destructive, border: colors.destructive },
+      };
+
   const tone = palette[variant];
-  const defaultTextColor = isInactive ? colors.mutedForeground : tone.text;
+  const defaultTextColor = isInactive ? (isDark ? '#666666' : colors.mutedForeground) : tone.text;
   const textColorValue = textColor ?? defaultTextColor;
 
   return (
@@ -67,8 +93,9 @@ export function Button({
         styles.button,
         small && styles.small,
         {
-          backgroundColor: isInactive ? colors.muted : tone.background,
-          borderColor: isInactive ? colors.border : tone.border,
+          backgroundColor: isInactive ? (isDark ? '#000000' : colors.muted) : tone.background,
+          borderColor: isInactive ? (isDark ? '#333333' : colors.border) : tone.border,
+          borderWidth: isDark ? 2 : 1,
           opacity: pressed ? 0.8 : 1,
           transform: [{ scale: pressed ? 0.985 : 1 }],
         },

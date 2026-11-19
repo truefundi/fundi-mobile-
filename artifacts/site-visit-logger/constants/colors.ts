@@ -12,14 +12,16 @@
 
 const colors = {
   light: {
-    text: '#111827',
+    text: '#0f172a',
     tint: '#f97316',
 
-    background: '#f8fafc',
-    foreground: '#111827',
+    // Ultra-bright pure white canvas
+    background: '#ffffff',
+    foreground: '#0f172a',
 
+    // Crisp white card surface
     card: '#ffffff',
-    cardForeground: '#111827',
+    cardForeground: '#0f172a',
 
     primary: '#f97316',
     primaryForeground: '#ffffff',
@@ -27,8 +29,8 @@ const colors = {
     secondary: '#fff7ed',
     secondaryForeground: '#c2410c',
 
-    muted: '#f1f5f9',
-    mutedForeground: '#6b7280',
+    muted: '#f8fafc',
+    mutedForeground: '#64748b',
 
     accent: '#ffedd5',
     accentForeground: '#c2410c',
@@ -53,43 +55,43 @@ const colors = {
     info: '#2563eb',
     infoMuted: '#dbeafe',
 
-    border: '#e5e7eb',
-    input: '#d1d5db',
+    border: '#e2e8f0',
+    input: '#cbd5e1',
   },
 
   dark: {
-    // Pure high-contrast crisp text
-    text: '#ffffff',
+    // High-contrast, eye-friendly soft off-white text (no blinding glare)
+    text: '#e4e4e7',
     tint: '#f97316',
 
-    // True AMOLED Pitch Black: zero glow, complete pixel shutoff on OLED
+    // True pitch-black canvas: comfortable dark mode, zero backlight glow
     background: '#000000',
-    foreground: '#ffffff',
+    foreground: '#e4e4e7',
 
-    // Deepest dark surface elevation (true pitch dark cards)
-    card: '#0c0c0e',
-    cardForeground: '#ffffff',
+    // Sleek true-dark card elevation
+    card: '#0a0a0a',
+    cardForeground: '#e4e4e7',
 
     // Fundi brand primary orange
     primary: '#f97316',
     primaryForeground: '#ffffff',
 
-    secondary: '#181008',
-    secondaryForeground: '#fb923c',
+    secondary: '#181108',
+    secondaryForeground: '#f97316',
 
-    // Deep dark neutral layer
-    muted: '#121214',
-    mutedForeground: '#7a7a85',
+    // Subdued neutral dark layers
+    muted: '#121212',
+    mutedForeground: '#71717a',
 
-    accent: '#221307',
-    accentForeground: '#fdba74',
+    accent: '#231408',
+    accentForeground: '#fb923c',
 
     destructive: '#ef4444',
     destructiveForeground: '#ffffff',
 
     success: '#22c55e',
     successForeground: '#ffffff',
-    successMuted: '#05180c',
+    successMuted: '#061a0d',
 
     warning: '#f59e0b',
     warningMuted: '#1a1002',
@@ -100,9 +102,9 @@ const colors = {
     info: '#3b82f6',
     infoMuted: '#06101e',
 
-    // Ultra-subtle dark borders that don't wash out or lighten the screen
-    border: '#1c1c1f',
-    input: '#161618',
+    // Subtle dark borders and inputs
+    border: '#1c1c1c',
+    input: '#121212',
   },
 
   // Border radius (in px). Sync from the sibling web artifact's --radius

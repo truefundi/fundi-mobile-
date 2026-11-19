@@ -34,5 +34,5 @@ export async function continueToCheckout(router: ReturnType<typeof useRouter>, p
   } catch {
     // Status unavailable: verify with a code instead.
   }
-  router.push({ pathname: '/checkout/verify-phone', params });
+  router.push({ pathname: '/checkout/verify-phone' as any, params });
 }

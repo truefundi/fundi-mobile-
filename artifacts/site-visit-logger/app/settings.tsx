@@ -191,7 +191,7 @@ export default function SettingsScreen() {
             accessibilityRole="button"
             accessibilityLabel="Change PIN"
             testID="settings-change-pin"
-            onPress={() => router.push('/change-pin')}
+            onPress={() => router.push('/change-pin' as any)}
             style={({ pressed }) => [styles.row, { borderBottomColor: colors.border, borderBottomWidth: 1, opacity: pressed ? 0.65 : 1 }]}
           >
             <Feather name="lock" size={18} color={colors.primary} />
@@ -202,7 +202,7 @@ export default function SettingsScreen() {
             accessibilityRole="button"
             accessibilityLabel="Forgot PIN? Reset it with an SMS code"
             testID="settings-reset-pin"
-            onPress={() => router.push({ pathname: '/change-pin', params: { mode: 'reset' } })}
+            onPress={() => router.push({ pathname: '/change-pin' as any, params: { mode: 'reset' } })}
             style={({ pressed }) => [styles.row, { opacity: pressed ? 0.65 : 1 }]}
           >
             <Feather name="message-square" size={18} color={colors.primary} />
