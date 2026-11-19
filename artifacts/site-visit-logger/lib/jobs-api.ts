@@ -282,6 +282,10 @@ async function appendUploadFile(
   formData.append(field, blob, file.name);
 }
 
+function roundCoordinate(value: number): number {
+  return Math.round(value * 1e6) / 1e6;
+}
+
 export async function createCustomerJob(input: CreateJobInput): Promise<BackendJob> {
   const isSos = input.requestType === 'SOS';
   const path = isSos ? '/api/v1/jobs/sos' : '/api/v1/jobs';
@@ -294,8 +298,9 @@ export async function createCustomerJob(input: CreateJobInput): Promise<BackendJ
   formData.append('serviceCategoryId', input.serviceCategoryId);
   formData.append('description', input.description);
   formData.append('locationAddress', input.locationAddress);
-  formData.append('latitude', String(input.latitude));
-  formData.append('longitude', String(input.longitude));
+  // The API takes at most six decimal places (about 10 cm); geocoders return more.
+  formData.append('latitude', String(roundCoordinate(input.latitude)));
+  formData.append('longitude', String(roundCoordinate(input.longitude)));
   if (input.offeredAmount !== undefined) {
     formData.append('offeredAmount', String(input.offeredAmount));
   }

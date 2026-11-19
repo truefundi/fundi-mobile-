@@ -32,7 +32,29 @@ const STEP_NAMES = ['Details', 'Review'] as const;
 const LAST_STEP = STEP_NAMES.length;
 
 const PROBLEM_REQUIRED = 'Tell us what happened so we can find the right technician.';
+// The API refuses a job whose description or address is shorter than these.
+const PROBLEM_MIN_LENGTH = 10;
+const PROBLEM_MAX_LENGTH = 5000;
+const ADDRESS_MIN_LENGTH = 3;
+const PROBLEM_TOO_SHORT = `Describe the problem in at least ${PROBLEM_MIN_LENGTH} characters.`;
 const ADDRESS_REQUIRED = 'Add the address where the service is needed.';
+const ADDRESS_TOO_SHORT = `Add a fuller address (at least ${ADDRESS_MIN_LENGTH} characters).`;
+
+/** Why a problem description cannot be sent, or '' when it can. */
+function problemIssue(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return PROBLEM_REQUIRED;
+  if (trimmed.length < PROBLEM_MIN_LENGTH) return PROBLEM_TOO_SHORT;
+  return '';
+}
+
+/** Why an address cannot be sent, or '' when it can. */
+function addressIssue(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return ADDRESS_REQUIRED;
+  if (trimmed.length < ADDRESS_MIN_LENGTH) return ADDRESS_TOO_SHORT;
+  return '';
+}
 const LOCATION_NOT_FOUND =
   "We couldn't find this address on the map. Use your current location or choose a saved place so nearby technicians can be matched.";
 
@@ -367,8 +389,8 @@ export default function RequestScreen() {
   };
 
   const checkDetails = (): boolean => {
-    const pErr = problem.trim() ? '' : PROBLEM_REQUIRED;
-    const aErr = hasAddress ? '' : ADDRESS_REQUIRED;
+    const pErr = problemIssue(problem);
+    const aErr = addressIssue(address);
     setProblemError(pErr);
     setAddressError(aErr);
     return !pErr && !aErr;
@@ -489,14 +511,16 @@ export default function RequestScreen() {
     if (editing === 'service') {
       setService(draftService);
     } else if (editing === 'problem') {
-      if (!draftProblem.trim()) return setDraftError(PROBLEM_REQUIRED);
+      const issue = problemIssue(draftProblem);
+      if (issue) return setDraftError(issue);
       setProblem(draftProblem);
       setProblemError('');
     } else if (editing === 'attached') {
       setPhotos([...draftPhotos]);
       setVideo(draftVideo);
     } else if (editing === 'location') {
-      if (!draftAddress.trim()) return setDraftError(ADDRESS_REQUIRED);
+      const issue = addressIssue(draftAddress);
+      if (issue) return setDraftError(issue);
       setAddress(draftAddress);
       setCurrentAddressCoords(draftCoords);
       setAddressError('');
@@ -739,12 +763,20 @@ export default function RequestScreen() {
               placeholder={isEmergency ? "Describe emergency details (e.g., flooding in kitchen, main switch tripped)..." : "For example: the kitchen tap has been leaking..."}
               placeholderTextColor={colors.mutedForeground}
               multiline
+              maxLength={PROBLEM_MAX_LENGTH}
               textAlignVertical="top"
               style={[
                 styles.problemInput,
                 { backgroundColor: colors.card, borderColor: problemError ? colors.destructive : colors.border, color: colors.foreground },
               ]}
             />
+            {problemError ? null : (
+              <Text style={[styles.problemHint, { color: colors.mutedForeground }]} testID="problem-length-hint">
+                {problem.trim().length < PROBLEM_MIN_LENGTH
+                  ? `At least ${PROBLEM_MIN_LENGTH} characters (${problem.trim().length}/${PROBLEM_MIN_LENGTH})`
+                  : `${problem.trim().length} characters`}
+              </Text>
+            )}
             {errorView(problemError, 'problem-error')}
 
             <FieldLabel label={`Photos (up to ${MAX_PHOTOS}) & Video (1 max)`} optional style={styles.sectionLabel} />
@@ -855,6 +887,7 @@ export default function RequestScreen() {
                       value={draftProblem}
                       onChangeText={(val) => setDraftProblem(val)}
                       multiline
+                      maxLength={PROBLEM_MAX_LENGTH}
                       style={[styles.problemInput, styles.editorInput, { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border }]}
                     />
                     {errorView(draftError)}
@@ -1110,6 +1143,7 @@ const styles = StyleSheet.create({
   serviceScroll: { gap: 8, paddingVertical: 4 },
   serviceChip: { minHeight: 38, borderRadius: 19, borderWidth: 1, paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center' },
   serviceChipText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  problemHint: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 6 },
   problemInput: { minHeight: 120, borderWidth: 1, borderRadius: 14, padding: 14, fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 21 },
   mediaContainer: { gap: 8 },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
