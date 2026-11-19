@@ -20,6 +20,8 @@ import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
 import { isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
 import { pickProfilePhoto } from '@/lib/profilePhoto';
+import { fetchMyCompany, type MyCompany } from '@/lib/companies-api';
+import { COMPANY_STATUS } from '@/components/work/CompanyFields';
 
 type Link = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -57,6 +59,27 @@ export default function ProfileScreen() {
     useCallback(() => {
       if (mode === 'working') void refreshApplication().catch(() => undefined);
     }, [mode, refreshApplication]),
+  );
+  // A company owner sees their company's review status next to their trades.
+  const [company, setCompany] = useState<MyCompany | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      // Asked straight away (no company answers 404 -> null) rather than after
+      // the application reloads, so the card shows as soon as Profile opens.
+      if (mode !== 'working') {
+        setCompany(null);
+        return;
+      }
+      let cancelled = false;
+      fetchMyCompany()
+        .then((found) => {
+          if (!cancelled) setCompany(found);
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }, [mode]),
   );
   const { signOut, deleteAccount } = useAuth();
   const { profile: account, updateProfile } = useProfile();
@@ -308,6 +331,44 @@ export default function ProfileScreen() {
               </Text>
             </View>
           )}
+
+          {company ? (
+            <>
+              <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your company</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${company.name}, ${COMPANY_STATUS[company.verificationStatus].label}`}
+                onPress={() => router.push('/company' as Href)}
+                testID="profile-company-card"
+                style={({ pressed }) => [
+                  styles.tradeCard,
+                  { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
+                ]}
+              >
+                <View style={styles.tradeTop}>
+                  <Text style={[styles.tradeName, { color: colors.foreground }]} numberOfLines={1}>{company.name}</Text>
+                  <View
+                    style={[
+                      styles.statusTag,
+                      { backgroundColor: colors[`${COMPANY_STATUS[company.verificationStatus].tone}Muted` as 'successMuted'] },
+                    ]}
+                  >
+                    <Feather
+                      name={COMPANY_STATUS[company.verificationStatus].icon}
+                      size={12}
+                      color={colors[COMPANY_STATUS[company.verificationStatus].tone]}
+                    />
+                    <Text style={[styles.statusText, { color: colors.foreground }]}>
+                      {COMPANY_STATUS[company.verificationStatus].label}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={[styles.tradeMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
+                  {company.location} · {company.email}
+                </Text>
+              </Pressable>
+            </>
+          ) : null}
         </>
       ) : null}
 

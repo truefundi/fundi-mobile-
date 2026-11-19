@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { SwitchRow } from '@/components/ui/SwitchRow';
@@ -10,6 +10,10 @@ import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
 import { isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
+import { fetchMyCompany, type MyCompany } from '@/lib/companies-api';
+
+/** The line shown when a rejection was recorded without a reason. */
+const GENERIC_REJECTION = 'Application was not approved.';
 
 function WorkPending() {
   const colors = useColors();
@@ -110,9 +114,13 @@ function WorkPending() {
   );
 }
 
-function WorkRejected({ onlyDocuments }: { onlyDocuments: boolean }) {
+function WorkRejected({ onlyDocuments, company }: { onlyDocuments: boolean; company: MyCompany | null }) {
   const colors = useColors();
   const { profile } = useWork();
+  // The admin's own reason is shown whatever else was marked; the generic
+  // fallback adds nothing next to the documents that need replacing.
+  const feedback = profile?.rejectionFeedback?.trim();
+  const showFeedback = Boolean(feedback && !(onlyDocuments && feedback === GENERIC_REJECTION));
 
   return (
     <View style={[styles.statusCard, { backgroundColor: colors.destructiveMuted }]}>
@@ -126,15 +134,21 @@ function WorkRejected({ onlyDocuments }: { onlyDocuments: boolean }) {
           : 'Read the feedback, update your details below and submit a new application. It goes back to review as a fresh application.'}
       </Text>
 
-      {profile?.rejectionFeedback && !onlyDocuments ? (
+      {showFeedback ? (
         <View style={[styles.feedbackBox, { backgroundColor: colors.card, borderColor: colors.destructive }]}>
           <Text style={[styles.feedbackTitle, { color: colors.destructive }]}>Admin Review Feedback:</Text>
           <Text style={[styles.body, { color: colors.foreground, textAlign: 'left', marginTop: 4 }]}>
-            {profile.rejectionFeedback}
+            {feedback}
           </Text>
         </View>
       ) : null}
       
+      {company?.verificationStatus === 'REJECTED' ? (
+        <Text style={[styles.body, { color: colors.destructive, marginTop: 4 }]} testID="rejected-company-note">
+          Company ({company.name}): {company.rejectionReason?.trim() || 'not approved.'} Check its details in the form below.
+        </Text>
+      ) : null}
+
       {profile?.serviceExperiences?.filter((exp) => exp.status === 'DENIED' || exp.status === 'SUSPENDED').map((exp, idx) => (
         <Text key={`exp-err-${idx}`} style={[styles.body, { color: colors.destructive, marginTop: 4 }]}>
           Trade ({exp.trade || exp.customName}): {exp.reviewNote ?? 'Needs revision'}
@@ -182,13 +196,31 @@ function WorkRejectedHome() {
   const deniedTrades = profile?.serviceExperiences?.some(
     (experience) => experience.status === 'DENIED' || experience.status === 'SUSPENDED',
   );
+  // A company owner's company is reviewed too; a rejected one is corrected in the form.
+  const [company, setCompany] = useState<MyCompany | null>(null);
+  useEffect(() => {
+    if (profile?.businessType !== 'COMPANY') {
+      setCompany(null);
+      return;
+    }
+    let cancelled = false;
+    fetchMyCompany()
+      .then((found) => {
+        if (!cancelled) setCompany(found);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.businessType]);
+  const companyRejected = company?.verificationStatus === 'REJECTED';
   // Denied documents alone are fixed one by one; the full form is for anything else.
-  const onlyDocuments = deniedDocuments && !deniedTrades;
+  const onlyDocuments = deniedDocuments && !deniedTrades && !companyRejected;
   const showForm = !onlyDocuments || editAll;
 
   return (
     <View style={styles.screen}>
-      <WorkRejected onlyDocuments={onlyDocuments} />
+      <WorkRejected onlyDocuments={onlyDocuments} company={company} />
       <DocumentReviewList documents={documents} />
       {onlyDocuments && !editAll ? (
         <Pressable accessibilityRole="button" onPress={() => setEditAll(true)} testID="edit-full-application">
