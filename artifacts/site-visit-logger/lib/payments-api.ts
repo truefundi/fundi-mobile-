@@ -62,3 +62,56 @@ export async function fetchMyPayments(): Promise<MyBookingPayment[]> {
 export function customerCharges(quote: PaymentQuote | null | undefined): PaymentQuoteCharge[] {
   return quote?.charges.filter((charge) => charge.payer === 'CUSTOMER' && charge.amount > 0) ?? [];
 }
+
+/** How the customer paid outside the app. */
+export type PaymentClaimMethod = 'MTN' | 'AIRTEL';
+
+/**
+ * "I have paid": a customer's report of a booking fee paid to Fundi's mobile
+ * money code. An admin checks it; once APPROVED it carries the booking payment
+ * the job is created with.
+ */
+export interface PaymentClaim {
+  id: string;
+  serviceCategoryId: string;
+  requestType: BookingRequestType;
+  amount: number;
+  paymentMethod: PaymentClaimMethod | 'CREDIT_CARD';
+  paymentNumber: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  bookingPayment: {
+    id: string;
+    jobId: string | null;
+    status: MyBookingPayment['status'];
+    amount: number;
+    paidAt: string;
+    validUntil: string;
+  } | null;
+  pricingDetails: PaymentQuote | null;
+}
+
+export interface SubmitPaymentClaimInput {
+  serviceCategoryId: string;
+  requestType: BookingRequestType;
+  /** Must equal the quote's customerTotal, or the API answers 400 with expectedAmount. */
+  amount: number;
+  paymentMethod: PaymentClaimMethod;
+  /** The mobile money number the customer paid from. */
+  paymentNumber: string;
+}
+
+export async function submitPaymentClaim(input: SubmitPaymentClaimInput): Promise<PaymentClaim> {
+  return apiRequest<PaymentClaim>('/api/v1/payments/claims', {
+    method: 'POST',
+    authenticated: true,
+    body: input,
+  });
+}
+
+export async function fetchMyPaymentClaims(): Promise<PaymentClaim[]> {
+  const rows = await apiRequest<PaymentClaim[]>('/api/v1/payments/claims/mine', { authenticated: true });
+  return Array.isArray(rows) ? rows : [];
+}

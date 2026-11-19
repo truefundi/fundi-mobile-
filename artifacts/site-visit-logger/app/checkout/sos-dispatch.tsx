@@ -19,6 +19,10 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { usePaymentQuote } from '@/hooks/usePaymentQuote';
 import { PriceBreakdown } from '@/components/checkout/PriceBreakdown';
+import { ClaimStatus, PayByCode } from '@/components/checkout/PayByCode';
+import { usePaymentClaim } from '@/hooks/usePaymentClaim';
+import { fetchJobPhoneStatus } from '@/lib/jobs-api';
+import type { PaymentClaimMethod } from '@/lib/payments-api';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -38,37 +42,10 @@ import {
 } from '@/constants/jobs';
 import { notify, vibrate } from '@/lib/haptics';
 
-type PaymentChannel = 'MTN_MOMO' | 'AIRTEL_MONEY' | 'CARD_WALLET';
-
-interface PaymentOption {
-  id: PaymentChannel;
-  title: string;
-  detail: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  badge?: string;
-}
-
-const PAYMENT_OPTIONS: PaymentOption[] = [
-  {
-    id: 'MTN_MOMO',
-    title: 'MTN Mobile Money',
-    detail: 'Instant push prompt (USSD confirmation)',
-    icon: 'phone-portrait-outline',
-    badge: 'Popular in Rwanda',
-  },
-  {
-    id: 'AIRTEL_MONEY',
-    title: 'Airtel Money',
-    detail: 'Instant mobile wallet prompt',
-    icon: 'phone-portrait-outline',
-  },
-  {
-    id: 'CARD_WALLET',
-    title: 'Credit / Debit Card or Wallet',
-    detail: 'Instant authorization',
-    icon: 'card-outline',
-  },
-];
+/** The approved "I have paid" claim, or (development builds only) the API's test payment. */
+type PaymentSource =
+  | { kind: 'claim'; paymentId: string; amount: number; externalPaymentId: string }
+  | { kind: 'test' };
 
 type DispatchPhase = 'REVIEW' | 'AUTHORIZING' | 'SEARCHING_DISPATCH' | 'ACCEPTED';
 
@@ -106,8 +83,12 @@ export default function SosDispatchScreen() {
   const [phase, setPhase] = useState<DispatchPhase>(
     initialJob?.status === 'SEARCHING_DISPATCH' ? 'SEARCHING_DISPATCH' : 'REVIEW'
   );
-  const [selectedChannel, setSelectedChannel] = useState<PaymentChannel>('MTN_MOMO');
-  const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '0788123456');
+  const [payMethod, setPayMethod] = useState<PaymentClaimMethod>('MTN');
+  const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '');
+  const [sosError, setSosError] = useState<string | null>(null);
+  const paymentClaim = usePaymentClaim(targetRequestId);
+  const sourceRef = useRef<PaymentSource>({ kind: 'test' });
+  const continuedClaimRef = useRef<string | null>(null);
   const [matchedSpecialist, setMatchedSpecialist] = useState<MarketplaceTechnician | null>(null);
   const [transactionRef, setTransactionRef] = useState<string>('');
 
@@ -233,19 +214,27 @@ export default function SosDispatchScreen() {
     };
   }, [phase]);
 
-  const handleAuthorizeAndBroadcast = async () => {
+  const handleAuthorizeAndBroadcast = async (source: PaymentSource) => {
+    sourceRef.current = source;
+    setSosError(null);
     vibrate();
 
-    // Check if phone verification needed
+    // An account whose number is already verified needs no code; otherwise confirm one first.
     if (!phoneVerificationId) {
       setPhase('AUTHORIZING');
       try {
+        const status = await fetchJobPhoneStatus().catch(() => null);
+        if (status?.verified) {
+          await executeSosBroadcast(null);
+          return;
+        }
         const req = await requestPhoneVerification();
         setPhoneVerificationId(req.verificationId);
         setPhase('REVIEW');
         setShowOtpModal(true);
         return;
       } catch (err) {
+        setSosError(err instanceof Error ? err.message : 'Could not verify your phone number.');
         setPhase('REVIEW');
         return;
       }
@@ -272,8 +261,14 @@ export default function SosDispatchScreen() {
     }
   };
 
-  const executeSosBroadcast = async (verificationId: string) => {
+  const executeSosBroadcast = async (verificationId: string | null) => {
     setPhase('AUTHORIZING');
+    // The API refuses a job described in fewer than 10 characters; catch it before using the payment.
+    if (problemDesc.trim().length < 10) {
+      setSosError('Describe the emergency in at least 10 characters. Go back and edit the request.');
+      setPhase('REVIEW');
+      return;
+    }
     try {
       const targetServiceCategoryId = await resolveServiceCategoryId(
         serviceName,
@@ -281,13 +276,17 @@ export default function SosDispatchScreen() {
       );
       const normalizedPhone = cleanAndNormalizePhone(phoneNumber);
 
-      const bookingPayment = await createBookingPayment(targetServiceCategoryId, 'SOS', normalizedPhone);
+      const source = sourceRef.current;
+      const bookingPayment =
+        source.kind === 'claim'
+          ? { id: source.paymentId, amount: source.amount, externalPaymentId: source.externalPaymentId }
+          : await createBookingPayment(targetServiceCategoryId, 'SOS', normalizedPhone);
 
       const createdBackendJob = await createBackendJob({
         paymentId: bookingPayment.id,
-        phoneVerificationId: verificationId,
+        ...(verificationId ? { phoneVerificationId: verificationId } : {}),
+        description: problemDesc.trim(),
         serviceCategoryId: targetServiceCategoryId,
-        description: problemDesc,
         locationAddress: locationLabel,
         latitude: activeJob?.locationLatitude ?? -1.9441,
         longitude: activeJob?.locationLongitude ?? 30.0619,
@@ -298,14 +297,63 @@ export default function SosDispatchScreen() {
       const txId = bookingPayment.externalPaymentId || `TX-SOS-${Date.now().toString(36).toUpperCase()}`;
       setTransactionRef(txId);
       markBookingFeePaid(createdBackendJob.id, txId, bookingPayment.amount);
+      if (source.kind === 'claim') await paymentClaim.clear();
       notify('success');
 
       // Switch to radar search pulse screen
       setPhase('SEARCHING_DISPATCH');
     } catch (err) {
+      setSosError(err instanceof Error ? err.message : 'The emergency request could not be sent. Please try again.');
       setPhase('REVIEW');
     }
   };
+
+  /** "I have paid": report the payment so an admin can match it. */
+  const handleReportPaid = async () => {
+    setSosError(null);
+    const payer = cleanAndNormalizePhone(phoneNumber);
+    if (payer.replace(/\D/g, '').length < 9) {
+      setSosError('Enter the mobile money number you paid from.');
+      return;
+    }
+    try {
+      const serviceCategoryId = await resolveServiceCategoryId(
+        serviceName,
+        params.categoryId || activeJob?.serviceCategoryId,
+      );
+      await paymentClaim.submit({
+        serviceCategoryId,
+        requestType: 'SOS',
+        amount: dispatchFee,
+        paymentMethod: payMethod,
+        paymentNumber: payer,
+      });
+    } catch (err) {
+      setSosError(err instanceof Error ? err.message : 'Your payment could not be reported. Please try again.');
+    }
+  };
+
+  // Once an admin confirms the payment, broadcast the emergency with it (once).
+  const approvedClaim = paymentClaim.claim?.status === 'APPROVED' ? paymentClaim.claim : null;
+  const continueWithClaim = () => {
+    const payment = approvedClaim?.bookingPayment;
+    if (!approvedClaim || !payment || payment.jobId) return;
+    continuedClaimRef.current = approvedClaim.id;
+    void handleAuthorizeAndBroadcast({
+      kind: 'claim',
+      paymentId: payment.id,
+      amount: payment.amount,
+      externalPaymentId: `claim_${approvedClaim.id}`,
+    });
+  };
+  useEffect(() => {
+    if (!approvedClaim || continuedClaimRef.current === approvedClaim.id || phase !== 'REVIEW') return;
+    continueWithClaim();
+    // Only a newly approved claim should trigger the broadcast.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvedClaim?.id, approvedClaim?.bookingPayment?.id]);
+
+  const claimOpen = paymentClaim.claim !== null;
 
   const handleTechnicianAcceptance = async () => {
     const finalId = targetRequestId || activeJob?.id;
@@ -538,104 +586,75 @@ export default function SosDispatchScreen() {
               </View>
             </SectionCard>
 
-            {/* ONE-TAP PAYMENT CHANNEL SELECTOR */}
-            <SectionCard title="Payment Authorization Method">
+            {/* PAY BY MOBILE MONEY CODE */}
+            <SectionCard title="Pay with mobile money">
               <Text style={[styles.paymentSubtext, { color: colors.mutedForeground }]}>
-                One-tap mobile money push or card authorization to initiate emergency broadcast.
+                Pay the emergency fee to Fundi's code, then tap "I have paid". The emergency is broadcast as soon as the
+                payment is confirmed.
               </Text>
-
-              <View style={styles.paymentOptionsList}>
-                {PAYMENT_OPTIONS.map((opt) => {
-                  const isSelected = selectedChannel === opt.id;
-                  return (
-                    <Pressable
-                      key={opt.id}
-                      onPress={() => setSelectedChannel(opt.id)}
-                      style={[
-                        styles.paymentOptionCard,
-                        {
-                          backgroundColor: isSelected ? 'rgba(239, 68, 68, 0.06)' : colors.card,
-                          borderColor: isSelected ? '#ef4444' : colors.border,
-                        },
-                      ]}
-                    >
-                      <View style={[styles.paymentIconWrap, { backgroundColor: isSelected ? '#ef4444' : colors.muted }]}>
-                        <Ionicons
-                          name={opt.icon}
-                          size={18}
-                          color={isSelected ? '#ffffff' : colors.foreground}
-                        />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={[styles.paymentTitle, { color: colors.foreground }]}>{opt.title}</Text>
-                          {opt.badge && (
-                            <View style={[styles.momoPopularBadge, { backgroundColor: colors.secondary }]}>
-                              <Text style={[styles.momoPopularText, { color: colors.mutedForeground }]}>{opt.badge}</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={[styles.paymentDetail, { color: colors.mutedForeground }]}>
-                          {opt.detail}
-                        </Text>
-                      </View>
-                      <Ionicons
-                        name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                        size={20}
-                        color={isSelected ? '#ef4444' : colors.mutedForeground}
-                      />
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              {/* Mobile Number for push confirmation */}
-              {(selectedChannel === 'MTN_MOMO' || selectedChannel === 'AIRTEL_MONEY') && (
-                <View style={styles.phoneInputWrap}>
-                  <Text style={[styles.phoneLabel, { color: colors.foreground }]}>
-                    Mobile Money Number for Prompt:
-                  </Text>
-                  <View style={[styles.phoneInputRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <Text style={[styles.phonePrefix, { color: colors.mutedForeground }]}>+250</Text>
-                    <TextInput
-                      accessibilityLabel="Mobile Money Number"
-                      value={phoneNumber}
-                      onChangeText={setPhoneNumber}
-                      keyboardType="phone-pad"
-                      placeholder="078..."
-                      placeholderTextColor={colors.mutedForeground}
-                      style={[styles.phoneInput, { color: colors.foreground }]}
-                    />
-                  </View>
-                </View>
-              )}
+              {sosError || paymentClaim.error ? (
+                <Notice tone="warning" icon="alert-circle-outline" text={(sosError || paymentClaim.error)!} />
+              ) : null}
+              {paymentClaim.claim ? (
+                <ClaimStatus
+                  claim={paymentClaim.claim}
+                  checking={paymentClaim.checking}
+                  onCheck={() => void paymentClaim.refresh()}
+                  onRetry={() => {
+                    continuedClaimRef.current = null;
+                    void paymentClaim.clear();
+                  }}
+                  onContinue={continueWithClaim}
+                  continuing={phase !== 'REVIEW' || showOtpModal}
+                />
+              ) : null}
+              <PayByCode
+                method={payMethod}
+                onMethodChange={setPayMethod}
+                payerNumber={phoneNumber}
+                onPayerNumberChange={setPhoneNumber}
+                amount={dispatchFee}
+                disabled={claimOpen}
+                tone="danger"
+              />
             </SectionCard>
           </ScrollView>
 
-          {/* STICKY BOTTOM ONE-TAP AUTHORIZATION CTA */}
-          <View
-            style={[
-              styles.bottomBar,
-              {
-                backgroundColor: colors.card,
-                borderTopColor: colors.border,
-                paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 12,
-              },
-            ]}
-          >
-            <Button
-              label={`Authorize & Broadcast (${formatBookingFee(dispatchFee)})`}
-              icon="flash"
-              variant="danger"
-              loading={phase === 'AUTHORIZING'}
-              onPress={handleAuthorizeAndBroadcast}
-              testID="authorize-and-broadcast-button"
-              style={styles.authorizeButton}
-            />
-            <Text style={[styles.bottomSecurityNote, { color: colors.mutedForeground }]}>
-              🔒 Instant 256-bit encrypted checkout · No manual technician delays
-            </Text>
-          </View>
+          {/* Sticky bottom CTA: hidden while a reported payment is being checked. */}
+          {claimOpen ? null : (
+            <View
+              style={[
+                styles.bottomBar,
+                {
+                  backgroundColor: colors.card,
+                  borderTopColor: colors.border,
+                  paddingBottom: Platform.OS === 'web' ? 18 : insets.bottom + 12,
+                },
+              ]}
+            >
+              <Button
+                label={`I have paid ${formatBookingFee(dispatchFee)}`}
+                icon="checkmark-done"
+                variant="danger"
+                loading={paymentClaim.submitting}
+                disabled={phase === 'AUTHORIZING'}
+                onPress={() => void handleReportPaid()}
+                testID="i-have-paid-button"
+                style={styles.authorizeButton}
+              />
+              {__DEV__ ? (
+                <Button
+                  label="Test payment (development only)"
+                  variant="outline"
+                  size="small"
+                  loading={phase === 'AUTHORIZING'}
+                  disabled={paymentClaim.submitting}
+                  onPress={() => void handleAuthorizeAndBroadcast({ kind: 'test' })}
+                  testID="authorize-and-broadcast-button"
+                />
+              ) : null}
+            </View>
+          )}
         </>
       )}
 
@@ -649,7 +668,7 @@ export default function SosDispatchScreen() {
 
             <Text style={[styles.modalTitle, { color: colors.foreground }]}>Verify Phone Number</Text>
             <Text style={[styles.modalSub, { color: colors.mutedForeground }]}>
-              Enter the 6-digit verification code sent to {phoneNumber} to authenticate your emergency broadcast.
+              Enter the 6-digit code we sent to your phone to confirm this emergency request.
             </Text>
 
             {otpError && (
