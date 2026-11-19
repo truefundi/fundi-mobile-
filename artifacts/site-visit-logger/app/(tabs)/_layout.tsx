@@ -1,66 +1,84 @@
 import React from 'react';
-import { Platform, StyleSheet, useColorScheme, View } from 'react-native';
-import { useWork } from '@/context/WorkContext';
-import { useTheme } from '@/context/ThemeContext';
-import { useColors } from '@/hooks/useColors';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Tabs } from 'expo-router';
-// @ts-ignore
-import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
-import { SymbolView } from 'expo-symbols';
+import { NativeTabs } from 'expo-router/native-tabs';
+import { SymbolView, type SFSymbol } from 'expo-symbols';
+import { useWork } from '@/context/WorkContext';
+import { useTheme } from '@/context/ThemeContext';
+import { useColors } from '@/hooks/useColors';
 
-// IMPORTANT: iOS 26 uses NativeTabs for native tabs with liquid glass support.
-// NativeTabs intentionally does NOT use custom design tokens — liquid glass
-// is a system-level appearance provided by iOS and cannot be overridden.
-// Custom brand colors are applied only on the ClassicTabLayout path (older iOS / Android / web).
 /**
- * Two tabs mean different things depending on the role, so they say different
- * things. The routes never change — each screen already branches on the role,
+ * Two tabs mean different things depending on the mode, so they say different
+ * things. The routes never change: each screen already branches on the mode,
  * and swapping routes at runtime is how expo-router navigation breaks.
+ *
+ * Both layouts list the tabs in the same order.
  */
-function NativeTabLayout() {
+type TabSpec = {
+  name: 'index' | 'services' | 'chat' | 'activity' | 'profile';
+  title: string;
+  sf: SFSymbol;
+  sfSelected: SFSymbol;
+  feather: React.ComponentProps<typeof Feather>['name'];
+};
+
+function useTabSpecs(): TabSpec[] {
   const { mode } = useWork();
   const working = mode === 'working';
+  return [
+    { name: 'index', title: 'Home', sf: 'house', sfSelected: 'house.fill', feather: 'home' },
+    working
+      ? { name: 'services', title: 'Work', sf: 'slider.horizontal.3', sfSelected: 'slider.horizontal.3', feather: 'sliders' }
+      : { name: 'services', title: 'Services', sf: 'wrench.and.screwdriver', sfSelected: 'wrench.and.screwdriver.fill', feather: 'tool' },
+    {
+      name: 'chat',
+      title: 'Chats',
+      sf: 'bubble.left.and.bubble.right',
+      sfSelected: 'bubble.left.and.bubble.right.fill',
+      feather: 'message-square',
+    },
+    working
+      ? { name: 'activity', title: 'Jobs', sf: 'briefcase', sfSelected: 'briefcase.fill', feather: 'briefcase' }
+      : { name: 'activity', title: 'Activity', sf: 'clock', sfSelected: 'clock.fill', feather: 'clock' },
+    { name: 'profile', title: 'Profile', sf: 'person', sfSelected: 'person.fill', feather: 'user' },
+  ];
+}
+
+/**
+ * iOS 26+: the system tab bar with liquid glass. iOS draws the glass itself;
+ * the app only sets the brand tint for the selected tab.
+ */
+function NativeTabLayout() {
+  const colors = useColors();
+  const tabs = useTabSpecs();
 
   return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="index">
-        <Icon sf={{ default: 'house', selected: 'house.fill' }} />
-        <Label>Home</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="services">
-        <Icon
-          sf={
-            working
-              ? { default: 'slider.horizontal.3', selected: 'slider.horizontal.3' }
-              : { default: 'wrench.and.screwdriver', selected: 'wrench.and.screwdriver.fill' }
-          }
-        />
-        <Label>{working ? 'Work' : 'Services'}</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="activity">
-        <Icon sf={working ? { default: 'briefcase', selected: 'briefcase.fill' } : { default: 'clock', selected: 'clock.fill' }} />
-        <Label>{working ? 'Jobs' : 'Activity'}</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="chat">
-        <Icon sf={{ default: 'bubble.left.and.bubble.right', selected: 'bubble.left.and.bubble.right.fill' }} />
-        <Label>Chats</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="profile">
-        <Icon sf={{ default: 'person', selected: 'person.fill' }} />
-        <Label>Profile</Label>
-      </NativeTabs.Trigger>
+    <NativeTabs
+      tintColor={colors.primary}
+      iconColor={{ default: colors.mutedForeground, selected: colors.primary }}
+      labelStyle={{
+        default: { color: colors.mutedForeground },
+        selected: { color: colors.primary },
+      }}
+    >
+      {tabs.map((tab) => (
+        <NativeTabs.Trigger key={tab.name} name={tab.name}>
+          <NativeTabs.Trigger.Icon sf={{ default: tab.sf, selected: tab.sfSelected }} />
+          <NativeTabs.Trigger.Label>{tab.title}</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+      ))}
     </NativeTabs>
   );
 }
 
+/** Older iOS, Android and web: a JS tab bar in the app's own colours. */
 function ClassicTabLayout() {
   const colors = useColors();
-  const { mode } = useWork();
-  const working = mode === 'working';
   const { isDark } = useTheme();
+  const tabs = useTabSpecs();
 
   const isIOS = Platform.OS === 'ios';
   const isWeb = Platform.OS === 'web';
@@ -68,86 +86,58 @@ function ClassicTabLayout() {
   return (
     <Tabs
       screenOptions={{
+        headerShown: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.mutedForeground,
-        headerShown: false,
+        tabBarLabelStyle: styles.label,
+        tabBarItemStyle: isWeb ? styles.webItem : styles.item,
         tabBarStyle: {
           position: 'absolute',
           backgroundColor: isIOS ? 'transparent' : colors.background,
-          borderTopWidth: isWeb ? 1 : 0,
+          borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
           elevation: 0,
-          ...(isWeb ? { height: 64, paddingBottom: 6, paddingTop: 4 } : {}),
+          // Native heights come from the safe area (home indicator included);
+          // only web needs a fixed one.
+          ...(isWeb ? { height: 68, paddingBottom: 10, paddingTop: 6 } : {}),
         },
         tabBarBackground: () =>
           isIOS ? (
-            <BlurView
-              intensity={100}
-              tint={isDark ? 'dark' : 'light'}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : isWeb ? (
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: colors.background },
-              ]}
-            />
-          ) : null,
+            <BlurView intensity={90} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]} />
+          ),
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="house" tintColor={color} size={24} />
-            ) : (
-              <Feather name="home" size={22} color={color as string} />
-            ),
-        }}
-      />
-      <Tabs.Screen
-        name="services"
-        options={{
-          title: working ? 'Work' : 'Services',
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name={working ? 'slider.horizontal.3' : 'wrench.and.screwdriver'} tintColor={color} size={24} />
-            ) : (
-              <Feather name={working ? 'sliders' : 'tool'} size={22} color={color as string} />
-            ),
-        }}
-      />
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: 'Chats',
-          tabBarIcon: ({ color }) => <Feather name="message-square" size={21} color={color as string} />,
-        }}
-      />
-      <Tabs.Screen
-        name="activity"
-        options={{
-          title: working ? 'Jobs' : 'Activity',
-          tabBarIcon: ({ color }) => <Feather name={working ? 'briefcase' : 'clock'} size={21} color={color as string} />,
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ color }) => <Feather name="user" size={21} color={color as string} />,
-        }}
-      />
+      {tabs.map((tab) => (
+        <Tabs.Screen
+          key={tab.name}
+          name={tab.name}
+          options={{
+            title: tab.title,
+            tabBarAccessibilityLabel: tab.title,
+            tabBarIcon: ({ color, focused }) =>
+              isIOS ? (
+                <SymbolView name={focused ? tab.sfSelected : tab.sf} tintColor={color} size={23} />
+              ) : (
+                <Feather name={tab.feather} size={21} color={color as string} />
+              ),
+          }}
+        />
+      ))}
     </Tabs>
   );
 }
 
 export default function TabLayout() {
-  if (isLiquidGlassAvailable()) {
+  if (Platform.OS === 'ios' && isLiquidGlassAvailable()) {
     return <NativeTabLayout />;
   }
   return <ClassicTabLayout />;
 }
+
+const styles = StyleSheet.create({
+  label: { fontFamily: 'Inter_600SemiBold', fontSize: 11, letterSpacing: 0.1 },
+  item: { paddingTop: 4 },
+  webItem: { gap: 2 },
+});
