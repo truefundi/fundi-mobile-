@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AppHeader } from '@/components/ui/AppHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -56,7 +56,14 @@ export default function ActivityScreen() {
 function ClientJobs() {
   const router = useRouter();
   const colors = useColors();
-  const { jobs, isHydrated } = useFundi();
+  const { jobs, isHydrated, refreshJobs } = useFundi();
+  // Requests move on elsewhere (a technician accepts, a payment is confirmed,
+  // a job is cancelled from its chat): show where each one is now.
+  useFocusEffect(
+    useCallback(() => {
+      void refreshJobs();
+    }, [refreshJobs]),
+  );
   const { profile: account } = useProfile();
   const { getDisputeForJob } = useDisputes();
   const [tab, setTab] = useState<Tab>('Ongoing');

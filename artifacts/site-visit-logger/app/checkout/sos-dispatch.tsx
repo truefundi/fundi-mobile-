@@ -87,6 +87,14 @@ export default function SosDispatchScreen() {
   const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '');
   const [sosError, setSosError] = useState<string | null>(null);
   const paymentClaim = usePaymentClaim(targetRequestId);
+  // Lists show "Confirming payment" while a reported payment waits for Fundi.
+  const { setPaymentReported } = useFundi();
+  const claimStatus = paymentClaim.claim?.status;
+  useEffect(() => {
+    const requestId = targetRequestId;
+    if (!requestId) return;
+    setPaymentReported(requestId, claimStatus === 'PENDING' || claimStatus === 'APPROVED');
+  }, [claimStatus, setPaymentReported, targetRequestId]);
   const sourceRef = useRef<PaymentSource>({ kind: 'test' });
   const continuedClaimRef = useRef<string | null>(null);
   const [matchedSpecialist, setMatchedSpecialist] = useState<MarketplaceTechnician | null>(null);
@@ -292,7 +300,7 @@ export default function SosDispatchScreen() {
         longitude: activeJob?.locationLongitude ?? 30.0619,
         offeredAmount: dispatchFee,
         requestType: 'SOS',
-      });
+      }, targetRequestId);
 
       const txId = bookingPayment.externalPaymentId || `TX-SOS-${Date.now().toString(36).toUpperCase()}`;
       setTransactionRef(txId);

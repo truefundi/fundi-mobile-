@@ -1,7 +1,7 @@
-import React, { useEffect, useState, type ReactNode } from 'react';
+import React, { useEffect, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, View, Platform, BackHandler } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { continueToCheckout } from '@/lib/checkout-nav';
+import { continueToCheckout, resumeRequest, resumeStep } from '@/lib/checkout-nav';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { vibrate } from '@/lib/haptics';
 import { useFundi } from '@/context/FundiContext';
@@ -79,6 +79,16 @@ export default function JobScreen() {
     if (job && tracksInChat) router.replace({ pathname: '/chat/[id]', params: { id: job.id } });
   }, [job?.id, tracksInChat, router]);
 
+  // A request that was never sent opens on the step the client stopped at
+  // (choose a technician, pay, or SOS dispatch) instead of an extra screen.
+  const resumes = Boolean(job && !tracksInChat && resumeStep(job));
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (!job || !resumes || resumed.current) return;
+    resumed.current = true;
+    resumeRequest(router, job, { replace: true });
+  }, [job?.id, resumes, router]);
+
   const tap = () => {
     vibrate();
   };
@@ -100,7 +110,7 @@ export default function JobScreen() {
     return () => sub.remove();
   }, [router]);
 
-  if (!isHydrated || tracksInChat) return <LoadingState label="Loading your job…" fullScreen />;
+  if (!isHydrated || tracksInChat || resumes) return <LoadingState label="Loading your job…" fullScreen />;
 
   if (!job) {
     return (
@@ -186,7 +196,7 @@ export default function JobScreen() {
               </>
             }
           >
-            {job.technician ? <TechnicianCard technician={job.technician} compact caption="Selected specialist" /> : null}
+            {job.technician ? <TechnicianCard requestId={job.id} technician={job.technician} compact caption="Selected specialist" /> : null}
             <Notice
               tone="info"
               icon="information-circle-outline"
@@ -228,7 +238,7 @@ export default function JobScreen() {
             </>
           }
         >
-          {job.technician ? <TechnicianCard technician={job.technician} caption={job.status === 'IN_PROGRESS' ? 'Working technician' : 'Selected specialist'} /> : null}
+          {job.technician ? <TechnicianCard requestId={job.id} technician={job.technician} caption={job.status === 'IN_PROGRESS' ? 'Working technician' : 'Selected specialist'} /> : null}
           <Notice
             tone="info"
             icon="chatbubbles-outline"
@@ -323,7 +333,7 @@ export default function JobScreen() {
               </>
             }
           >
-            {job.technician ? <TechnicianCard technician={job.technician} compact caption="Selected specialist" /> : null}
+            {job.technician ? <TechnicianCard requestId={job.id} technician={job.technician} compact caption="Selected specialist" /> : null}
             <Notice
               tone="info"
               icon="information-circle-outline"

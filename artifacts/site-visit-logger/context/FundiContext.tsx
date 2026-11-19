@@ -69,6 +69,9 @@ type NewRequest = Pick<
   videoMimeType?: string;
 };
 
+/** Jobs on the API have UUIDs; phone-only drafts have ids like job-123-abc. */
+const API_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
   const photoMedia = backendJob.media?.filter((m) => m.type === 'PHOTO') ?? [];
   const videoMedia = backendJob.media?.filter((m) => m.type === 'VIDEO') ?? [];
@@ -176,6 +179,8 @@ type FundiContextValue = {
   createDraftRequest: (data: Partial<ServiceRequest>) => string;
   /** `amount` is what the API charged; without it the fee already on the job is kept. */
   markBookingFeePaid: (requestId: string, transactionId: string, amount?: number) => void;
+  /** Records that a payment was reported ("I have paid") and is waiting for Fundi to confirm it. */
+  setPaymentReported: (requestId: string, reported: boolean) => void;
   initializeChatId: (requestId: string, chatId?: string) => string;
   /** Customer saw the matched technician and wants to continue. */
   acceptOffer: (id: string) => void;
@@ -198,7 +203,8 @@ type FundiContextValue = {
   submitDiagnosis: (id: string, quote: Quote) => void;
   completeRepair: (id: string) => void;
   // Real backend workflow methods
-  createBackendJob: (input: CreateJobInput) => Promise<BackendJob>;
+  /** Creates the job on the API; `replacesDraftId` is the phone-only draft it replaces. */
+  createBackendJob: (input: CreateJobInput, replacesDraftId?: string) => Promise<BackendJob>;
   requestPhoneVerification: (phoneNumber?: string) => Promise<PhoneVerificationRequestResponse>;
   verifyPhoneOtp: (verificationId: string, otp: string) => Promise<VerifyPhoneResponse>;
   createBookingPayment: (serviceCategoryId: string, requestType?: 'NORMAL' | 'SOS', phoneNumber?: string) => Promise<CreateBookingPaymentResponse>;
@@ -320,7 +326,11 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       const serverJobs = await fetchCustomerJobs();
       const mapped = serverJobs.map(mapBackendJobToFrontendJob);
       const serverIds = new Set(mapped.map((j) => j.id));
-      const localOnly = jobsRef.current.filter((j) => !serverIds.has(j.id));
+      // Phone-only drafts that are not on the API yet. A draft marked paid is a
+      // leftover copy of a request the API already has (older app versions kept it).
+      const localOnly = jobsRef.current.filter(
+        (j) => !serverIds.has(j.id) && !(j.bookingFee?.status === 'PAID' && !API_JOB_ID.test(j.id)),
+      );
       const combined = [...mapped, ...localOnly];
       jobsRef.current = combined;
       setJobs(combined);
@@ -397,8 +407,10 @@ export function FundiProvider({ children }: { children: ReactNode }) {
 
   const selectTechnician = useCallback(
     (id: string, technician: Technician) => {
+      // Any request not paid yet can have its technician chosen or changed.
       update(id, (job) =>
-        job.status === 'REQUESTED' || job.status === 'MATCHING' || job.status === 'OFFERED' || job.status === 'CANCELLED' || job.status === 'SEARCHING_DISPATCH'
+        job.bookingFee?.status !== 'PAID' &&
+        ['REQUESTED', 'MATCHING', 'OFFERED', 'ACCEPTED', 'PAYMENT_PENDING', 'CANCELLED', 'SEARCHING_DISPATCH'].includes(job.status)
           ? transition({ ...job, technician }, 'OFFERED')
           : job,
       );
@@ -484,6 +496,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
         statusSince: now,
         createdAt: data.createdAt ?? now,
         technician: data.technician,
+        rebookOf: data.rebookOf,
         chatThreadId: isPaid ? (data.chatThreadId ?? data.chatId) : undefined,
         chatId: isPaid ? (data.chatId ?? data.chatThreadId) : undefined,
         quote: data.quote,
@@ -518,6 +531,15 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       return id;
     },
     [],
+  );
+
+  const setPaymentReported = useCallback(
+    (requestId: string, reported: boolean) => {
+      const current = jobsRef.current.find((job) => job.id === requestId);
+      if (!current || Boolean(current.paymentReported) === reported) return;
+      update(requestId, (job) => ({ ...job, paymentReported: reported }));
+    },
+    [update],
   );
 
   const markBookingFeePaid = useCallback(
@@ -676,10 +698,11 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     [account, update],
   );
 
-  const createBackendJob = useCallback(async (input: CreateJobInput): Promise<BackendJob> => {
+  const createBackendJob = useCallback(async (input: CreateJobInput, replacesDraftId?: string): Promise<BackendJob> => {
     const backendJob = await createCustomerJob(input);
     const mapped = mapBackendJobToFrontendJob(backendJob);
-    const updated = [mapped, ...jobsRef.current.filter((j) => j.id !== mapped.id)];
+    // The API job takes the draft's place; keeping both listed the request twice.
+    const updated = [mapped, ...jobsRef.current.filter((j) => j.id !== mapped.id && j.id !== replacesDraftId)];
     jobsRef.current = updated;
     setJobs(updated);
     if (storageKey) {
@@ -757,6 +780,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       addRequest,
       createDraftRequest,
       markBookingFeePaid,
+      setPaymentReported,
       initializeChatId,
       acceptOffer: (id) => advance(id, 'ACCEPTED'),
       payBookingFee: (id, _method) =>
@@ -812,6 +836,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     addRequest,
     createDraftRequest,
     markBookingFeePaid,
+    setPaymentReported,
     initializeChatId,
     cancelJob,
     advance,

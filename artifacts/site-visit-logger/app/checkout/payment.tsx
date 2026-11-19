@@ -38,6 +38,8 @@ import {
 import { getServiceBookingFee } from '@/constants/services';
 import { inferUploadMimeType } from '@/constants/uploads';
 import { fetchJobPhoneStatus } from '@/lib/jobs-api';
+import { TechnicianCard } from '@/components/ui/TechnicianCard';
+import { ApiRequestError } from '@/lib/api';
 
 /** Local request media as upload parts for the job create call. */
 function requestMediaParts(uris: Array<string | undefined>, kind: 'photo' | 'video') {
@@ -126,6 +128,14 @@ export default function CheckoutPaymentScreen() {
     cleanAndNormalizePhone(params.verifiedPhone || account?.phone || ''),
   );
   const paymentClaim = usePaymentClaim(params.requestId || job?.id);
+  // Lists show "Confirming payment" while a reported payment waits for Fundi.
+  const { setPaymentReported } = useFundi();
+  const claimStatus = paymentClaim.claim?.status;
+  useEffect(() => {
+    const requestId = params.requestId || job?.id;
+    if (!requestId) return;
+    setPaymentReported(requestId, claimStatus === 'PENDING' || claimStatus === 'APPROVED');
+  }, [claimStatus, setPaymentReported, params.requestId, job?.id]);
   const sourceRef = useRef<PaymentSource>({ kind: 'test' });
   const continuedClaimRef = useRef<string | null>(null);
 
@@ -256,7 +266,11 @@ export default function CheckoutPaymentScreen() {
     }
   };
 
+  // One job per request: a repeated tap (or a resumed screen) must not send it twice.
+  const creatingRef = useRef(false);
   const executeBookingAndCreateJob = async (verificationId: string | null) => {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setIsProcessing(true);
     setPaymentError(null);
 
@@ -309,7 +323,7 @@ export default function CheckoutPaymentScreen() {
         requestType: job?.type === 'SOS' ? 'SOS' : 'NORMAL',
         ...(photos.length ? { photos } : {}),
         ...(video ? { video } : {}),
-      });
+      }, targetRequestId);
 
       // 3. Route the request to the selected technician: it lands in their inbox as an
       //    incoming request they can accept or decline. A failure here must not lose the
@@ -330,7 +344,7 @@ export default function CheckoutPaymentScreen() {
 
       // 4. Update local state and show payment success, then continue in the chat.
       const txId = bookingPayment.externalPaymentId || `TX-${Date.now().toString(36).toUpperCase()}`;
-      markBookingFeePaid(targetRequestId, txId, bookingPayment.amount);
+      markBookingFeePaid(createdBackendJob.id, txId, bookingPayment.amount);
       if (source.kind === 'claim') await paymentClaim.clear();
       setTransactionRef(txId);
       setIsProcessing(false);
@@ -349,7 +363,14 @@ export default function CheckoutPaymentScreen() {
         });
       }, 1400);
     } catch (err) {
+      creatingRef.current = false;
       setIsProcessing(false);
+      // The API already has this request open: continue it instead of making another.
+      const existingJobId = err instanceof ApiRequestError ? err.details?.existingJobId : undefined;
+      if (typeof existingJobId === 'string') {
+        router.replace({ pathname: '/chat/[id]', params: { id: existingJobId, requestId: existingJobId } });
+        return;
+      }
       setPaymentError(err instanceof Error ? err.message : 'Payment or job creation failed. Please retry.');
     }
   };
@@ -415,7 +436,16 @@ export default function CheckoutPaymentScreen() {
       }
       return;
     }
-    router.back();
+    // Opened from a notification or a resumed request: there may be nothing behind it.
+    if (router.canGoBack()) router.back();
+    else router.replace('/activity');
+  };
+
+  /** Picks someone else before paying; the request and its details stay the same. */
+  const changeTechnician = () => {
+    const requestId = job?.id || params.requestId;
+    if (!requestId) return;
+    router.replace({ pathname: '/select-technician', params: { jobId: requestId, service: targetService ?? '' } });
   };
 
   // Immediate block on web/native: Do not render payment UI if already paid
@@ -451,6 +481,25 @@ export default function CheckoutPaymentScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        {/* Who is being booked, so this one screen covers review and payment. */}
+        {job?.technician ? (
+          <View style={styles.bookingWith}>
+            <TechnicianCard requestId={job.id} technician={job.technician} compact caption={`Booking for ${targetService ?? 'your request'}`} />
+            {paymentClaim.claim ? null : (
+              <Pressable
+                accessibilityRole="button"
+                onPress={changeTechnician}
+                hitSlop={8}
+                style={styles.changeLink}
+                testID="payment-change-technician"
+              >
+                <Ionicons name="swap-horizontal" size={14} color={colors.primary} />
+                <Text style={[styles.changeLinkText, { color: colors.primary }]}>Change technician</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null}
+
         {/* Amount Summary Banner */}
         <SectionCard emphasis>
           <Text style={[styles.amountLabel, { color: colors.primaryForeground }]}>
@@ -692,6 +741,9 @@ export default function CheckoutPaymentScreen() {
 }
 
 const styles = StyleSheet.create({
+  bookingWith: { gap: 6 },
+  changeLink: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end' },
+  changeLinkText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   termsCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 10, marginTop: 4 },
   termsToggle: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 2 },
   termsToggleText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },

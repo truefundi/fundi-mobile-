@@ -113,7 +113,7 @@ export default function VerifyPhoneScreen() {
         if (active && status.verified && sameNumber) {
           const finalCategoryId = await resolveServiceCategoryId(params.service, params.categoryId);
           router.replace({
-            pathname: '/checkout/booking-fee',
+            pathname: '/checkout/payment',
             params: {
               requestId: params.requestId,
               technicianId: params.technicianId,
@@ -161,9 +161,9 @@ export default function VerifyPhoneScreen() {
       // Resolve the actual backend service category UUID
       const finalCategoryId = await resolveServiceCategoryId(params.service, params.categoryId);
 
-      // Navigate smoothly to Booking Fee checkout screen
+      // Continue to payment, replacing this screen so Back skips the code step
       router.replace({
-        pathname: '/checkout/booking-fee',
+        pathname: '/checkout/payment',
         params: {
           requestId: params.requestId,
           technicianId: params.technicianId,
