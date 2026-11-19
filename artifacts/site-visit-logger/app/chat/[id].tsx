@@ -1050,7 +1050,10 @@ export default function JobChatScreen() {
         <BackButton onPress={goToList} />
         <Pressable
           disabled={!technicianProfileId}
-          onPress={() => technicianProfileId && router.push(`/technician/${technicianProfileId}` as any)}
+          onPress={() =>
+            technicianProfileId &&
+            router.push({ pathname: `/technician/${technicianProfileId}` as any, params: jobId ? { requestId: jobId } : {} })
+          }
           accessibilityRole="button"
           accessibilityLabel={`View ${otherName}'s profile`}
           style={styles.headerIdentity}

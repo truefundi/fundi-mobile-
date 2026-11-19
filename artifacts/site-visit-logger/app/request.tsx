@@ -3,7 +3,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
@@ -409,11 +409,15 @@ export default function RequestScreen() {
     submit();
   };
 
+  // A second tap while the first is still saving must not create a second request.
+  const submittingRef = useRef(false);
   const submit = async () => {
+    if (submittingRef.current) return;
     if (!checkDetails()) {
       setStep(1);
       return;
     }
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       let selectedLocation = normalizeLocationSelection({
@@ -486,6 +490,7 @@ export default function RequestScreen() {
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Your request could not be sent. Please try again.');
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };

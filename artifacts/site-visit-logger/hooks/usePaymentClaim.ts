@@ -25,6 +25,7 @@ export function usePaymentClaim(requestId: string | undefined) {
   /** What the API says the fee is when the claimed amount did not match. */
   const [expectedAmount, setExpectedAmount] = useState<number | null>(null);
   const claimIdRef = useRef<string | null>(null);
+  const submittingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     const id = claimIdRef.current;
@@ -71,6 +72,8 @@ export function usePaymentClaim(requestId: string | undefined) {
 
   const submit = useCallback(
     async (input: SubmitPaymentClaimInput): Promise<PaymentClaim | null> => {
+      if (submittingRef.current) return null;
+      submittingRef.current = true;
       setSubmitting(true);
       setError(null);
       setExpectedAmount(null);
@@ -81,6 +84,14 @@ export function usePaymentClaim(requestId: string | undefined) {
         if (requestId) await AsyncStorage.setItem(storageKey(requestId), created.id).catch(() => undefined);
         return created;
       } catch (err) {
+        const existingClaimId = err instanceof ApiRequestError ? err.details?.existingClaimId : undefined;
+        if (typeof existingClaimId === 'string') {
+          // Already reported: follow the claim Fundi is checking.
+          claimIdRef.current = existingClaimId;
+          if (requestId) await AsyncStorage.setItem(storageKey(requestId), existingClaimId).catch(() => undefined);
+          await refresh();
+          return null;
+        }
         if (err instanceof ApiRequestError && typeof err.details?.expectedAmount === 'number') {
           const expected = err.details.expectedAmount;
           setExpectedAmount(expected);
@@ -90,10 +101,11 @@ export function usePaymentClaim(requestId: string | undefined) {
         }
         return null;
       } finally {
+        submittingRef.current = false;
         setSubmitting(false);
       }
     },
-    [requestId],
+    [requestId, refresh],
   );
 
   /** Forget the claim, e.g. after a rejection or once the job is created. */

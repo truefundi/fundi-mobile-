@@ -22,7 +22,7 @@ export function Arrived({ job, onBack }: { job: Job; onBack?: () => void }) {
         </View>
       </View>
 
-      <TechnicianCard technician={job.technician} compact />
+      <TechnicianCard requestId={job.id} technician={job.technician} compact />
 
       <SectionCard>
         <Text style={[styles.next, { color: colors.foreground }]}>Diagnosis will begin shortly.</Text>

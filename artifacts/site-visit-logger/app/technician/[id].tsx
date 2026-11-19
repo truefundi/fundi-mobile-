@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { continueToCheckout } from '@/lib/checkout-nav';
+import { useBookTechnician } from '@/hooks/useBookTechnician';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
@@ -18,11 +18,8 @@ import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 import { useFundi } from '@/context/FundiContext';
-import {
-  toJobTechnician,
-  type MarketplaceTechnician,
-} from '@/constants/technicians';
-import { FLAT_BOOKING_FEE_CURRENCY, formatBookingFee } from '@/constants/jobs';
+import { type MarketplaceTechnician } from '@/constants/technicians';
+import { formatBookingFee, isTerminated } from '@/constants/jobs';
 import { getServiceBookingFee } from '@/constants/services';
 import { getServiceIcon } from '@/lib/categories-api';
 import { fetchPublicTechnicianById } from '@/lib/technicians-api';
@@ -31,7 +28,7 @@ export default function TechnicianProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { getJob, createDraftRequest, selectTechnician } = useFundi();
+  const { getJob } = useFundi();
 
   const params = useLocalSearchParams<{
     id?: string;
@@ -114,47 +111,24 @@ export default function TechnicianProfileScreen() {
   const targetService = params.service || tech?.service || 'General Maintenance';
   const serviceBookingFee = getServiceBookingFee(targetService);
 
+  // Booking goes through the same path as the technician list, so opening a
+  // profile and booking never creates a second request.
+  const { book, booking, error: bookingError } = useBookTechnician();
   const handleBookNow = () => {
-    let finalRequestId = job?.id;
-
-    if (!finalRequestId) {
-      finalRequestId = createDraftRequest({
-        service: targetService,
-        problem: params.problem || 'General Service Request',
-        locationLabel: params.locationLabel || 'Kigali, Rwanda',
-        urgency: 'Today',
-        type: 'STANDARD',
-        bookingFee: {
-          amount: serviceBookingFee,
-          currency: FLAT_BOOKING_FEE_CURRENCY,
-          status: 'PENDING',
-        },
-      });
-    }
-
-    if (tech && finalRequestId) {
-      selectTechnician(finalRequestId, toJobTechnician(tech));
-    }
-
-    // Intercept call to navigate to payment screens if payment has already been settled
-    const targetJob = finalRequestId ? getJob(finalRequestId) : undefined;
-    if (targetJob?.bookingFee?.status === 'PAID') {
-      const destChat = targetJob.id;
-      router.replace({
-        pathname: `/chat/${destChat}` as any,
-        params: { requestId: targetJob.id },
-      });
-      return;
-    }
-
-    // Booking fee next; an unverified phone is confirmed with a code first.
-    void continueToCheckout(router, {
-      requestId: finalRequestId,
-      technicianId: tech?.id,
-      service: targetService,
-      categoryId: targetJob?.serviceCategoryId || params.categoryId,
-    });
+    if (!tech) return;
+    void book({ requestId: params.requestId, technician: tech, service: targetService, categoryId: params.categoryId });
   };
+  const firstName = tech?.name.split(' ')[0] ?? 'technician';
+  const sameTechnician = Boolean(job?.technician?.id && job.technician.id === tech?.id);
+  const bookLabel = !job
+    ? `Request ${firstName}`
+    : isTerminated(job.status)
+      ? `Book ${firstName} again`
+      : sameTechnician && job.bookingFee?.status === 'PAID'
+        ? 'Open the chat'
+        : sameTechnician
+          ? `Continue booking ${firstName}`
+          : `Select & Book ${firstName}`;
 
   if (loading && !tech) {
     return (
@@ -431,10 +405,13 @@ export default function TechnicianProfileScreen() {
           },
         ]}
       >
+        {bookingError ? <Text style={[styles.bookError, { color: colors.destructive }]}>{bookingError}</Text> : null}
         <Button
-          label={`Select & Book ${tech.name.split(' ')[0]}`}
+          label={bookLabel}
           icon="checkmark-circle-outline"
           onPress={handleBookNow}
+          loading={booking}
+          disabled={booking}
           testID="technician-book-now-button"
         />
       </View>
@@ -443,6 +420,7 @@ export default function TechnicianProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  bookError: { fontFamily: 'Inter_500Medium', fontSize: 13, marginBottom: 8, textAlign: 'center' },
   screen: { flex: 1 },
   topBar: {
     paddingHorizontal: 20,
