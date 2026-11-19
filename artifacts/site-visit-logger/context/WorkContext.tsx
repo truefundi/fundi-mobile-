@@ -28,6 +28,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { FundiContext } from '@/context/FundiContext';
 import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
+import { companyBody, updateMyCompany } from '@/lib/companies-api';
 import { cleanAndNormalizePhone, refreshTokens } from '@/lib/auth-api';
 import { getAccessToken } from '@/lib/auth-session';
 import { acquireEventsSocket, onAppEvent } from '@/lib/events-socket';
@@ -107,6 +108,7 @@ function serializeStored(value: Stored): string {
 
 type ApiTechnicianProfile = {
   id: string;
+  businessType?: 'INDIVIDUAL' | 'COMPANY';
   user: { fullName: string; phoneNumber: string; email: string | null };
   gender: WorkProfile['gender'];
   yearsOfExperience: number;
@@ -195,6 +197,7 @@ function mapProfile(
     documents,
     submittedAt: profile.createdAt,
     rejectionFeedback,
+    businessType: profile.businessType ?? local?.businessType,
   };
 }
 
@@ -1054,6 +1057,13 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             paymentNumber: normalizedPayment,
             serviceExperiences: experiences,
           };
+          // A company owner applies with the company's details; an admin reviews both.
+          const asCompany = application.businessType === 'COMPANY' && application.company;
+          const registrationBody = {
+            ...profileBody,
+            businessType: asCompany ? 'COMPANY' : 'INDIVIDUAL',
+            ...(asCompany ? { company: companyBody(application.company!) } : {}),
+          };
 
           let serverProfile: ApiTechnicianProfile;
           try {
@@ -1062,7 +1072,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
             serverProfile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/profile', {
               method: 'POST',
               authenticated: true,
-              body: profileBody,
+              body: registrationBody,
             });
           } catch (error) {
             const status = error instanceof ApiRequestError
@@ -1078,6 +1088,8 @@ export function WorkProvider({ children }: { children: ReactNode }) {
               authenticated: true,
               body: profileBody,
             });
+            // Editing an existing profile cannot register a company; update the one on file.
+            if (asCompany) await updateMyCompany(application.company!).catch(() => undefined);
           }
 
           savedState = { ...savedState, profile: mapProfile(serverProfile, [], localDraft) };

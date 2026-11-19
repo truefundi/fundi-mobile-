@@ -25,6 +25,15 @@ import { useAuth } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 import { cleanAndNormalizePhone } from '@/lib/auth-api';
 import { fetchJobPhoneStatus, requestJobPhoneVerification, verifyJobPhone } from '@/lib/jobs-api';
+import { BusinessTypeChoice, CompanyFields } from '@/components/work/CompanyFields';
+import {
+  companyIssues,
+  draftFromCompany,
+  EMPTY_COMPANY,
+  fetchMyCompany,
+  type BusinessType,
+  type CompanyDraft,
+} from '@/lib/companies-api';
 
 type FileData = {
   uri: string;
@@ -125,6 +134,12 @@ export function WorkApplication() {
 
   // ── General State ─────────────────────────────────────────────────────────
   const [step1Errors, setStep1Errors] = useState<{ [key: string]: string }>({});
+  // How the technician works: alone, or as the owner of a registered company.
+  const [businessType, setBusinessType] = useState<BusinessType>('INDIVIDUAL');
+  const [company, setCompany] = useState<CompanyDraft>(EMPTY_COMPANY);
+  const [companyErrors, setCompanyErrors] = useState<Partial<Record<keyof CompanyDraft, string>>>({});
+  const [companyOnFileRejected, setCompanyOnFileRejected] = useState(false);
+  const [companyRejectionReason, setCompanyRejectionReason] = useState<string | null>(null);
   const [generalError, setGeneralError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -155,6 +170,23 @@ export function WorkApplication() {
     };
   }, [account?.id]);
 
+  // A company owner re-applying sees the company details already on file.
+  useEffect(() => {
+    if (profile?.businessType !== 'COMPANY' || profile.company) return;
+    let cancelled = false;
+    fetchMyCompany()
+      .then((found) => {
+        if (cancelled || !found) return;
+        setCompany(draftFromCompany(found));
+        setCompanyOnFileRejected(found.verificationStatus === 'REJECTED');
+        setCompanyRejectionReason(found.verificationStatus === 'REJECTED' ? found.rejectionReason?.trim() || null : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.businessType, profile?.company]);
+
   // Pre-fill from existing profile draft
   useEffect(() => {
     if (!profile) return;
@@ -167,6 +199,8 @@ export function WorkApplication() {
       else setNationalIdNumber(profile.nationalIdNumber);
     }
     if (profile.baseAddress) setBaseAddress(profile.baseAddress);
+    if (profile.businessType) setBusinessType(profile.businessType);
+    if (profile.company) setCompany(profile.company);
     if (profile.paymentMethod) setPaymentMethod(profile.paymentMethod);
     if (profile.paymentNumber) setPaymentNumber(profile.paymentNumber);
 
@@ -337,6 +371,12 @@ export function WorkApplication() {
       errors.email = emailError;
     }
 
+    const companyProblems = businessType === 'COMPANY' ? companyIssues(company) : {};
+    setCompanyErrors(companyProblems);
+    if (Object.keys(companyProblems).length > 0) {
+      errors.company = 'Complete the company details.';
+    }
+
     const hasInvalidTrade = serviceExperiences.some(
       (exp) => exp.trade === 'Others' && !exp.customName.trim(),
     );
@@ -485,6 +525,8 @@ export function WorkApplication() {
           customName: exp.trade === 'Others' ? (exp.customName.trim() || 'Other') : exp.trade,
           yearsOfExperience: Number(exp.yearsOfExperience) || 0,
         })),
+        businessType,
+        ...(businessType === 'COMPANY' ? { company } : {}),
       });
 
     } catch (err) {
@@ -668,6 +710,41 @@ export function WorkApplication() {
               <Text style={[styles.fieldError, { color: colors.destructive }]}>
                 {profilePictureSelectionError}
               </Text>
+            ) : null}
+          </View>
+
+          {/* How the technician works */}
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} testID="work-business-type-card">
+            <Text style={[styles.cardTitle, { color: colors.foreground }]}>How do you work?</Text>
+            <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+              A company is reviewed by Fundi along with your application.
+            </Text>
+            <BusinessTypeChoice
+              value={businessType}
+              onChange={(next) => {
+                setBusinessType(next);
+                setCompanyErrors({});
+                if (step1Errors.company) setStep1Errors({ ...step1Errors, company: '' });
+              }}
+            />
+            {businessType === 'COMPANY' && companyOnFileRejected ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]} testID="company-not-approved-note">
+                Fundi did not approve these company details{companyRejectionReason ? `: ${companyRejectionReason}` : '.'} Correct them, then
+                submit your application again.
+              </Text>
+            ) : null}
+            {businessType === 'COMPANY' ? (
+              <CompanyFields
+                value={company}
+                onChange={(next) => {
+                  setCompany(next);
+                  if (Object.keys(companyErrors).length) setCompanyErrors(companyIssues(next));
+                }}
+                errors={companyErrors}
+              />
+            ) : null}
+            {step1Errors.company ? (
+              <Text style={[styles.fieldError, { color: colors.destructive }]}>{step1Errors.company}</Text>
             ) : null}
           </View>
 

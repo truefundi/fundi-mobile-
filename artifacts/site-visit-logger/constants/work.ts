@@ -87,6 +87,16 @@ export type WorkProfile = {
   }>;
   submittedAt: string;
   rejectionFeedback?: string | null;
+  /** Working alone or as a registered company (which an admin reviews separately). */
+  businessType?: 'INDIVIDUAL' | 'COMPANY';
+  /** The company's details, when applying as a company. */
+  company?: {
+    name: string;
+    location: string;
+    email: string;
+    phoneNumber: string;
+    description: string;
+  };
 };
 
 export type TechnicianApplication = Omit<WorkProfile, 'submittedAt' | 'documents'>;
