@@ -240,6 +240,10 @@ export interface ServiceRequest {
   customerProgress?: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
   technicianProgress?: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
   paymentId?: string;
+  /** For a request booked again after it was cancelled: the request it replaces. */
+  rebookOf?: string;
+  /** The client tapped "I have paid" and Fundi is checking the payment. */
+  paymentReported?: boolean;
   phoneVerificationId?: string;
   serviceCategoryId?: string;
   offerId?: string;

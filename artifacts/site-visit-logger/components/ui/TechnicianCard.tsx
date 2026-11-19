@@ -14,9 +14,11 @@ type Props = {
   compact?: boolean;
   onPress?: () => void;
   showProfileLink?: boolean;
+  /** The request this card belongs to; booking from the profile then continues it. */
+  requestId?: string;
 };
 
-export function TechnicianCard({ technician, caption, compact, onPress, showProfileLink = true }: Props) {
+export function TechnicianCard({ technician, caption, compact, onPress, showProfileLink = true, requestId }: Props) {
   const colors = useColors();
   const router = useRouter();
 
@@ -29,6 +31,7 @@ export function TechnicianCard({ technician, caption, compact, onPress, showProf
       router.push({
         pathname: `/technician/${technician.id}` as any,
         params: {
+          ...(requestId ? { requestId } : {}),
           techName: technician.name,
           techService: technician.skill,
           techRating: String(technician.rating),

@@ -62,6 +62,16 @@ export function summarizeClientJob(job: Job): JobSummary {
   const paid = job.bookingFee?.status === 'PAID';
   const assigned = job.status === 'ACTIVE' || job.status === 'IN_PROGRESS';
 
+  if (!paid && !assigned && job.paymentReported) {
+    return {
+      label: 'Confirming payment',
+      hint: 'Fundi is checking your payment. Your request is sent as soon as it is confirmed.',
+      tone: 'waiting',
+      yourTurn: false,
+      stepsDone: 0,
+      ongoing: true,
+    };
+  }
   if (!paid && !assigned) {
     return {
       label: 'Finish booking',

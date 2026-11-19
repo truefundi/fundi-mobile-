@@ -1,6 +1,6 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -66,7 +66,14 @@ export default function HomeScreen({
   const columns = contentWidth >= THREE_COLUMN_MIN ? 3 : 2;
   const cardWidth = Math.floor((contentWidth - GRID_GAP * (columns - 1)) / columns);
   const router = useRouter();
-  const { jobs } = useFundi();
+  const { jobs, refreshJobs } = useFundi();
+  // Requests move on elsewhere (a technician accepts, a payment is confirmed,
+  // a job is cancelled from its chat): show where each one is now.
+  useFocusEffect(
+    useCallback(() => {
+      void refreshJobs();
+    }, [refreshJobs]),
+  );
   const { mode, status, setMode, mine } = useWork();
   const { account } = useAuth();
   // Approved, but the account is still in hiring mode: offer the switch to working.
