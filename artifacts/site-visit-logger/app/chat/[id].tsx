@@ -786,6 +786,11 @@ export default function JobChatScreen() {
           canRespond={offer.status === 'PENDING' && !isMine && canNegotiate}
           canCounter={remainingOffers > 0}
           busy={workspace.busy}
+          countered={Boolean(
+            conversation?.messages.some(
+              (other) => other.type === 'PRICE_OFFER' && other.id !== message.id && other.createdAt > message.createdAt,
+            ),
+          )}
           onAccept={() => acceptOffer(offer)}
           onCounter={() => setOfferSheet({ mode: 'counter', reference: offer })}
           onDecline={() => denyOffer(offer)}

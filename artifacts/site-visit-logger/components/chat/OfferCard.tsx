@@ -15,6 +15,11 @@ type Props = {
   /** Whether a counter-offer is still possible (offer limits, negotiation open). */
   canCounter: boolean;
   busy?: string | null;
+  /**
+   * For a replaced offer: whether a later offer replaced it. If not, it was
+   * withdrawn because the technician left or a new one took the job.
+   */
+  countered?: boolean;
   onAccept: () => void;
   onCounter: () => void;
   onDecline: () => void;
@@ -46,6 +51,7 @@ export function OfferCard({
   canRespond,
   canCounter,
   busy,
+  countered = true,
   onAccept,
   onCounter,
   onDecline,
@@ -82,7 +88,7 @@ export function OfferCard({
           {isMine ? 'Your price offer' : `Price offer from ${senderName}`}
         </Text>
         <View style={[styles.statusChip, { backgroundColor: tone + '1A' }]}>
-          <Text style={[styles.statusText, { color: tone }]}>{STATUS_COPY[offer.status]}</Text>
+          <Text style={[styles.statusText, { color: tone }]}>{offer.status === 'SUPERSEDED' && !countered ? 'Withdrawn' : STATUS_COPY[offer.status]}</Text>
         </View>
       </View>
 

@@ -125,14 +125,28 @@ export default function ChatTabScreen() {
       const current = pickRoomForJob(summaries.map((x) => x.room), jobId);
       const summary = summaries.find((x) => x.room.id === current?.id) ?? summaries[0];
       const { room, lastMessage } = summary;
-      const other = isTechnician ? room.job.customer : room.job.technician;
-      const name = other?.fullName?.trim() || (isTechnician ? 'Client' : 'Technician');
+      // Someone can hire and work, so the side comes from this room's members,
+      // not from the mode the app is in (the chat screen decides it the same way).
+      const memberRole = room.members.find((member) => member.userId === account?.id)?.role;
+      const roomAsTechnician = memberRole ? memberRole === 'TECHNICIAN' : isTechnician;
+      const other = roomAsTechnician ? room.job.customer : room.job.technician;
+      // Client: the technician left before a price was agreed and the job is open
+      // again. The old room is history; the row points at choosing someone new.
+      const needsTechnician =
+        !roomAsTechnician &&
+        room.job.status === 'OPEN' &&
+        (room.status === 'DISABLED' || Boolean(room.assignment.endedAt));
+      const name = needsTechnician
+        ? 'Choose a technician'
+        : other?.fullName?.trim() || (roomAsTechnician ? 'Client' : 'Technician');
       const job = getJob(jobId);
-      const avatarUri = !isTechnician
+      const avatarUri = !roomAsTechnician && !needsTechnician
         ? job?.technician?.avatarUrl || job?.technician?.photoUri || undefined
         : undefined;
       let snippet: string;
-      if (lastMessage) {
+      if (needsTechnician) {
+        snippet = 'The technician left. Your booking fee still covers this job.';
+      } else if (lastMessage) {
         const mine = lastMessage.senderId === account?.id;
         snippet = `${mine ? 'You: ' : ''}${describeChatMessage(lastMessage)}`;
       } else {
@@ -150,6 +164,7 @@ export default function ChatTabScreen() {
       const dispute = getDisputeForJob(jobId);
       const statusTag =
         (dispute ? { label: `Dispute: ${dispute.status.replace('_', ' ')}`, tone: 'warning' as const } : undefined) ??
+        (needsTechnician ? { label: 'Needs technician', tone: 'warning' as const } : undefined) ??
         ROOM_STATUS_TAG[room.status] ??
         (room.assignment.endedAt ? { label: 'Reassigned', tone: 'warning' as const } : undefined) ??
         (job?.type === 'SOS' ? { label: 'SOS Priority', tone: 'sos' as const } : undefined) ??

@@ -115,7 +115,9 @@ export function deriveLifecycle(input: {
   const viewerReleased = role === 'technician' && Boolean(room?.assignment.endedAt);
   // The job itself is over for this viewer; a failed negotiation alone is not (they can still pull out).
   const jobOver = jobClosed || completed || requestDeclined || viewerReleased;
-  const isTerminal = jobOver || (!isPriceAgreed && negotiationEnded);
+  // A negotiation closed by a pull-out does not end the job: with nobody assigned
+  // it is waiting for the next technician, whose acceptance reopens it.
+  const isTerminal = jobOver || (!isPriceAgreed && negotiationEnded && hasAssignment);
 
   // ── Step completion ────────────────────────────────────────────────────
   const technicianAccepted = hasAssignment && convStatus !== 'PENDING' && !requestDeclined;
@@ -250,7 +252,9 @@ export function deriveLifecycle(input: {
     currency: conversation?.currency ?? job?.currency ?? 'RWF',
     isTerminal,
     cancellation,
-    canNegotiate: convStatus === 'NEGOTIATING' && !isTerminal,
+    // Offers need someone on the other side: after a pull-out the job has no
+    // technician until the next one accepts, and the API refuses offers.
+    canNegotiate: convStatus === 'NEGOTIATING' && !isTerminal && hasAssignment,
   };
 }
 
