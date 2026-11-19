@@ -144,9 +144,15 @@ export function useChatRoom(routeId?: string, jobIdHint?: string) {
       }
       try {
         const rooms = await listChatRooms();
-        const match =
-          rooms.find((r) => candidates.includes(r.id)) ??
-          candidates.map((jobId) => pickRoomForJob(rooms, jobId)).find(Boolean);
+        // A room id in the route may be an earlier assignment's room. Once a
+        // technician pulls out and another takes the job, the job's live room wins.
+        const direct = rooms.find((r) => candidates.includes(r.id));
+        const directLive = direct && !direct.assignment.endedAt && direct.status === 'ACTIVE';
+        const forJob = [direct?.jobId, ...candidates]
+          .filter((id): id is string => Boolean(id))
+          .map((jobId) => pickRoomForJob(rooms, jobId))
+          .find(Boolean);
+        const match = directLive ? direct : forJob ?? direct;
         if (seq !== resolveSeq.current || !mounted.current) return;
         if (!match) {
           // Keep a room we already show (a transient miss must not blank the chat).
@@ -192,9 +198,12 @@ export function useChatRoom(routeId?: string, jobIdHint?: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolve, resolveAttempt]);
 
-  // No room yet (request not accepted): pick it up as soon as the job changes.
+  // No room yet (request not accepted), or the room shown closed because the
+  // technician left and the job is open again: pick up the job's next room as
+  // soon as someone accepts it.
+  const awaitingNextRoom = Boolean(room && room.status === 'DISABLED' && room.job.status === 'OPEN');
   useEffect(() => {
-    if (resolution !== 'not-found') return;
+    if (resolution !== 'not-found' && !awaitingNextRoom) return;
     const offJob = onChatEvent('chat:job:updated', (payload: { id?: string }) => {
       if (!payload?.id || candidates.includes(payload.id)) void resolve('silent');
     });
@@ -204,7 +213,7 @@ export function useChatRoom(routeId?: string, jobIdHint?: string) {
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolution, resolve]);
+  }, [resolution, awaitingNextRoom, resolve]);
 
   const retryResolve = useCallback(() => setResolveAttempt((n) => n + 1), []);
 
