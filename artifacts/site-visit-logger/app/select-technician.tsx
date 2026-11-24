@@ -17,6 +17,25 @@ import { getServiceIcon, resolveServiceCategoryId } from '@/lib/categories-api';
 import { ProfileAvatar } from '@/components/ui/ProfileAvatar';
 
 
+type SortKey = 'distance' | 'rating' | 'jobs' | 'experience';
+type FilterKey = 'near' | 'rated' | 'experienced';
+
+/** "Within 5 km" (straight line). */
+const NEAR_METERS = 5000;
+
+const SORTS: Array<{ key: SortKey; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
+  { key: 'distance', label: 'Nearest', icon: 'navigate-outline' },
+  { key: 'rating', label: 'Top rated', icon: 'star-outline' },
+  { key: 'jobs', label: 'Most jobs', icon: 'checkmark-done-outline' },
+  { key: 'experience', label: 'Most experienced', icon: 'briefcase-outline' },
+];
+
+const FILTERS: Array<{ key: FilterKey; label: string }> = [
+  { key: 'near', label: 'Within 5 km' },
+  { key: 'rated', label: '4★ and up' },
+  { key: 'experienced', label: '5+ years' },
+];
+
 export default function SelectTechnicianScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -46,8 +65,12 @@ export default function SelectTechnicianScreen() {
   }>();
   const { getJob } = useFundi();
   const requestJob = jobId ? getJob(jobId) : undefined;
-  const [availableOnly, setAvailableOnly] = useState(false);
-  const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
+  // The list only holds technicians who can take the job now; these narrow and order it.
+  const [sortBy, setSortBy] = useState<SortKey>('distance');
+  const [only, setOnly] = useState<Record<FilterKey, boolean>>({ near: false, rated: false, experienced: false });
+  const activeFilters = (Object.keys(only) as FilterKey[]).filter((key) => only[key]);
+  const toggleFilter = (key: FilterKey) => setOnly((current) => ({ ...current, [key]: !current[key] }));
+  const clearFilters = () => setOnly({ near: false, rated: false, experienced: false });
   const [apiTechnicians, setApiTechnicians] = useState<MarketplaceTechnician[]>([]);
   const [loadingTechs, setLoadingTechs] = useState(true);
 
@@ -133,52 +156,48 @@ export default function SelectTechnicianScreen() {
       return false;
     };
 
-    if (eligibleIds) {
-      // Backend-eligible technicians only; no loose fallback that the request could never reach.
-      return apiTechnicians
-        .filter((tech) => eligibleIds.has(tech.id) && (!availableOnly || tech.isAvailable))
-        .map((technician) => ({
-          technician,
-          distance:
-            locationLatitude !== undefined && locationLongitude !== undefined
-              ? distanceMeters({ latitude: locationLatitude, longitude: locationLongitude }, technician.location)
-              : null,
-        }))
-        .sort((a, b) => {
-          if (sortBy === 'rating') return (b.technician.rating ?? -1) - (a.technician.rating ?? -1);
-          if (a.distance === null) return b.distance === null ? 0 : 1;
-          if (b.distance === null) return -1;
-          return a.distance - b.distance;
-        });
-    }
+    // Backend-eligible technicians only when the API told us who they are; no loose
+    // fallback that the request could never reach. Otherwise match by service name.
+    const pool = eligibleIds
+      ? apiTechnicians.filter((tech) => eligibleIds.has(tech.id))
+      : (() => {
+          const direct = apiTechnicians.filter(matchesService);
+          return direct.length > 0 ? direct : apiTechnicians;
+        })();
 
-    const directFiltered = apiTechnicians.filter(
-      (tech) => (!availableOnly || tech.isAvailable) && matchesService(tech),
-    );
+    const rows = pool.map((technician) => ({
+      technician,
+      distance:
+        locationLatitude !== undefined && locationLongitude !== undefined
+          ? distanceMeters({ latitude: locationLatitude, longitude: locationLongitude }, technician.location)
+          : null,
+    }));
 
-    // Fallback: if no technician directly matches the niche trade, include available specialists
-    const pool = directFiltered.length > 0
-      ? directFiltered
-      : apiTechnicians.filter((tech) => !availableOnly || tech.isAvailable);
+    const filtered = rows.filter(({ technician, distance }) => {
+      if (only.near && (distance === null || distance > NEAR_METERS)) return false;
+      if (only.rated && (technician.rating === null || technician.rating < 4 || !technician.reviewsCount)) return false;
+      if (only.experienced && technician.yearsExperience < 5) return false;
+      return true;
+    });
 
-    return pool
-      .map((technician) => ({
-        technician,
-        distance:
-          locationLatitude !== undefined && locationLongitude !== undefined
-            ? distanceMeters(
-                { latitude: locationLatitude, longitude: locationLongitude },
-                technician.location,
-              )
-            : null,
-      }))
-      .sort((a, b) => {
-        if (sortBy === 'rating') return (b.technician.rating ?? -1) - (a.technician.rating ?? -1);
-        if (a.distance === null) return b.distance === null ? 0 : 1;
-        if (b.distance === null) return -1;
-        return a.distance - b.distance;
-      });
-  }, [apiTechnicians, eligibleIds, availableOnly, locationLatitude, locationLongitude, service, sortBy]);
+    const byDistance = (a: (typeof rows)[number], b: (typeof rows)[number]) => {
+      if (a.distance === null) return b.distance === null ? 0 : 1;
+      if (b.distance === null) return -1;
+      return a.distance - b.distance;
+    };
+    return filtered.sort((a, b) => {
+      if (sortBy === 'rating') {
+        return (
+          (b.technician.rating ?? -1) - (a.technician.rating ?? -1) ||
+          b.technician.reviewsCount - a.technician.reviewsCount ||
+          byDistance(a, b)
+        );
+      }
+      if (sortBy === 'jobs') return b.technician.jobsCompleted - a.technician.jobsCompleted || byDistance(a, b);
+      if (sortBy === 'experience') return b.technician.yearsExperience - a.technician.yearsExperience || byDistance(a, b);
+      return byDistance(a, b);
+    });
+  }, [apiTechnicians, eligibleIds, only, locationLatitude, locationLongitude, service, sortBy]);
 
   // Booking goes through one shared path so a request is never created twice.
   const { book, booking, error: bookingError } = useBookTechnician();
@@ -215,7 +234,7 @@ export default function SelectTechnicianScreen() {
             <PageHeading
               eyebrow={service || 'Available Specialists'}
               title="Select an available technician"
-              subtitle="Browse specialists by availability, rating, and proximity. Distance is straight-line."
+              subtitle="Everyone here can take this job now. Sort or narrow the list; distance is a straight line."
             />
             {bookingError ? <Notice tone="warning" icon="alert-circle-outline" text={bookingError} /> : null}
             {(service || problem || locationLabel) && (
@@ -268,39 +287,70 @@ export default function SelectTechnicianScreen() {
                 </View>
               </View>
             )}
-            <View style={styles.filters}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: !availableOnly }}
-                onPress={() => setAvailableOnly(false)}
-                style={[styles.filterChip, { backgroundColor: !availableOnly ? colors.primary : colors.card, borderColor: colors.border }]}
-              >
-                <Text style={[styles.filterText, { color: !availableOnly ? colors.primaryForeground : colors.foreground }]}>All matches</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: availableOnly }}
-                onPress={() => setAvailableOnly(true)}
-                style={[styles.filterChip, { backgroundColor: availableOnly ? colors.primary : colors.card, borderColor: colors.border }]}
-              >
-                <Text style={[styles.filterText, { color: availableOnly ? colors.primaryForeground : colors.foreground }]}>Available</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: sortBy === 'distance' }}
-                onPress={() => setSortBy('distance')}
-                style={[styles.filterChip, { backgroundColor: sortBy === 'distance' ? colors.secondary : colors.card, borderColor: colors.border }]}
-              >
-                <Text style={[styles.filterText, { color: sortBy === 'distance' ? colors.primary : colors.foreground }]}>Nearest</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: sortBy === 'rating' }}
-                onPress={() => setSortBy('rating')}
-                style={[styles.filterChip, { backgroundColor: sortBy === 'rating' ? colors.secondary : colors.card, borderColor: colors.border }]}
-              >
-                <Text style={[styles.filterText, { color: sortBy === 'rating' ? colors.primary : colors.foreground }]}>Top rated</Text>
-              </Pressable>
+            <View style={styles.controls}>
+              <Text style={[styles.controlLabel, { color: colors.mutedForeground }]}>Sort by</Text>
+              <View style={styles.filters} accessibilityRole="radiogroup">
+                {SORTS.map((option) => {
+                  const selected = sortBy === option.key;
+                  return (
+                    <Pressable
+                      key={option.key}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: selected }}
+                      onPress={() => setSortBy(option.key)}
+                      testID={`tech-sort-${option.key}`}
+                      style={[
+                        styles.filterChip,
+                        { backgroundColor: selected ? colors.primary : colors.card, borderColor: selected ? colors.primary : colors.border },
+                      ]}
+                    >
+                      <Ionicons name={option.icon} size={13} color={selected ? colors.primaryForeground : colors.mutedForeground} />
+                      <Text style={[styles.filterText, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={[styles.controlLabel, { color: colors.mutedForeground }]}>Show only</Text>
+              <View style={styles.filters}>
+                {FILTERS.map((option) => {
+                  const on = only[option.key];
+                  return (
+                    <Pressable
+                      key={option.key}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: on }}
+                      onPress={() => toggleFilter(option.key)}
+                      testID={`tech-filter-${option.key}`}
+                      style={[
+                        styles.filterChip,
+                        { backgroundColor: on ? colors.primary + '18' : colors.card, borderColor: on ? colors.primary : colors.border },
+                      ]}
+                    >
+                      <Ionicons
+                        name={on ? 'checkmark-circle' : 'ellipse-outline'}
+                        size={14}
+                        color={on ? colors.primary : colors.mutedForeground}
+                      />
+                      <Text style={[styles.filterText, { color: on ? colors.primary : colors.foreground }]}>{option.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {!loadingTechs ? (
+                <View style={styles.resultRow}>
+                  <Text style={[styles.resultText, { color: colors.mutedForeground }]} testID="tech-result-count">
+                    {technicians.length} {technicians.length === 1 ? 'technician' : 'technicians'}
+                    {activeFilters.length ? (technicians.length === 1 ? ' matches your filters' : ' match your filters') : ' for this request'}
+                  </Text>
+                  {activeFilters.length ? (
+                    <Pressable accessibilityRole="button" onPress={clearFilters} hitSlop={6} testID="tech-clear-filters">
+                      <Text style={[styles.clearText, { color: colors.primary }]}>Clear filters</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           </View>
         }
@@ -313,9 +363,18 @@ export default function SelectTechnicianScreen() {
               </Text>
             </View>
           ) : (
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              No technicians match this service and availability filter yet.
-            </Text>
+            <View style={{ alignItems: 'center', gap: 10, paddingVertical: 24 }}>
+              <Text style={[styles.emptyText, { color: colors.mutedForeground, paddingVertical: 0 }]}>
+                {activeFilters.length
+                  ? 'No technician matches these filters.'
+                  : 'No technician for this service is available near this address right now.'}
+              </Text>
+              {activeFilters.length ? (
+                <Pressable accessibilityRole="button" onPress={clearFilters} testID="tech-empty-clear">
+                  <Text style={[styles.clearText, { color: colors.primary }]}>Clear filters</Text>
+                </Pressable>
+              ) : null}
+            </View>
           )
         }
         renderItem={({ item: { technician: item, distance } }) => (
@@ -405,8 +464,13 @@ const styles = StyleSheet.create({
   titleTop: { fontFamily: 'Inter_600SemiBold', fontSize: 16 },
   content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32, gap: 12 },
   listHeader: { gap: 16, marginBottom: 8 },
+  controls: { gap: 8 },
+  controlLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 11, letterSpacing: 0.8, textTransform: 'uppercase' },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  filterChip: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8 },
+  filterChip: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8 },
+  resultRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+  resultText: { fontFamily: 'Inter_500Medium', fontSize: 12 },
+  clearText: { fontFamily: 'Inter_700Bold', fontSize: 13 },
   filterText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   emptyText: { fontFamily: 'Inter_400Regular', fontSize: 14, textAlign: 'center', paddingVertical: 24 },
   prefillBanner: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
