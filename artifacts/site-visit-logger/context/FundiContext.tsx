@@ -104,8 +104,9 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
       name: backendJob.currentTechnician.fullName,
       phone: '',
       skill: prof?.serviceExperiences?.[0]?.category?.name || prof?.serviceExperiences?.[0]?.customName || backendJob.service || 'Specialist',
-      rating: 4.9,
-      jobsCompleted: 35,
+      // The job payload has no ratings; the profile screen loads the real ones.
+      rating: null,
+      jobsCompleted: null,
       etaMinutes: 15,
       initials: backendJob.currentTechnician.fullName.slice(0, 2).toUpperCase(),
       yearsExperience: prof?.yearsOfExperience || 3,

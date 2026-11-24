@@ -22,7 +22,7 @@ import { type MarketplaceTechnician } from '@/constants/technicians';
 import { formatBookingFee, isTerminated } from '@/constants/jobs';
 import { getServiceBookingFee } from '@/constants/services';
 import { getServiceIcon } from '@/lib/categories-api';
-import { fetchPublicTechnicianById } from '@/lib/technicians-api';
+import { fetchPublicTechnicianById, fetchTechnicianReviews, type TechnicianReviews } from '@/lib/technicians-api';
 
 export default function TechnicianProfileScreen() {
   const colors = useColors();
@@ -70,9 +70,10 @@ export default function TechnicianProfileScreen() {
       name: params.techName || 'Verified Specialist',
       service: params.techService || params.service || 'General Maintenance',
       services: parsedServices,
-      rating: params.techRating ? parseFloat(params.techRating) : 4.8,
-      reviewsCount: params.techReviewsCount ? parseInt(params.techReviewsCount, 10) : 15,
-      jobsCompleted: params.techJobsCompleted ? parseInt(params.techJobsCompleted, 10) : 24,
+      // Only what the previous screen actually knew; the live profile fills in the rest.
+      rating: params.techRating ? parseFloat(params.techRating) : null,
+      reviewsCount: params.techReviewsCount ? parseInt(params.techReviewsCount, 10) : 0,
+      jobsCompleted: params.techJobsCompleted ? parseInt(params.techJobsCompleted, 10) : 0,
       etaMinutes: 15,
       yearsExperience: params.techYearsExperience ? parseInt(params.techYearsExperience, 10) : 3,
       location: { latitude: -1.9448, longitude: 30.0619 },
@@ -107,6 +108,26 @@ export default function TechnicianProfileScreen() {
       mounted = false;
     };
   }, [technicianId]);
+
+  // Real customer reviews, newest first.
+  const [reviews, setReviews] = useState<TechnicianReviews | null>(null);
+  const [reviewsError, setReviewsError] = useState(false);
+  useEffect(() => {
+    if (!technicianId) return;
+    let mounted = true;
+    fetchTechnicianReviews(technicianId, 3)
+      .then((found) => {
+        if (mounted) setReviews(found);
+      })
+      .catch(() => {
+        if (mounted) setReviewsError(true);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [technicianId]);
+  const reviewCount = reviews?.summary.ratingCount ?? tech?.reviewsCount ?? 0;
+  const averageScore = reviews?.summary.averageScore ?? tech?.rating ?? null;
 
   const targetService = params.service || tech?.service || 'General Maintenance';
   const serviceBookingFee = getServiceBookingFee(targetService);
@@ -259,11 +280,11 @@ export default function TechnicianProfileScreen() {
             <View style={styles.statIconRow}>
               <Ionicons name="star" size={16} color="#F59E0B" />
               <Text style={[styles.statValue, { color: colors.foreground }]}>
-                {tech.rating ? tech.rating.toFixed(1) : '4.8'}
+                {averageScore !== null && reviewCount ? averageScore.toFixed(1) : '–'}
               </Text>
             </View>
             <Text style={[styles.statSub, { color: colors.mutedForeground }]}>
-              {tech.reviewsCount || 15} reviews
+              {reviewCount ? `${reviewCount} ${reviewCount === 1 ? 'review' : 'reviews'}` : 'No reviews yet'}
             </Text>
           </View>
 
@@ -273,7 +294,7 @@ export default function TechnicianProfileScreen() {
             <View style={styles.statIconRow}>
               <Ionicons name="checkmark-done" size={16} color={colors.primary} />
               <Text style={[styles.statValue, { color: colors.foreground }]}>
-                {tech.jobsCompleted || 24}
+                {tech.jobsCompleted}
               </Text>
             </View>
             <Text style={[styles.statSub, { color: colors.mutedForeground }]}>Jobs Done</Text>
@@ -370,20 +391,55 @@ export default function TechnicianProfileScreen() {
         <View style={[styles.feedbackCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.feedbackTop}>
             <Text style={[styles.infoTitle, { color: colors.foreground }]}>Customer Feedback</Text>
-            <View style={styles.feedbackRatingBadge}>
-              <Ionicons name="star" size={13} color="#F59E0B" />
-              <Text style={{ fontSize: 12, fontWeight: '700', color: colors.foreground }}>
-                {tech.rating ? tech.rating.toFixed(1) : '4.8'} / 5.0
-              </Text>
-            </View>
+            {averageScore !== null && reviewCount ? (
+              <View style={styles.feedbackRatingBadge}>
+                <Ionicons name="star" size={13} color="#F59E0B" />
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.foreground }}>
+                  {averageScore.toFixed(1)} / 5.0
+                </Text>
+              </View>
+            ) : null}
           </View>
-          <Text style={[styles.feedbackQuote, { color: colors.mutedForeground }]}>
-            &ldquo;Specialist was punctual, identified the issue quickly, and completed the repair with
-            clean workmanship.&rdquo;
-          </Text>
-          <Text style={[styles.feedbackAuthor, { color: colors.primary }]}>
-            — Verified Kigali Client
-          </Text>
+          {reviews?.data.length ? (
+            reviews.data.map((review) => (
+              <View key={review.id} style={[styles.reviewItem, { borderTopColor: colors.border }]} testID="technician-review">
+                <View style={styles.reviewHead}>
+                  <Text style={[styles.reviewName, { color: colors.foreground }]}>{review.reviewerName}</Text>
+                  {review.score !== null ? (
+                    <View style={styles.reviewStars}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Ionicons
+                          key={star}
+                          name={star <= Math.round(review.score ?? 0) ? 'star' : 'star-outline'}
+                          size={12}
+                          color="#F59E0B"
+                        />
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+                {review.comment ? (
+                  <Text style={[styles.feedbackQuote, { color: colors.mutedForeground }]}>&ldquo;{review.comment}&rdquo;</Text>
+                ) : null}
+                <Text style={[styles.reviewMeta, { color: colors.mutedForeground }]}>
+                  {[review.service, new Date(review.submittedAt).toLocaleDateString()].filter(Boolean).join(' · ')}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={[styles.feedbackQuote, { color: colors.mutedForeground }]} testID="technician-no-reviews">
+              {reviewsError
+                ? 'Reviews could not be loaded right now.'
+                : reviews
+                  ? 'No reviews yet. Ratings from customers appear here after their jobs are done.'
+                  : 'Loading reviews…'}
+            </Text>
+          )}
+          {reviewCount > (reviews?.data.length ?? 0) && reviews?.data.length ? (
+            <Text style={[styles.reviewMeta, { color: colors.mutedForeground }]}>
+              Showing the {reviews.data.length} newest of {reviewCount} reviews.
+            </Text>
+          ) : null}
         </View>
 
         {/* Settlement Notice */}
@@ -641,6 +697,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  reviewItem: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 10, marginTop: 10, gap: 4 },
+  reviewHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  reviewName: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  reviewStars: { flexDirection: 'row', gap: 1 },
+  reviewMeta: { fontFamily: 'Inter_400Regular', fontSize: 11 },
   feedbackRatingBadge: {
     flexDirection: 'row',
     alignItems: 'center',

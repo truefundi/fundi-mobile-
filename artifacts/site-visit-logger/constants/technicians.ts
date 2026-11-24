@@ -6,7 +6,8 @@ export type MarketplaceTechnician = {
   name: string;
   service: string;
   services: string[];
-  rating: number;
+  /** Average customer score (1-5); null until the first rating. */
+  rating: number | null;
   reviewsCount: number;
   jobsCompleted: number;
   etaMinutes: number;
@@ -24,6 +25,12 @@ export type MarketplaceTechnician = {
  */
 export const MOCK_MARKETPLACE_TECHNICIANS: MarketplaceTechnician[] = [];
 
+/** "4.6 (12 reviews)", or "No reviews yet" for a technician nobody has rated. */
+export function reviewsLabel(rating: number | null | undefined, count: number | null | undefined): string {
+  if (rating === null || rating === undefined || !count) return 'No reviews yet';
+  return `${rating.toFixed(1)} (${count} ${count === 1 ? 'review' : 'reviews'})`;
+}
+
 export function toJobTechnician(tech: MarketplaceTechnician, distanceKm?: number): Technician {
   const parts = tech.name.trim().split(/\s+/);
   const initials = parts.length >= 2
@@ -35,6 +42,7 @@ export function toJobTechnician(tech: MarketplaceTechnician, distanceKm?: number
     name: tech.name,
     skill: tech.service,
     rating: tech.rating,
+    reviewsCount: tech.reviewsCount,
     jobsCompleted: tech.jobsCompleted,
     distanceKm: distanceKm ?? 1.8,
     etaMinutes: tech.etaMinutes,

@@ -34,8 +34,9 @@ export function TechnicianCard({ technician, caption, compact, onPress, showProf
           ...(requestId ? { requestId } : {}),
           techName: technician.name,
           techService: technician.skill,
-          techRating: String(technician.rating),
-          techJobsCompleted: String(technician.jobsCompleted),
+          techRating: technician.rating === null ? '' : String(technician.rating),
+          techReviewsCount: technician.reviewsCount === undefined ? '' : String(technician.reviewsCount),
+          techJobsCompleted: technician.jobsCompleted === null ? '' : String(technician.jobsCompleted),
           techYearsExperience: String(technician.yearsExperience),
           techAvatarUrl: technician.avatarUrl || technician.photoUri || '',
         },
@@ -76,11 +77,17 @@ export function TechnicianCard({ technician, caption, compact, onPress, showProf
           {caption ? <Text style={[styles.caption, { color: colors.success }]}>{caption}</Text> : null}
         </View>
         <View style={styles.ratingBlock}>
-          <View style={styles.ratingRow}>
-            <Ionicons name="star" size={13} color={colors.warning} />
-            <Text style={[styles.rating, { color: colors.foreground }]}>{technician.rating.toFixed(1)}</Text>
-          </View>
-          <Text style={[styles.jobs, { color: colors.mutedForeground }]}>{technician.jobsCompleted.toLocaleString('en-US')} jobs</Text>
+          {technician.rating !== null ? (
+            <View style={styles.ratingRow}>
+              <Ionicons name="star" size={13} color={colors.warning} />
+              <Text style={[styles.rating, { color: colors.foreground }]}>{technician.rating.toFixed(1)}</Text>
+            </View>
+          ) : null}
+          {technician.jobsCompleted !== null ? (
+            <Text style={[styles.jobs, { color: colors.mutedForeground }]}>
+              {technician.jobsCompleted.toLocaleString('en-US')} {technician.jobsCompleted === 1 ? 'job' : 'jobs'}
+            </Text>
+          ) : null}
           {showProfileLink && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 4 }}>
               <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 11, color: colors.primary }}>

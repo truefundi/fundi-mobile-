@@ -144,8 +144,11 @@ export type Technician = {
   id: string;
   name: string;
   skill: string;
-  rating: number;
-  jobsCompleted: number;
+  /** Average customer score; null when unknown or not rated yet (never estimated). */
+  rating: number | null;
+  reviewsCount?: number;
+  /** Null when unknown on this screen. */
+  jobsCompleted: number | null;
   distanceKm?: number;
   etaMinutes: number;
   initials: string;

@@ -6,7 +6,7 @@ import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
-import { type MarketplaceTechnician } from '@/constants/technicians';
+import { reviewsLabel, type MarketplaceTechnician } from '@/constants/technicians';
 import { fetchPublicTechnicians } from '@/lib/technicians-api';
 import { previewMatchingTechnicians } from '@/lib/jobs-api';
 import { useFundi } from '@/context/FundiContext';
@@ -145,7 +145,7 @@ export default function SelectTechnicianScreen() {
               : null,
         }))
         .sort((a, b) => {
-          if (sortBy === 'rating') return b.technician.rating - a.technician.rating;
+          if (sortBy === 'rating') return (b.technician.rating ?? -1) - (a.technician.rating ?? -1);
           if (a.distance === null) return b.distance === null ? 0 : 1;
           if (b.distance === null) return -1;
           return a.distance - b.distance;
@@ -173,7 +173,7 @@ export default function SelectTechnicianScreen() {
             : null,
       }))
       .sort((a, b) => {
-        if (sortBy === 'rating') return b.technician.rating - a.technician.rating;
+        if (sortBy === 'rating') return (b.technician.rating ?? -1) - (a.technician.rating ?? -1);
         if (a.distance === null) return b.distance === null ? 0 : 1;
         if (b.distance === null) return -1;
         return a.distance - b.distance;
@@ -354,7 +354,7 @@ export default function SelectTechnicianScreen() {
             <View style={[styles.metaRow, { borderTopColor: colors.border }]}>
               <View style={styles.metaItem}>
                 <Ionicons name="star" size={14} color="#F59E0B" />
-                <Text style={[styles.metaText, { color: colors.foreground }]}>{item.rating} ({item.reviewsCount} reviews)</Text>
+                <Text style={[styles.metaText, { color: colors.foreground }]}>{reviewsLabel(item.rating, item.reviewsCount)}</Text>
               </View>
               <View style={styles.metaItem}>
                 <Ionicons name="location-outline" size={14} color={colors.primary} />
@@ -377,7 +377,7 @@ export default function SelectTechnicianScreen() {
                       techName: item.name,
                       techService: item.service,
                       techServices: JSON.stringify(item.services),
-                      techRating: String(item.rating),
+                      techRating: item.rating === null ? '' : String(item.rating),
                       techReviewsCount: String(item.reviewsCount),
                       techJobsCompleted: String(item.jobsCompleted),
                       techYearsExperience: String(item.yearsExperience),

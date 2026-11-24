@@ -32,6 +32,8 @@ export interface BackendPublicTechnician {
     longitude?: number | null;
   } | null;
   profilePictureUrl?: string | null;
+  /** Ratings and finished jobs, counted by the API. */
+  stats?: { averageRating: number | null; ratingCount: number; jobsCompleted: number };
   createdAt: string;
 }
 
@@ -56,9 +58,9 @@ export function mapBackendTechnicianToMarketplace(tech: BackendPublicTechnician)
     name: tech.user.fullName,
     service: primaryService,
     services: serviceList.length > 0 ? serviceList : [primaryService],
-    rating: 4.8,
-    reviewsCount: 15,
-    jobsCompleted: 24,
+    rating: tech.stats?.averageRating ?? null,
+    reviewsCount: tech.stats?.ratingCount ?? 0,
+    jobsCompleted: tech.stats?.jobsCompleted ?? 0,
     etaMinutes: 15,
     yearsExperience: tech.yearsOfExperience || 1,
     location: {
@@ -140,4 +142,25 @@ export async function fetchAvailableTechnicians(query?: {
   } catch {
     return [];
   }
+}
+
+/** One customer review from GET /api/v1/public/technicians/:id/reviews. */
+export interface TechnicianReview {
+  id: string;
+  /** First name and initial, e.g. "Alice U." */
+  reviewerName: string;
+  score: number | null;
+  comment: string | null;
+  service: string | null;
+  submittedAt: string;
+}
+
+export interface TechnicianReviews {
+  summary: { ratingCount: number; averageScore: number | null };
+  data: TechnicianReview[];
+}
+
+/** A technician's newest customer reviews (real ratings only). */
+export async function fetchTechnicianReviews(id: string, limit = 5): Promise<TechnicianReviews> {
+  return apiRequest<TechnicianReviews>(`/api/v1/public/technicians/${id}/reviews?limit=${limit}`);
 }
