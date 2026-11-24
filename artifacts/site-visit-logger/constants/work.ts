@@ -30,7 +30,12 @@ export function isWorkRejected(status: WorkStatus): boolean {
   return status === 'rejected' || status === 'REJECTED';
 }
 
-export type ServiceExperienceStatus = 'PENDING' | 'APPROVED' | 'DENIED' | 'SUSPENDED';
+export type ServiceExperienceStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'DENIED' | 'SUSPENDED';
+
+/** A service an admin turned down (REJECTED from the API; DENIED/SUSPENDED in older data). */
+export function isServiceRejected(status?: ServiceExperienceStatus | null): boolean {
+  return status === 'REJECTED' || status === 'DENIED' || status === 'SUSPENDED';
+}
 
 export type WorkProfile = {
   id?: string;

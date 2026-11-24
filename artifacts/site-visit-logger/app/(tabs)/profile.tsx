@@ -18,7 +18,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useProfile } from '@/context/ProfileContext';
 import { useFundi } from '@/context/FundiContext';
 import { useWork } from '@/context/WorkContext';
-import { isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
+import { isServiceRejected, isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
+import { withdrawMyService } from '@/lib/technician-services-api';
 import { pickProfilePhoto } from '@/lib/profilePhoto';
 import { fetchMyCompany, type MyCompany } from '@/lib/companies-api';
 import { COMPANY_STATUS } from '@/components/work/CompanyFields';
@@ -54,6 +55,24 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { jobs } = useFundi();
   const { mode, setMode, status, profile, mine, done, earnings, refreshApplication } = useWork();
+  // Only approved services get jobs.
+  const approvedTrades = (profile?.serviceExperiences ?? []).filter((exp) => exp.status === 'APPROVED').length;
+  // Approved technicians add services one at a time; each is reviewed on its own.
+  const [serviceBusy, setServiceBusy] = useState<string | null>(null);
+  const [serviceError, setServiceError] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState<{ id: string; name: string } | null>(null);
+  const runServiceAction = async (id: string, action: () => Promise<unknown>) => {
+    setServiceBusy(id);
+    setServiceError(null);
+    try {
+      await action();
+      await refreshApplication();
+    } catch (err) {
+      setServiceError(err instanceof Error ? err.message : 'That did not work. Try again.');
+    } finally {
+      setServiceBusy(null);
+    }
+  };
   // Opening Profile re-reads the application, so an admin's latest decision shows here.
   useFocusEffect(
     useCallback(() => {
@@ -143,7 +162,7 @@ export default function ProfileScreen() {
   const modeHint = !working
     ? 'Find and hire a technician'
     : isWorkVerified(status)
-      ? `Taking jobs${profile?.serviceExperiences?.length ? ` · ${profile.serviceExperiences.length} ${profile.serviceExperiences.length === 1 ? 'trade' : 'trades'}` : ''}`
+      ? `Taking jobs${approvedTrades ? ` · ${approvedTrades} ${approvedTrades === 1 ? 'trade' : 'trades'}` : ''}`
       : isWorkPending(status)
         ? 'Documents under review'
         : isWorkRejected(status)
@@ -277,19 +296,19 @@ export default function ProfileScreen() {
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your trades</Text>
           {profile?.serviceExperiences && profile.serviceExperiences.length > 0 ? (
             profile.serviceExperiences.map((exp, index) => {
-              // The API reviews the application as a whole; a trade only carries its own status
-              // when an admin decided on it separately. Otherwise it follows the application.
-              const ownDecision = exp.status && exp.status !== 'PENDING' ? exp.status : null;
-              const expStatus =
-                ownDecision ??
-                (isWorkVerified(status) ? 'APPROVED' : isWorkRejected(status) ? 'DENIED' : 'PENDING');
+              // Each service carries its own review status from the API.
+              const expStatus = exp.status ?? (isWorkRejected(status) ? 'REJECTED' : 'PENDING');
               const isApproved = expStatus === 'APPROVED';
-              const isRejected = expStatus === 'DENIED' || expStatus === 'SUSPENDED';
-              
+              const isRejected = isServiceRejected(expStatus);
+              const name = exp.trade || exp.customName;
+              // After approval a service is managed on its own; before, it goes with the application.
+              const manage = isWorkVerified(status) && exp.id && !isApproved;
+              const busy = serviceBusy === exp.id;
+
               const tagBg = isApproved ? colors.successMuted : isRejected ? colors.destructiveMuted : colors.warningMuted;
               const tagColor = isApproved ? colors.success : isRejected ? colors.destructive : colors.warning;
               const iconName = isApproved ? 'check-circle' : isRejected ? 'alert-circle' : 'clock';
-              const statusLabel = isApproved ? 'Approved' : isRejected ? 'Action required' : 'Under review';
+              const statusLabel = isApproved ? 'Approved' : isRejected ? 'Not approved' : 'Under review';
 
               return (
                 <View key={`${exp.trade}-${index}`} style={[styles.tradeCard, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 10 }]}>
@@ -305,8 +324,41 @@ export default function ProfileScreen() {
                   </Text>
                   {exp.reviewNote ? (
                     <Text style={[styles.tradeMeta, { color: colors.destructive, marginTop: 4 }]}>
-                      Note: {exp.reviewNote}
+                      Reason: {exp.reviewNote}
                     </Text>
+                  ) : null}
+                  {manage && !isRejected ? (
+                    <Text style={[styles.tradeMeta, { color: colors.mutedForeground }]}>
+                      No {name} jobs until Fundi approves it.
+                    </Text>
+                  ) : null}
+                  {manage ? (
+                    <View style={styles.serviceActions}>
+                      {isRejected ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={busy}
+                          onPress={() => router.push({ pathname: '/add-service', params: { serviceId: exp.id! } })}
+                          style={[styles.serviceAction, { backgroundColor: colors.primary }]}
+                          testID={`service-resubmit-${index}`}
+                        >
+                          <Feather name="refresh-cw" size={13} color={colors.primaryForeground} />
+                          <Text style={[styles.serviceActionText, { color: colors.primaryForeground }]}>
+                            Send again
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={busy}
+                        onPress={() => setWithdrawing({ id: exp.id!, name })}
+                        style={[styles.serviceAction, { borderWidth: 1, borderColor: colors.border }]}
+                        testID={`service-withdraw-${index}`}
+                      >
+                        <Feather name="x" size={13} color={colors.foreground} />
+                        <Text style={[styles.serviceActionText, { color: colors.foreground }]}>Withdraw</Text>
+                      </Pressable>
+                    </View>
                   ) : null}
                 </View>
               );
@@ -331,6 +383,30 @@ export default function ProfileScreen() {
               </Text>
             </View>
           )}
+
+          {serviceError ? (
+            <Text style={[styles.tradeMeta, { color: colors.destructive, marginBottom: 8 }]}>{serviceError}</Text>
+          ) : null}
+          {isWorkVerified(status) && (profile?.serviceExperiences?.length ?? 0) < 10 ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push('/add-service')}
+              style={({ pressed }) => [
+                styles.addService,
+                { borderColor: colors.primary, backgroundColor: colors.primary + '10', opacity: pressed ? 0.8 : 1 },
+              ]}
+              testID="profile-add-service"
+            >
+              <Feather name="plus-circle" size={18} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.addServiceTitle, { color: colors.primary }]}>Add a service</Text>
+                <Text style={[styles.tradeMeta, { color: colors.mutedForeground }]}>
+                  Offer another trade. Fundi reviews it on its own.
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.primary} />
+            </Pressable>
+          ) : null}
 
           {company ? (
             <>
@@ -467,6 +543,19 @@ export default function ProfileScreen() {
       <Text style={[styles.legal, { color: colors.mutedForeground }]}>Fundi · Terms & Privacy</Text>
 
       <ConfirmDialog
+        visible={Boolean(withdrawing)}
+        title={`Withdraw ${withdrawing?.name ?? 'this service'}?`}
+        message="It leaves the review queue. You can add it again later."
+        confirmLabel="Withdraw"
+        busy={Boolean(withdrawing && serviceBusy === withdrawing.id)}
+        onConfirm={() => {
+          if (!withdrawing) return;
+          const { id } = withdrawing;
+          void runServiceAction(id, () => withdrawMyService(id)).finally(() => setWithdrawing(null));
+        }}
+        onCancel={() => setWithdrawing(null)}
+      />
+      <ConfirmDialog
         visible={pendingAction === 'signOut'}
         title="Log out?"
         message={`To log back in, use ${formatPhone(account.phone)} and the code we send to it.`}
@@ -536,6 +625,11 @@ const styles = StyleSheet.create({
   statusTag: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 11, paddingHorizontal: 9, paddingVertical: 5 },
   statusText: { fontFamily: 'Inter_600SemiBold', fontSize: 11 },
   tradeMeta: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 18 },
+  serviceActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  serviceAction: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7 },
+  serviceActionText: { fontFamily: 'Inter_700Bold', fontSize: 12 },
+  addService: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed', borderRadius: 16, padding: 14 },
+  addServiceTitle: { fontFamily: 'Inter_700Bold', fontSize: 14 },
   linkCard: { borderRadius: 16, borderWidth: 1, paddingHorizontal: 15 },
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: 13, minHeight: 54 },
   linkText: { fontFamily: 'Inter_500Medium', fontSize: 14, flex: 1 },

@@ -9,7 +9,7 @@ import { restoreSession } from '@/lib/auth-api';
 import { useAuth } from '@/context/AuthContext';
 import { useWork } from '@/context/WorkContext';
 import { useColors } from '@/hooks/useColors';
-import { isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
+import { isServiceRejected, isWorkPending, isWorkRejected, isWorkVerified } from '@/constants/work';
 import { fetchMyCompany, type MyCompany } from '@/lib/companies-api';
 
 /** The line shown when a rejection was recorded without a reason. */
@@ -78,7 +78,7 @@ function WorkPending() {
         {profile?.serviceExperiences?.map((experience, index) => {
           const statusColor = 
             experience.status === 'APPROVED' ? colors.success :
-            experience.status === 'DENIED' || experience.status === 'SUSPENDED' ? colors.destructive :
+            isServiceRejected(experience.status) ? colors.destructive :
             colors.warning;
 
           return (
@@ -149,7 +149,7 @@ function WorkRejected({ onlyDocuments, company }: { onlyDocuments: boolean; comp
         </Text>
       ) : null}
 
-      {profile?.serviceExperiences?.filter((exp) => exp.status === 'DENIED' || exp.status === 'SUSPENDED').map((exp, idx) => (
+      {profile?.serviceExperiences?.filter((exp) => isServiceRejected(exp.status)).map((exp, idx) => (
         <Text key={`exp-err-${idx}`} style={[styles.body, { color: colors.destructive, marginTop: 4 }]}>
           Trade ({exp.trade || exp.customName}): {exp.reviewNote ?? 'Needs revision'}
         </Text>
@@ -194,7 +194,7 @@ function WorkRejectedHome() {
   const documents = profile?.documents ?? [];
   const deniedDocuments = documents.some((document) => document.status === 'DENIED');
   const deniedTrades = profile?.serviceExperiences?.some(
-    (experience) => experience.status === 'DENIED' || experience.status === 'SUSPENDED',
+    (experience) => isServiceRejected(experience.status),
   );
   // A company owner's company is reviewed too; a rejected one is corrected in the form.
   const [company, setCompany] = useState<MyCompany | null>(null);

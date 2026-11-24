@@ -3,14 +3,7 @@ import React, { createContext, type ReactNode, useCallback, useContext, useEffec
 import { AppState, Platform } from 'react-native';
 import { jobsKey, techJobsKey, workKey } from '@/constants/storage';
 import { getServiceBookingFee } from '@/constants/services';
-import {
-  type TechnicianApplication,
-  type WorkProfile,
-  type WorkStatus,
-  isWorkPending,
-  isWorkVerified,
-  isWorkRejected,
-} from '@/constants/work';
+import { type TechnicianApplication, type WorkProfile, type WorkStatus, isWorkPending, isWorkVerified, isWorkRejected, isServiceRejected, type ServiceExperienceStatus } from '@/constants/work';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import {
   isClosed,
@@ -118,7 +111,7 @@ type ApiTechnicianProfile = {
     customName: string | null;
     category: { name: string } | null;
     yearsOfExperience: number;
-    status?: 'PENDING' | 'APPROVED' | 'DENIED' | 'SUSPENDED';
+    status?: ServiceExperienceStatus;
     reviewNote?: string | null;
   }>;
   verificationStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -164,7 +157,7 @@ function mapProfile(
   }));
 
   // General feedback only; notes on denied documents are shown on each document.
-  const deniedExp = experiences.find((e) => e.status === 'DENIED' || e.status === 'SUSPENDED');
+  const deniedExp = experiences.find((e) => isServiceRejected(e.status));
   // The admin's reason comes from the server; the generic line is only for
   // rejections made before reasons were recorded.
   const rejectionFeedback =
