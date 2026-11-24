@@ -411,6 +411,8 @@ export default function RequestScreen() {
 
   // A second tap while the first is still saving must not create a second request.
   const submittingRef = useRef(false);
+  /** The request this screen already created; sending again updates it instead of adding one. */
+  const draftIdRef = useRef<string | undefined>(undefined);
   const submit = async () => {
     if (submittingRef.current) return;
     if (!checkDetails()) {
@@ -473,7 +475,8 @@ export default function RequestScreen() {
         videoUri: persistedVideo,
         videoSizeBytes: video?.size,
         videoMimeType: video?.mimeType,
-      });
+      }, draftIdRef.current);
+      draftIdRef.current = jobId;
       await notify('success');
 
       if (isEmergency) {
@@ -482,7 +485,8 @@ export default function RequestScreen() {
           params: { requestId: jobId, jobId, service, ...(categoryId ? { categoryId } : {}) },
         });
       } else {
-        router.replace({
+        // Pushed, not replaced: back from the technician list returns to this review.
+        router.push({
           pathname: '/select-technician',
           params: { jobId, service, ...(categoryId ? { categoryId } : {}) },
         });

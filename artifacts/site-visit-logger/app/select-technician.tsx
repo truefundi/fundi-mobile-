@@ -200,7 +200,8 @@ export default function SelectTechnicianScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 12 : insets.top + 8 }]}>
-        <BackButton onPress={() => router.back()} />
+        {/* Back to the request review (or wherever the list was opened from). */}
+        <BackButton onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))} />
         <Text style={[styles.titleTop, { color: colors.foreground }]}>Choose Technician</Text>
         <View style={{ width: 34 }} />
       </View>

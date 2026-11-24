@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -12,7 +12,8 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { isOpenInStack, openPaidChat } from '@/lib/checkout-nav';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { usePaymentQuote } from '@/hooks/usePaymentQuote';
@@ -160,18 +161,21 @@ export default function CheckoutPaymentScreen() {
 
   const isAlreadyPaid = job?.bookingFee?.status === 'PAID';
   const destinationChatId = job?.id || params.requestId;
+  const navigation = useNavigation();
+
+  /** Once paid, the request continues in its chat; the booking screens are cleared behind it. */
+  const goToPaidChat = useCallback(() => {
+    if (destinationChatId) {
+      openPaidChat(router, { id: destinationChatId, requestId: job?.id || params.requestId || destinationChatId });
+    } else {
+      router.replace('/(tabs)/chat');
+    }
+  }, [destinationChatId, job?.id, params.requestId, router]);
 
   // Route Guard: If booking fee is already settled, redirect to chat always to prevent disruptions
   useEffect(() => {
     if (isAlreadyPaid && !isProcessing && !paymentSuccess) {
-      if (destinationChatId) {
-        router.replace({
-          pathname: `/chat/${destinationChatId}` as any,
-          params: { requestId: job?.id || params.requestId },
-        });
-      } else {
-        router.replace('/(tabs)/chat');
-      }
+      goToPaidChat();
     }
   }, [isAlreadyPaid, isProcessing, paymentSuccess, destinationChatId, job?.id, params.requestId, router]);
 
@@ -180,14 +184,7 @@ export default function CheckoutPaymentScreen() {
     if (Platform.OS === 'android') {
       const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
         if (paymentSuccess || isAlreadyPaid) {
-          if (destinationChatId) {
-            router.replace({
-              pathname: `/chat/${destinationChatId}` as any,
-              params: { requestId: job?.id || params.requestId },
-            });
-          } else {
-            router.replace('/(tabs)/chat');
-          }
+          goToPaidChat();
           return true;
         }
         return false;
@@ -198,14 +195,7 @@ export default function CheckoutPaymentScreen() {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const handleWebPop = () => {
         if (paymentSuccess || isAlreadyPaid) {
-          if (destinationChatId) {
-            router.replace({
-              pathname: `/chat/${destinationChatId}` as any,
-              params: { requestId: job?.id || params.requestId },
-            });
-          } else {
-            router.replace('/(tabs)/chat');
-          }
+          goToPaidChat();
         }
       };
       window.addEventListener('popstate', handleWebPop);
@@ -351,15 +341,12 @@ export default function CheckoutPaymentScreen() {
       setPaymentSuccess(true);
 
       setTimeout(() => {
-        router.replace({
-          pathname: '/chat/[id]',
-          params: {
-            id: createdBackendJob.id,
-            requestId: createdBackendJob.id,
-            firstMessage: 'true',
-            ...(techId ? { technicianId: techId } : {}),
-            ...(proposalError ? { proposalError } : {}),
-          },
+        openPaidChat(router, {
+          id: createdBackendJob.id,
+          requestId: createdBackendJob.id,
+          firstMessage: 'true',
+          ...(techId ? { technicianId: techId } : {}),
+          ...(proposalError ? { proposalError } : {}),
         });
       }, 1400);
     } catch (err) {
@@ -368,7 +355,7 @@ export default function CheckoutPaymentScreen() {
       // The API already has this request open: continue it instead of making another.
       const existingJobId = err instanceof ApiRequestError ? err.details?.existingJobId : undefined;
       if (typeof existingJobId === 'string') {
-        router.replace({ pathname: '/chat/[id]', params: { id: existingJobId, requestId: existingJobId } });
+        openPaidChat(router, { id: existingJobId, requestId: existingJobId });
         return;
       }
       setPaymentError(err instanceof Error ? err.message : 'Payment or job creation failed. Please retry.');
@@ -426,14 +413,7 @@ export default function CheckoutPaymentScreen() {
   const handleCancel = () => {
     // If payment was already completed, redirect to chats always
     if (paymentSuccess || isAlreadyPaid) {
-      if (destinationChatId) {
-        router.replace({
-          pathname: `/chat/${destinationChatId}` as any,
-          params: { requestId: job?.id || params.requestId },
-        });
-      } else {
-        router.replace('/(tabs)/chat');
-      }
+      goToPaidChat();
       return;
     }
     // Opened from a notification or a resumed request: there may be nothing behind it.
@@ -445,7 +425,10 @@ export default function CheckoutPaymentScreen() {
   const changeTechnician = () => {
     const requestId = job?.id || params.requestId;
     if (!requestId) return;
-    router.replace({ pathname: '/select-technician', params: { jobId: requestId, service: targetService ?? '' } });
+    const list = { pathname: '/select-technician' as const, params: { jobId: requestId, service: targetService ?? '' } };
+    // Back to the list this payment was opened from, rather than a second copy of it.
+    if (isOpenInStack(navigation, 'select-technician')) router.dismissTo(list);
+    else router.replace(list);
   };
 
   // Immediate block on web/native: Do not render payment UI if already paid

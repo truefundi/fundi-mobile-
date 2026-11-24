@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { openPaidChat } from '@/lib/checkout-nav';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { usePaymentQuote } from '@/hooks/usePaymentQuote';
@@ -160,13 +161,7 @@ export default function SosDispatchScreen() {
   useEffect(() => {
     const job = targetRequestId ? getJob(targetRequestId) : undefined;
     if (job?.bookingFee?.status === 'PAID' && job.technician && phase === 'REVIEW') {
-      router.replace({
-        pathname: `/chat/${job.id}` as any,
-        params: {
-          requestId: job.id,
-          type: 'SOS',
-        },
-      });
+      openPaidChat(router, { id: job.id, requestId: job.id, type: 'SOS' });
     }
   }, [targetRequestId, getJob, phase, router]);
 
@@ -376,14 +371,7 @@ export default function SosDispatchScreen() {
     await openConversation(finalId).catch(() => undefined);
 
     setTimeout(() => {
-      router.replace({
-        pathname: `/chat/${destChatId}` as any,
-        params: {
-          requestId: finalId,
-          type: 'SOS',
-          firstMessage: 'true',
-        },
-      });
+      openPaidChat(router, { id: destChatId, requestId: finalId, type: 'SOS', firstMessage: 'true' });
     }, 1300);
   };
 

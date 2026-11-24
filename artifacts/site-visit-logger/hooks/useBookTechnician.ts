@@ -1,10 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { isTerminated, type Job } from '@/constants/jobs';
 import { toJobTechnician, type MarketplaceTechnician } from '@/constants/technicians';
 import { mapBackendJobToFrontendJob, useFundi } from '@/context/FundiContext';
 import { ApiRequestError } from '@/lib/api';
-import { continueToCheckout } from '@/lib/checkout-nav';
+import { continueToCheckout, isOpenInStack, openPaidChat } from '@/lib/checkout-nav';
 import { fetchCustomerJob, type BackendJob } from '@/lib/jobs-api';
 
 /** Jobs on the API have UUIDs; phone-only drafts have ids like job-123-abc. */
@@ -31,6 +31,7 @@ type BookOptions = {
  */
 export function useBookTechnician() {
   const router = useRouter();
+  const navigation = useNavigation();
   const { getJob, jobs, selectTechnician, proposeTechnicianToJob, createDraftRequest } = useFundi();
   const inFlight = useRef(false);
   const [booking, setBooking] = useState(false);
@@ -38,13 +39,19 @@ export function useBookTechnician() {
 
   const openChat = useCallback(
     (jobId: string, technicianId?: string, proposalError?: string) => {
+      const params = { id: jobId, requestId: jobId, ...(technicianId ? { technicianId } : {}), ...(proposalError ? { proposalError } : {}) };
       // Back to the request's chat if it is already open underneath, so the back
-      // stack keeps one chat per request; otherwise it takes this screen's place.
-      router.dismissTo({
-        pathname: '/chat/[id]',
-        params: { id: jobId, requestId: jobId, ...(technicianId ? { technicianId } : {}), ...(proposalError ? { proposalError } : {}) },
-      });
+      // stack keeps one chat per request; otherwise it opens on top as usual.
+      if (isOpenInStack(navigation, 'chat/[id]')) router.dismissTo({ pathname: '/chat/[id]', params });
+      else router.push({ pathname: '/chat/[id]', params });
     },
+    [navigation, router],
+  );
+
+  /** A request was just sent to a technician: its chat opens with the booking screens cleared. */
+  const openSentChat = useCallback(
+    (jobId: string, technicianId?: string, proposalError?: string) =>
+      openPaidChat(router, { id: jobId, requestId: jobId, ...(technicianId ? { technicianId } : {}), ...(proposalError ? { proposalError } : {}) }),
     [router],
   );
 
@@ -53,18 +60,19 @@ export function useBookTechnician() {
     async (jobId: string, technicianId: string) => {
       try {
         await proposeTechnicianToJob(jobId, technicianId);
-        openChat(jobId, technicianId);
+        openSentChat(jobId, technicianId);
       } catch (err) {
         const existing = err instanceof ApiRequestError ? err.details?.existingJobId : undefined;
         if (typeof existing === 'string' && existing !== jobId) {
           // This technician already has another request from the client: continue that one.
-          openChat(existing);
+          openSentChat(existing);
           return;
         }
-        openChat(jobId, technicianId, err instanceof Error ? err.message : 'The request could not be sent to this technician.');
+        // Not sent (e.g. the request is still waiting for another technician's answer).
+        openSentChat(jobId, undefined, err instanceof Error ? err.message : 'The request could not be sent to this technician.');
       }
     },
-    [proposeTechnicianToJob, openChat],
+    [proposeTechnicianToJob, openSentChat],
   );
 
   /** A cancelled request is booked again as one new request, reused on every later tap. */
@@ -133,7 +141,7 @@ export function useBookTechnician() {
               service: draft?.service ?? remote.service,
               categoryId: draft?.serviceCategoryId ?? remote.serviceCategory?.id ?? categoryId,
             },
-            { reuseOpenScreen: true },
+            { reuseOpenScreen: true, paymentOpen: isOpenInStack(navigation, 'checkout/payment') },
             );
             return;
           }
@@ -155,7 +163,7 @@ export function useBookTechnician() {
             service: local.service,
             categoryId: local.serviceCategoryId ?? categoryId,
           },
-          { reuseOpenScreen: true },
+          { reuseOpenScreen: true, paymentOpen: isOpenInStack(navigation, 'checkout/payment') },
           );
           return;
         }
@@ -172,14 +180,14 @@ export function useBookTechnician() {
           service: local.service,
           categoryId: local.serviceCategoryId ?? categoryId,
         },
-        { reuseOpenScreen: true },
+        { reuseOpenScreen: true, paymentOpen: isOpenInStack(navigation, 'checkout/payment') },
         );
       } finally {
         inFlight.current = false;
         setBooking(false);
       }
     },
-    [getJob, rebook, selectTechnician, sendPaidRequest, openChat, router],
+    [getJob, rebook, selectTechnician, sendPaidRequest, openChat, navigation, router],
   );
 
   return { book, booking, error };

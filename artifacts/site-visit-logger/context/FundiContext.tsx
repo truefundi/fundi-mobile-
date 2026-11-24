@@ -175,7 +175,8 @@ type FundiContextValue = {
   refreshJobs: () => Promise<void>;
   /** Every status change in reverse-chronological order, newest first. */
   events: (JobEvent & { jobId: string; service: string })[];
-  addRequest: (request: NewRequest) => Promise<string>;
+  /** Saves a new request; with `replaceId`, updates that unpaid draft instead of adding another. */
+  addRequest: (request: NewRequest, replaceId?: string) => Promise<string>;
   createDraftRequest: (data: Partial<ServiceRequest>) => string;
   /** `amount` is what the API charged; without it the fee already on the job is kept. */
   markBookingFeePaid: (requestId: string, transactionId: string, amount?: number) => void;
@@ -608,7 +609,7 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     [update],
   );
 
-  const addRequest = useCallback(async (request: NewRequest) => {
+  const addRequest = useCallback(async (request: NewRequest, replaceId?: string) => {
     const photos = request.photos ?? (request.photoUri
       ? [{ uri: request.photoUri, sizeBytes: request.photoSizeBytes, mimeType: request.photoMimeType }]
       : []);
@@ -669,6 +670,29 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       },
       events: [],
     };
+    // Back on the review screen and sent again: the same request, with its new details.
+    const draft = replaceId
+      ? jobsRef.current.find((job) => job.id === replaceId && job.bookingFee?.status !== 'PAID')
+      : undefined;
+    if (draft) {
+      const sameService = draft.service === base.service;
+      const revised: Job = {
+        ...base,
+        id: draft.id,
+        reference: draft.reference,
+        status: draft.status,
+        statusSince: draft.statusSince,
+        createdAt: draft.createdAt,
+        events: draft.events,
+        rebookOf: draft.rebookOf,
+        // A technician chosen for another service no longer fits the request.
+        technician: sameService ? draft.technician : undefined,
+      };
+      const revisedJobs = jobsRef.current.map((job) => (job.id === draft.id ? revised : job));
+      jobsRef.current = revisedJobs;
+      setJobs(revisedJobs);
+      return draft.id;
+    }
     const copy = EVENT_COPY.REQUESTED!;
     base.events = [{ id: makeId('evt'), status: 'REQUESTED', title: copy.title, text: copy.text, at: now }];
     const updatedJobs = [base, ...jobsRef.current];

@@ -22,11 +22,36 @@ type NavOptions = {
    * Keeps the back stack to one payment screen.
    */
   reuseOpenScreen?: boolean;
+  /** With reuseOpenScreen: the payment screen is open underneath (see isOpenInStack). */
+  paymentOpen?: boolean;
 };
 
+type StackNavigation = { getState?: () => { routes?: Array<{ name: string }> } | undefined };
+
+/** Whether a screen (by route name, e.g. 'checkout/payment') is open in the current stack. */
+export function isOpenInStack(navigation: StackNavigation | undefined, name: string): boolean {
+  try {
+    return Boolean(navigation?.getState?.()?.routes?.some((route) => route.name === name));
+  } catch {
+    return false;
+  }
+}
+
 function navigator(router: Router, options: NavOptions) {
-  if (options.reuseOpenScreen) return router.dismissTo;
+  // Pop back to the payment screen when it is already open; else stack on top,
+  // so back from payment returns to the technician the client was choosing.
+  if (options.reuseOpenScreen) return options.paymentOpen ? router.dismissTo : router.push;
   return options.replace ? router.replace : router.push;
+}
+
+/**
+ * Opens a request's chat once it is paid. The booking screens behind it are
+ * cleared first, so back from the chat can never return to payment or to
+ * choosing another technician.
+ */
+export function openPaidChat(router: Router, params: Record<string, string>): void {
+  if (router.canDismiss()) router.dismissAll();
+  router.push({ pathname: '/chat/[id]', params: { ...params, fromCheckout: 'true' } } as never);
 }
 
 /**

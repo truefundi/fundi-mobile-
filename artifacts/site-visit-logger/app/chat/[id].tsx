@@ -132,7 +132,7 @@ export default function JobChatScreen() {
   const { getJob, proposeTechnicianToJob } = useFundi();
   const { threads } = useChat();
   const { technicianOffers, acceptOffer: acceptTechnicianOffer, rejectOffer, refreshJobs, actingAsTechnician } = useWork();
-  const { id: routeId, requestId, firstMessage, technicianId: technicianParam, proposalError, rate } = useLocalSearchParams<{
+  const { id: routeId, requestId, firstMessage, technicianId: technicianParam, proposalError, rate, fromCheckout } = useLocalSearchParams<{
     id?: string;
     /** Opens the rating sheet straight away (from a completed job elsewhere in the app). */
     rate?: string;
@@ -142,6 +142,8 @@ export default function JobChatScreen() {
     technicianId?: string;
     /** Set when routing the request to the technician failed at submission. */
     proposalError?: string;
+    /** 'true' when opened right after paying or sending a request (see openPaidChat). */
+    fromCheckout?: string;
   }>();
   // A negotiation id in the route resolves to its job.
   const routeThread = useMemo(() => threads.find((t) => t.id === routeId), [threads, routeId]);
@@ -326,16 +328,27 @@ export default function JobChatScreen() {
     });
   }, []);
 
-  // ── Navigation guards: never return into checkout screens ───────────────
-  const goToList = useCallback(() => router.replace('/(tabs)/chat'), [router]);
+  // ── Back navigation ─────────────────────────────────────────────────────
+  // Arriving from payment, back opens the chat list: the booking screens are
+  // done and must not be reopened. From anywhere else (activity, notifications,
+  // a profile) back returns to where the client came from.
+  const cameFromCheckout = fromCheckout === 'true';
+  const goToList = useCallback(() => {
+    if (router.canDismiss()) router.dismissAll();
+    router.navigate('/(tabs)/chat');
+  }, [router]);
+  const goBack = useCallback(() => {
+    if (!cameFromCheckout && router.canGoBack()) router.back();
+    else goToList();
+  }, [cameFromCheckout, goToList, router]);
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      goToList();
+      goBack();
       return true;
     });
     return () => sub.remove();
-  }, [goToList]);
+  }, [goBack]);
 
   // ── Participants ────────────────────────────────────────────────────────
   const otherParty = isTechnician
@@ -710,7 +723,7 @@ export default function JobChatScreen() {
     return (
       <View style={[styles.screen, { backgroundColor: colors.background }]}>
         <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 14 : insets.top + 8, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
-          <BackButton onPress={goToList} />
+          <BackButton onPress={goBack} />
           <Text style={[styles.headerName, { color: colors.foreground, marginLeft: 10 }]}>Chat</Text>
         </View>
         <View style={styles.centerState}>
@@ -1047,7 +1060,7 @@ export default function JobChatScreen() {
     <KeyboardAvoidingView style={[styles.screen, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
       <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 14 : insets.top + 8, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
-        <BackButton onPress={goToList} />
+        <BackButton onPress={goBack} />
         <Pressable
           disabled={!technicianProfileId}
           onPress={() =>
@@ -1470,7 +1483,9 @@ const styles = StyleSheet.create({
   centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   centerTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 16, marginTop: 12, textAlign: 'center' },
   centerText: { fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 6, textAlign: 'center', lineHeight: 18 },
-  messageList: { paddingHorizontal: 16, paddingVertical: 16 },
+  // The list is inverted, so 'flex-end' is the visual top: a short conversation
+  // starts under the header instead of sinking to the composer.
+  messageList: { flexGrow: 1, justifyContent: 'flex-end', paddingHorizontal: 16, paddingVertical: 16 },
   loadOlder: { alignItems: 'center', paddingVertical: 10 },
   loadOlderText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   dateSeparatorWrap: { alignItems: 'center', marginVertical: 10 },
