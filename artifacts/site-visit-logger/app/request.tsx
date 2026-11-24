@@ -388,12 +388,16 @@ export default function RequestScreen() {
     }
   };
 
+  // An emergency goes to technicians of one trade, so it needs a real catalog service.
+  const [serviceError, setServiceError] = useState('');
   const checkDetails = (): boolean => {
     const pErr = problemIssue(problem);
     const aErr = addressIssue(address);
+    const sErr = isEmergency && !categoryId ? 'Choose the kind of emergency so the right technicians are alerted.' : '';
     setProblemError(pErr);
     setAddressError(aErr);
-    return !pErr && !aErr;
+    setServiceError(sErr);
+    return !pErr && !aErr && !sErr;
   };
 
   const next = () => {
@@ -700,6 +704,7 @@ export default function RequestScreen() {
                     onPress={() => {
                       setService(s.label);
                       setCategoryId(s.id);
+                      setServiceError('');
                     }}
                     style={[
                       styles.serviceChip,
@@ -716,6 +721,11 @@ export default function RequestScreen() {
                 );
               })}
             </ScrollView>
+            {serviceError ? (
+              <Text style={[styles.serviceError, { color: colors.destructive }]} testID="request-service-error">
+                {serviceError}
+              </Text>
+            ) : null}
 
             <FieldLabel label="What is the problem?" required style={styles.sectionLabel} />
             {isEmergency && (
@@ -1009,11 +1019,12 @@ export default function RequestScreen() {
                 : 'Continue'
           }
           icon={narrow && step === LAST_STEP ? undefined : 'arrow-forward'}
-          variant={isEmergency ? 'danger' : 'primary'}
           loading={isSubmitting}
           disabled={!!editing}
           onPress={next}
-          style={styles.nextAction}
+          // An emergency's one action is solid red in both themes.
+          style={[styles.nextAction, isEmergency && { backgroundColor: colors.destructive, borderColor: colors.destructive }]}
+          textColor={isEmergency ? '#ffffff' : undefined}
         />
       </View>
 
@@ -1140,6 +1151,7 @@ function ReviewRow({ label, value, onEdit, muted, last = false, open, editor }: 
 }
 
 const styles = StyleSheet.create({
+  serviceError: { fontFamily: 'Inter_500Medium', fontSize: 12, marginTop: 6 },
   screen: { flex: 1 },
   topBar: { paddingHorizontal: 20, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   topSpacer: { width: 34 },

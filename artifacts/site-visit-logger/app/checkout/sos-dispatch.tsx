@@ -22,7 +22,7 @@ import { usePaymentQuote } from '@/hooks/usePaymentQuote';
 import { PriceBreakdown } from '@/components/checkout/PriceBreakdown';
 import { ClaimStatus, PayByCode } from '@/components/checkout/PayByCode';
 import { usePaymentClaim } from '@/hooks/usePaymentClaim';
-import { fetchJobPhoneStatus } from '@/lib/jobs-api';
+import { fetchCustomerJob, fetchJobPhoneStatus, retryJobDispatch, type BackendJob } from '@/lib/jobs-api';
 import type { PaymentClaimMethod } from '@/lib/payments-api';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
@@ -33,10 +33,6 @@ import { useChat } from '@/context/ChatContext';
 import { useAuth } from '@/context/AuthContext';
 import { getCachedCategories, resolveServiceCategoryId } from '@/lib/categories-api';
 import { cleanAndNormalizePhone } from '@/lib/auth-api';
-import {
-  toJobTechnician,
-  type MarketplaceTechnician,
-} from '@/constants/technicians';
 import {
   EMERGENCY_DISPATCH_FEE,
   formatBookingFee,
@@ -49,6 +45,9 @@ type PaymentSource =
   | { kind: 'test' };
 
 type DispatchPhase = 'REVIEW' | 'AUTHORIZING' | 'SEARCHING_DISPATCH' | 'ACCEPTED';
+
+/** Jobs on the API have UUIDs; phone-only drafts have ids like job-123-abc. */
+const API_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function SosDispatchScreen() {
   const colors = useColors();
@@ -80,10 +79,17 @@ export default function SosDispatchScreen() {
 
   const targetRequestId = params.requestId || params.jobId;
   const initialJob = targetRequestId ? getJob(targetRequestId) : undefined;
-
-  const [phase, setPhase] = useState<DispatchPhase>(
-    initialJob?.status === 'SEARCHING_DISPATCH' ? 'SEARCHING_DISPATCH' : 'REVIEW'
+  // A paid emergency nobody has taken yet is already being dispatched: follow it.
+  const alreadyDispatching = Boolean(
+    initialJob && API_JOB_ID.test(initialJob.id) && initialJob.bookingFee?.status === 'PAID' && !initialJob.technician,
   );
+
+  const [phase, setPhase] = useState<DispatchPhase>(alreadyDispatching ? 'SEARCHING_DISPATCH' : 'REVIEW');
+  /** The emergency on the server (its id replaces the phone's draft id once paid). */
+  const [dispatchJobId, setDispatchJobId] = useState<string | null>(alreadyDispatching ? initialJob!.id : null);
+  const [liveJob, setLiveJob] = useState<BackendJob | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [payMethod, setPayMethod] = useState<PaymentClaimMethod>('MTN');
   const [phoneNumber, setPhoneNumber] = useState(account?.phone ?? '');
   const [sosError, setSosError] = useState<string | null>(null);
@@ -98,7 +104,6 @@ export default function SosDispatchScreen() {
   }, [claimStatus, setPaymentReported, targetRequestId]);
   const sourceRef = useRef<PaymentSource>({ kind: 'test' });
   const continuedClaimRef = useRef<string | null>(null);
-  const [matchedSpecialist, setMatchedSpecialist] = useState<MarketplaceTechnician | null>(null);
   const [transactionRef, setTransactionRef] = useState<string>('');
 
   // Phone verification state
@@ -169,13 +174,16 @@ export default function SosDispatchScreen() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (phase === 'SEARCHING_DISPATCH' || phase === 'AUTHORIZING' || phase === 'ACCEPTED') {
-        return true; // Prevent accidental exit while dispatching
+      if (phase === 'AUTHORIZING' || phase === 'ACCEPTED') return true; // Payment or hand-over in progress.
+      if (phase === 'SEARCHING_DISPATCH') {
+        // The search continues on the server; the request stays in Activity.
+        router.replace('/');
+        return true;
       }
       return false;
     });
     return () => sub.remove();
-  }, [phase]);
+  }, [phase, router]);
 
   // Resolve service & job details
   const activeJob = targetRequestId ? getJob(targetRequestId) : undefined;
@@ -194,28 +202,63 @@ export default function SosDispatchScreen() {
     ? activeJob?.bookingFee?.amount ?? EMERGENCY_DISPATCH_FEE
     : sosQuote?.customerTotal ?? activeJob?.bookingFee?.amount ?? EMERGENCY_DISPATCH_FEE;
 
-  // Broadcast step logs for radar screen
-  const [broadcastStep, setBroadcastStep] = useState(0);
+  // Follow the real dispatch: who is being asked, and whether someone accepted.
+  useEffect(() => {
+    if (phase !== 'SEARCHING_DISPATCH' || !dispatchJobId) return;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const job = await fetchCustomerJob(dispatchJobId);
+        if (stopped) return;
+        setLiveJob(job);
+        if (job.currentTechnician && ['ASSIGNED', 'IN_PROGRESS', 'PAUSED'].includes(job.status)) {
+          setPhase('ACCEPTED');
+          notify('success');
+          vibrate();
+          await openConversation(job.id).catch(() => undefined);
+          setTimeout(() => openPaidChat(router, { id: job.id, requestId: job.id, type: 'SOS', firstMessage: 'true' }), 1500);
+        }
+      } catch {
+        // A missed check is retried on the next tick.
+      }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 3000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, dispatchJobId]);
 
+  // A one-second clock for the offer countdown.
   useEffect(() => {
     if (phase !== 'SEARCHING_DISPATCH') return;
-
-    const t1 = setTimeout(() => setBroadcastStep(1), 800);
-    const t2 = setTimeout(() => setBroadcastStep(2), 1700);
-    const t3 = setTimeout(() => setBroadcastStep(3), 2600);
-
-    // After broadcast duration, match nearest available technician
-    const tAccept = setTimeout(() => {
-      handleTechnicianAcceptance();
-    }, 3400);
-
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(tAccept);
-    };
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
   }, [phase]);
+
+  const activeOffer = liveJob?.activeOffer ?? null;
+  const offerSecondsLeft = activeOffer?.expiresAt
+    ? Math.max(0, Math.ceil((new Date(activeOffer.expiresAt).getTime() - now) / 1000))
+    : null;
+  const nobodyLeft = liveJob?.status === 'OPEN' && liveJob.dispatchStatus === 'EXHAUSTED' && !activeOffer;
+  const jobEnded = liveJob ? ['CANCELLED', 'FAILED', 'COMPLETED'].includes(liveJob.status) : false;
+  const searching = !nobodyLeft && !jobEnded;
+
+  /** Asks the technicians who have not been asked yet (POST retry-dispatch). */
+  const retrySearch = async () => {
+    if (!dispatchJobId || retrying) return;
+    setRetrying(true);
+    setSosError(null);
+    try {
+      setLiveJob(await retryJobDispatch(dispatchJobId));
+    } catch (err) {
+      setSosError(err instanceof Error ? err.message : 'The search could not be restarted. Try again.');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const handleAuthorizeAndBroadcast = async (source: PaymentSource) => {
     sourceRef.current = source;
@@ -272,6 +315,14 @@ export default function SosDispatchScreen() {
       setPhase('REVIEW');
       return;
     }
+    // Technicians are found by distance: never send a made-up location.
+    const latitude = activeJob?.locationLatitude;
+    const longitude = activeJob?.locationLongitude;
+    if (latitude === undefined || longitude === undefined) {
+      setSosError('We do not have the emergency location on the map. Go back and set the address or use your current location.');
+      setPhase('REVIEW');
+      return;
+    }
     try {
       const targetServiceCategoryId = await resolveServiceCategoryId(
         serviceName,
@@ -291,8 +342,8 @@ export default function SosDispatchScreen() {
         description: problemDesc.trim(),
         serviceCategoryId: targetServiceCategoryId,
         locationAddress: locationLabel,
-        latitude: activeJob?.locationLatitude ?? -1.9441,
-        longitude: activeJob?.locationLongitude ?? 30.0619,
+        latitude,
+        longitude,
         offeredAmount: dispatchFee,
         requestType: 'SOS',
       }, targetRequestId);
@@ -303,7 +354,9 @@ export default function SosDispatchScreen() {
       if (source.kind === 'claim') await paymentClaim.clear();
       notify('success');
 
-      // Switch to radar search pulse screen
+      // Follow the real dispatch from here.
+      setDispatchJobId(createdBackendJob.id);
+      setLiveJob(createdBackendJob);
       setPhase('SEARCHING_DISPATCH');
     } catch (err) {
       setSosError(err instanceof Error ? err.message : 'The emergency request could not be sent. Please try again.');
@@ -358,23 +411,6 @@ export default function SosDispatchScreen() {
 
   const claimOpen = paymentClaim.claim !== null;
 
-  const handleTechnicianAcceptance = async () => {
-    const finalId = targetRequestId || activeJob?.id;
-    if (!finalId) return;
-
-    setPhase('ACCEPTED');
-    notify('success');
-    vibrate();
-
-    // The chat is always addressed by its job id.
-    const destChatId = finalId;
-    await openConversation(finalId).catch(() => undefined);
-
-    setTimeout(() => {
-      openPaidChat(router, { id: destChatId, requestId: finalId, type: 'SOS', firstMessage: 'true' });
-    }, 1300);
-  };
-
   const spin = radarSweep.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
@@ -386,17 +422,23 @@ export default function SosDispatchScreen() {
           RADAR SEARCH PULSE SCREEN (Phase: SEARCHING_DISPATCH)
          ========================================================================= */}
       {phase === 'SEARCHING_DISPATCH' ? (
-        <View style={[styles.radarContainer, { paddingTop: Platform.OS === 'web' ? 24 : insets.top + 16 }]}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.radarContainer,
+            { paddingTop: Platform.OS === 'web' ? 24 : insets.top + 16, paddingBottom: insets.bottom + 24 },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
           {/* Radar Header Badge */}
           <View style={styles.radarHeaderBadge}>
             <View style={styles.blinkingDot} />
-            <Text style={styles.radarHeaderBadgeText}>SOS BROADCAST ACTIVE</Text>
+            <Text style={styles.radarHeaderBadgeText}>{searching ? 'SOS SEARCH ACTIVE' : 'SEARCH STOPPED'}</Text>
           </View>
 
           {/* Radar Animation */}
           <View style={[styles.radarCircleWrapper, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            {/* Concentric Pulse Rings */}
-            {[pulse1, pulse2, pulse3].map((pulseVal, index) => (
+            {/* Concentric Pulse Rings: only while technicians are being asked */}
+            {(searching ? [pulse1, pulse2, pulse3] : []).map((pulseVal, index) => (
               <Animated.View
                 key={index}
                 style={[
@@ -420,6 +462,7 @@ export default function SosDispatchScreen() {
             ))}
 
             {/* Rotating Scan Line */}
+            {searching ? (
             <Animated.View
               style={[
                 styles.radarScanArm,
@@ -428,11 +471,8 @@ export default function SosDispatchScreen() {
                 },
               ]}
             />
+            ) : null}
 
-            {/* Nearby detected technician blips */}
-            <View style={[styles.techBlip, { top: 38, left: 52 }]} />
-            <View style={[styles.techBlip, { bottom: 44, right: 48 }]} />
-            <View style={[styles.techBlip, { top: 72, right: 38 }]} />
 
             {/* Glowing Core Beacon */}
             <View style={styles.radarCenterCore}>
@@ -440,68 +480,89 @@ export default function SosDispatchScreen() {
             </View>
           </View>
 
-          {/* Radar Copy & Live Status */}
+          {/* Live status from the server */}
           <View style={styles.radarCopySection}>
             <Text style={[styles.radarMainTitle, { color: colors.foreground }]} testID="radar-search-title">
-              Alerting nearby emergency technicians...
+              {nobodyLeft
+                ? 'No technician is free right now'
+                : jobEnded
+                  ? 'This emergency request has ended'
+                  : activeOffer
+                    ? `Asking ${activeOffer.technicianName}`
+                    : 'Finding the nearest available technician…'}
             </Text>
             <Text style={[styles.radarSubtitle, { color: colors.mutedForeground }]}>
-              Broadcasting your GPS location to verified on-call specialists within 5km radius.
+              {nobodyLeft
+                ? 'Every nearby technician for this service was asked. Your payment still covers the emergency: try again, or check back from Activity.'
+                : jobEnded
+                  ? 'Open it from Activity to see what happened.'
+                  : 'Technicians are asked one at a time, nearest first. Each has 30 seconds to accept.'}
             </Text>
-
-            <View style={[styles.responseWindowPill, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-              <Ionicons name="flash" size={14} color="#ef4444" />
-              <Text style={[styles.responseWindowPillText, { color: colors.foreground }]}>Expected Response: 5–15 mins</Text>
-            </View>
+            {activeOffer && offerSecondsLeft !== null ? (
+              <View style={[styles.responseWindowPill, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+                <Ionicons name="time-outline" size={14} color={colors.destructive} />
+                <Text style={[styles.responseWindowPillText, { color: colors.foreground }]} testID="sos-offer-countdown">
+                  {offerSecondsLeft > 0 ? `${offerSecondsLeft}s to accept` : 'Moving to the next technician…'}
+                  {activeOffer.distanceMeters ? ` · ${(activeOffer.distanceMeters / 1000).toFixed(1)} km away` : ''}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
-          {/* Live Broadcast Tickers */}
           <View style={[styles.tickerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.tickerRow}>
-              <Ionicons name="checkmark-circle" size={17} color="#16a34a" />
+              <Ionicons name="checkmark-circle" size={17} color={colors.success} />
+              <Text style={[styles.tickerText, { color: colors.foreground }]}>Emergency fee paid</Text>
+            </View>
+            <View style={styles.tickerRow}>
+              <Ionicons name="checkmark-circle" size={17} color={colors.success} />
+              <Text style={[styles.tickerText, { color: colors.foreground }]} numberOfLines={2}>
+                Location sent: {liveJob?.location?.address ?? locationLabel}
+              </Text>
+            </View>
+            <View style={styles.tickerRow}>
+              {nobodyLeft || jobEnded ? (
+                <Ionicons name="alert-circle" size={17} color={colors.destructive} />
+              ) : (
+                <ActivityIndicator size="small" color={colors.destructive} />
+              )}
               <Text style={[styles.tickerText, { color: colors.foreground }]}>
-                Emergency GPS coordinates broadcasted
-              </Text>
-            </View>
-
-            <View style={styles.tickerRow}>
-              {broadcastStep >= 1 ? (
-                <Ionicons name="checkmark-circle" size={17} color="#16a34a" />
-              ) : (
-                <ActivityIndicator size="small" color="#ef4444" />
-              )}
-              <Text style={[styles.tickerText, { color: broadcastStep >= 1 ? colors.foreground : colors.mutedForeground }]}>
-                {broadcastStep >= 1
-                  ? '4 verified specialists alerted in sector'
-                  : 'Scanning local emergency technician network...'}
-              </Text>
-            </View>
-
-            <View style={styles.tickerRow}>
-              {broadcastStep >= 2 ? (
-                <Ionicons name="checkmark-circle" size={17} color="#16a34a" />
-              ) : (
-                <ActivityIndicator size="small" color="#ef4444" />
-              )}
-              <Text style={[styles.tickerText, { color: broadcastStep >= 2 ? colors.foreground : colors.mutedForeground }]}>
-                {broadcastStep >= 2
-                  ? 'Priority SOS push notification delivered'
-                  : 'Delivering priority alert...'}
-              </Text>
-            </View>
-
-            <View style={styles.tickerRow}>
-              {broadcastStep >= 3 ? (
-                <ActivityIndicator size="small" color="#16a34a" />
-              ) : (
-                <Ionicons name="time-outline" size={17} color={colors.mutedForeground} />
-              )}
-              <Text style={[styles.tickerText, { color: broadcastStep >= 3 ? colors.foreground : colors.mutedForeground }]}>
-                Awaiting fastest technician acceptance & lock...
+                {nobodyLeft
+                  ? 'Nobody accepted yet'
+                  : jobEnded
+                    ? 'Search stopped'
+                    : 'Waiting for a technician to accept'}
               </Text>
             </View>
           </View>
-        </View>
+
+          {sosError ? (
+            <View style={{ width: '100%', marginTop: 12 }}>
+              <Notice tone="warning" icon="alert-circle-outline" text={sosError} />
+            </View>
+          ) : null}
+
+          <View style={styles.searchActions}>
+            {nobodyLeft ? (
+              <Button
+                label={retrying ? 'Asking again…' : 'Try again'}
+                icon="refresh"
+                loading={retrying}
+                onPress={() => void retrySearch()}
+                testID="sos-retry-button"
+                style={{ backgroundColor: colors.destructive, borderColor: colors.destructive }}
+                textColor="#ffffff"
+              />
+            ) : null}
+            <Button
+              label={nobodyLeft || jobEnded ? 'Back to home' : 'Keep searching in the background'}
+              variant="outline"
+              size="small"
+              onPress={() => router.replace('/')}
+              testID="sos-leave-button"
+            />
+          </View>
+        </ScrollView>
       ) : (
         /* =========================================================================
             EMERGENCY DISPATCH CHECKOUT & REVIEW SCREEN (Phase: REVIEW / AUTHORIZING)
@@ -537,7 +598,7 @@ export default function SosDispatchScreen() {
             <View style={styles.screenHeadingWrap}>
               <Text style={[styles.screenHeadingTitle, { color: colors.foreground }]}>Emergency Dispatch</Text>
               <Text style={[styles.screenHeadingSub, { color: colors.mutedForeground }]}>
-                Instant network broadcast · 5–15 min expected response
+                Sent to the nearest available technicians, one at a time, until one accepts.
               </Text>
             </View>
 
@@ -550,12 +611,12 @@ export default function SosDispatchScreen() {
                 </View>
                 <View style={styles.responseBadge}>
                   <Ionicons name="flash" size={13} color="#ef4444" />
-                  <Text style={styles.responseBadgeText}>5–15 MIN ETA</Text>
+                  <Text style={styles.responseBadgeText}>PRIORITY</Text>
                 </View>
               </View>
               <PriceBreakdown quote={sosQuote} testID="sos-fee-breakdown" />
               <Text style={[styles.feeSubtext, { color: colors.mutedForeground }]}>
-                Locks priority callout and initiates instant specialist broadcast.
+                Paid once. It covers this emergency until a technician accepts it.
               </Text>
             </View>
 
@@ -631,12 +692,13 @@ export default function SosDispatchScreen() {
               <Button
                 label={`I have paid ${formatBookingFee(dispatchFee)}`}
                 icon="checkmark-done"
-                variant="danger"
                 loading={paymentClaim.submitting}
                 disabled={phase === 'AUTHORIZING'}
                 onPress={() => void handleReportPaid()}
                 testID="i-have-paid-button"
-                style={styles.authorizeButton}
+                // The one action on an emergency: solid red in both themes.
+                style={[styles.authorizeButton, { backgroundColor: colors.destructive, borderColor: colors.destructive }]}
+                textColor="#ffffff"
               />
               {__DEV__ ? (
                 <Button
@@ -710,12 +772,12 @@ export default function SosDispatchScreen() {
                 }}
               />
               <Button
-                label="Verify & Broadcast"
+                label="Verify & send"
                 size="small"
-                variant="danger"
+                style={{ flex: 1, backgroundColor: colors.destructive, borderColor: colors.destructive }}
+                textColor="#ffffff"
                 loading={isVerifyingOtp}
                 disabled={otpCode.trim().length < 6}
-                style={{ flex: 1 }}
                 onPress={handleConfirmOtpAndBroadcast}
               />
             </View>
@@ -733,25 +795,14 @@ export default function SosDispatchScreen() {
               <Ionicons name="checkmark-done" size={36} color="#ffffff" />
             </View>
 
-            <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-              Emergency Technician Assigned!
-            </Text>
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Technician accepted</Text>
 
             <Text style={[styles.modalSub, { color: colors.mutedForeground }]}>
-              {matchedSpecialist?.name} has accepted your emergency broadcast and is en route.
+              {liveJob?.currentTechnician?.fullName ?? 'A technician'} took your emergency. Agree on the work in the chat.
             </Text>
 
-            <View style={[styles.modalEtaBox, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-              <Ionicons name="time" size={17} color="#ef4444" />
-              <Text style={[styles.modalEtaText, { color: colors.foreground }]}>
-                Estimated Arrival: {matchedSpecialist?.etaMinutes ?? 8} mins
-              </Text>
-            </View>
-
-            <ActivityIndicator size="small" color="#ef4444" style={{ marginTop: 16 }} />
-            <Text style={[styles.modalRoutingText, { color: colors.mutedForeground }]}>
-              Opening emergency direct chat...
-            </Text>
+            <ActivityIndicator size="small" color={colors.destructive} style={{ marginTop: 16 }} />
+            <Text style={[styles.modalRoutingText, { color: colors.mutedForeground }]}>Opening the chat…</Text>
           </View>
         </View>
       </Modal>
@@ -956,7 +1007,7 @@ const styles = StyleSheet.create({
 
   // RADAR SCREEN STYLES
   radarContainer: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     paddingHorizontal: 20,
   },
@@ -1011,15 +1062,6 @@ const styles = StyleSheet.create({
     left: 100,
     transformOrigin: 'left center',
     opacity: 0.5,
-  },
-  techBlip: {
-    position: 'absolute',
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#ef4444',
-    borderWidth: 1.5,
-    borderColor: '#ffffff',
   },
   radarCenterCore: {
     width: 60,
@@ -1080,6 +1122,12 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
+  searchActions: {
+    width: '100%',
+    gap: 10,
+    marginTop: 16,
+  },
+
   // MODAL STYLES
   modalOverlay: {
     flex: 1,
@@ -1114,20 +1162,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 20,
-  },
-  modalEtaBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    marginTop: 14,
-  },
-  modalEtaText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 13,
   },
   modalRoutingText: {
     fontFamily: 'Inter_500Medium',
