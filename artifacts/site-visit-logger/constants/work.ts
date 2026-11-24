@@ -6,18 +6,6 @@
  * Until that is reviewed they cannot go online, so customers only ever reach
  * technicians whose papers someone has actually read.
  */
-/** Technician profile and availability types shared by work screens. */
-export const TRADES = [
-  'Electrical',
-  'Plumbing',
-  'HVAC',
-  'Appliance Repair',
-  'Car & Garage',
-  'Truck & Mechanical',
-  'Home Repair',
-  'General Maintenance',
-] as const;
-
 export type Trade = string;
 
 /** These states come from the backend verification status. */
@@ -70,6 +58,8 @@ export type WorkProfile = {
   certificateSizeBytes?: Array<number | undefined>;
   serviceExperiences?: Array<{
     id?: string;
+    /** The catalog service; null for a trade the technician named themselves ("Others"). */
+    categoryId?: string | null;
     trade: string;
     customName: string;
     yearsOfExperience: number;

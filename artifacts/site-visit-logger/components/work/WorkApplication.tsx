@@ -17,7 +17,9 @@ import {
   type ScrollViewInstance,
   View,
 } from 'react-native';
-import { isWorkRejected, TRADES } from '@/constants/work';
+import { isWorkRejected } from '@/constants/work';
+import { Button } from '@/components/ui/Button';
+import { useCategories } from '@/lib/categories-api';
 import { inferUploadMimeType, MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from '@/constants/uploads';
 import { OTP_LENGTH, RESEND_AFTER_MS } from '@/constants/auth';
 import { useWork } from '@/context/WorkContext';
@@ -34,6 +36,12 @@ import {
   type BusinessType,
   type CompanyDraft,
 } from '@/lib/companies-api';
+
+/** One trade on the application: a catalog service, or one the technician names ("Others"). */
+type TradeEntry = { categoryId: string | null; trade: string; customName: string; yearsOfExperience: number };
+
+const OTHER_TRADE = 'Others';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type FileData = {
   uri: string;
@@ -100,9 +108,17 @@ export function WorkApplication() {
   const [profilePicture, setProfilePicture] = useState<FileData | null>(null);
   const [profilePictureSelectionError, setProfilePictureSelectionError] = useState('');
 
-  const [serviceExperiences, setServiceExperiences] = useState<
-    Array<{ trade: string; customName: string; yearsOfExperience: number }>
-  >([{ trade: TRADES[0] ?? 'Plumbing', customName: '', yearsOfExperience: 1 }]);
+  const [serviceExperiences, setServiceExperiences] = useState<TradeEntry[]>([
+    { categoryId: null, trade: '', customName: '', yearsOfExperience: 1 },
+  ]);
+  // The trades a technician can register come from the service catalog.
+  const {
+    categories: catalog,
+    isLoading: catalogLoading,
+    error: catalogError,
+    refresh: refreshCatalog,
+  } = useCategories();
+  const tradeOptions = catalog.filter((service) => service.id && UUID.test(service.id));
 
   // ── Step 2: Verification & KYC Documents ─────────────────────────────────
   const [nationalIdNumber, setNationalIdNumber] = useState('');
@@ -231,9 +247,36 @@ export function WorkApplication() {
     }
 
     if (profile.serviceExperiences?.length) {
-      setServiceExperiences(profile.serviceExperiences);
+      setServiceExperiences(
+        profile.serviceExperiences.map((exp) => ({
+          categoryId: exp.categoryId ?? null,
+          trade: exp.trade,
+          customName: exp.customName,
+          yearsOfExperience: exp.yearsOfExperience,
+        })),
+      );
     }
   }, [profile]);
+
+  // Older applications saved catalog trades by name: link them to the catalog
+  // service of that name, and keep any other name as the technician's own trade.
+  useEffect(() => {
+    if (!tradeOptions.length) return;
+    setServiceExperiences((current) => {
+      let changed = false;
+      const next = current.map((exp) => {
+        if (exp.categoryId || !exp.trade || exp.trade === OTHER_TRADE) return exp;
+        changed = true;
+        const name = (exp.customName || exp.trade).trim().toLowerCase();
+        const match = tradeOptions.find((service) => service.label.toLowerCase() === name);
+        return match
+          ? { ...exp, categoryId: match.id!, trade: match.label, customName: '' }
+          : { ...exp, categoryId: null, trade: OTHER_TRADE, customName: exp.customName || exp.trade };
+      });
+      return changed ? next : current;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, serviceExperiences.length]);
 
   // Resend cooldown timer
   useEffect(() => {
@@ -335,18 +378,24 @@ export function WorkApplication() {
   // ── Trades Helpers ────────────────────────────────────────────────────────
   const addServiceExperience = () => {
     if (serviceExperiences.length >= 10) return;
-    const selectedTrades = serviceExperiences.map((e) => e.trade);
-    const availableTrade = TRADES.find((t) => !selectedTrades.includes(t)) ?? 'Others';
-    setServiceExperiences([...serviceExperiences, { trade: availableTrade, customName: '', yearsOfExperience: 1 }]);
+    // A new entry starts empty: the technician picks its trade.
+    setServiceExperiences([...serviceExperiences, { categoryId: null, trade: '', customName: '', yearsOfExperience: 1 }]);
   };
 
   const updateServiceExperience = (
     index: number,
-    field: 'trade' | 'customName' | 'yearsOfExperience',
+    field: 'customName' | 'yearsOfExperience',
     value: string | number,
   ) => {
     const updated = [...serviceExperiences];
     updated[index] = { ...updated[index], [field]: value };
+    setServiceExperiences(updated);
+  };
+
+  /** Picks a catalog trade (by id) or "Others" (categoryId null) for one entry. */
+  const selectTrade = (index: number, categoryId: string | null, trade: string) => {
+    const updated = [...serviceExperiences];
+    updated[index] = { ...updated[index], categoryId, trade };
     setServiceExperiences(updated);
   };
 
@@ -356,7 +405,8 @@ export function WorkApplication() {
   };
 
   // ── Step 1 Validation & Transition ────────────────────────────────────────
-  const handleProceedToStep2 = async () => {
+  /** What step 1 still needs, by field; the Continue button stays off until it is empty. */
+  const step1Problems = (): { [key: string]: string } => {
     const errors: { [key: string]: string } = {};
 
     if (!fullName.trim() || fullName.trim().length < 2) {
@@ -372,17 +422,29 @@ export function WorkApplication() {
     }
 
     const companyProblems = businessType === 'COMPANY' ? companyIssues(company) : {};
-    setCompanyErrors(companyProblems);
     if (Object.keys(companyProblems).length > 0) {
       errors.company = 'Complete the company details.';
     }
 
-    const hasInvalidTrade = serviceExperiences.some(
-      (exp) => exp.trade === 'Others' && !exp.customName.trim(),
+    const chosen = serviceExperiences.map((exp) =>
+      exp.categoryId ? `cat:${exp.categoryId}` : `own:${exp.customName.trim().toLowerCase()}`,
     );
-    if (hasInvalidTrade) {
+    if (serviceExperiences.some((exp) => !exp.categoryId && exp.trade !== OTHER_TRADE)) {
+      errors.trades = 'Choose a trade for each entry.';
+    } else if (serviceExperiences.some((exp) => exp.trade === OTHER_TRADE && exp.customName.trim().length < 2)) {
       errors.trades = 'Please name your custom trade.';
+    } else if (new Set(chosen).size !== chosen.length) {
+      errors.trades = 'Each trade can only be listed once.';
     }
+    return errors;
+  };
+
+  const step1Missing = step1Problems();
+  const step1Ready = Object.keys(step1Missing).length === 0;
+
+  const handleProceedToStep2 = async () => {
+    const errors = step1Problems();
+    if (businessType === 'COMPANY') setCompanyErrors(companyIssues(company));
 
     if (Object.keys(errors).length > 0) {
       setStep1Errors(errors);
@@ -521,6 +583,7 @@ export function WorkApplication() {
         baseLatitude,
         baseLongitude,
         serviceExperiences: serviceExperiences.map((exp) => ({
+          categoryId: exp.trade === OTHER_TRADE ? null : exp.categoryId,
           trade: exp.trade,
           customName: exp.trade === 'Others' ? (exp.customName.trim() || 'Other') : exp.trade,
           yearsOfExperience: Number(exp.yearsOfExperience) || 0,
@@ -963,35 +1026,48 @@ export function WorkApplication() {
                   style={styles.tradeScroll}
                   contentContainerStyle={styles.tradeScrollContent}
                 >
-                  {TRADES.map((trade) => {
-                    const isSelected = exp.trade === trade;
-                    return (
-                      <Pressable
-                        key={trade}
-                        accessibilityRole="button"
-                        onPress={() => updateServiceExperience(idx, 'trade', trade)}
-                        style={[
-                          styles.chip,
-                          {
-                            borderColor: isSelected ? colors.primary : colors.border,
-                            backgroundColor: isSelected ? colors.primary : colors.card,
-                          },
-                        ]}
-                      >
-                        <Text
+                  {catalogLoading && !tradeOptions.length ? (
+                    <ActivityIndicator color={colors.primary} style={{ marginHorizontal: 8 }} />
+                  ) : null}
+                  {[...tradeOptions.map((service) => ({ id: service.id!, label: service.label })), { id: null, label: OTHER_TRADE }].map(
+                    (option) => {
+                      const isSelected = option.id ? exp.categoryId === option.id : exp.trade === OTHER_TRADE;
+                      return (
+                        <Pressable
+                          key={option.id ?? OTHER_TRADE}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: isSelected }}
+                          onPress={() => selectTrade(idx, option.id, option.label)}
                           style={[
-                            styles.chipText,
-                            { color: isSelected ? colors.primaryForeground : colors.foreground },
+                            styles.chip,
+                            {
+                              borderColor: isSelected ? colors.primary : colors.border,
+                              backgroundColor: isSelected ? colors.primary : colors.card,
+                            },
                           ]}
                         >
-                          {trade}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
+                          <Text
+                            style={[
+                              styles.chipText,
+                              { color: isSelected ? colors.primaryForeground : colors.foreground },
+                            ]}
+                          >
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    },
+                  )}
                 </ScrollView>
+                {catalogError && !tradeOptions.length ? (
+                  <Pressable accessibilityRole="button" onPress={() => void refreshCatalog()} hitSlop={6}>
+                    <Text style={[styles.fieldError, { color: colors.destructive }]}>
+                      Could not load the trade list. Tap to try again.
+                    </Text>
+                  </Pressable>
+                ) : null}
 
-                {exp.trade === 'Others' ? (
+                {exp.trade === OTHER_TRADE ? (
                   <TextInput
                     value={exp.customName}
                     onChangeText={(val) => updateServiceExperience(idx, 'customName', val)}
@@ -1053,16 +1129,36 @@ export function WorkApplication() {
             ) : null}
           </View>
 
-          {/* Continue to Step 2 Button */}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void handleProceedToStep2()}
-            style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
-          >
-            <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
-              Continue to Verification & Documents →
-            </Text>
-          </Pressable>
+          {/* Continue to Step 2: off until every required field is filled in. */}
+          <View style={[styles.continueCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.continueHead}>
+              <View style={[styles.continueStep, { backgroundColor: step1Ready ? colors.successMuted : colors.muted }]}>
+                <Feather
+                  name={step1Ready ? 'check' : 'list'}
+                  size={15}
+                  color={step1Ready ? colors.success : colors.mutedForeground}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.continueTitle, { color: colors.foreground }]}>
+                  {step1Ready ? 'Profile complete' : 'Finish your profile to continue'}
+                </Text>
+                <Text style={[styles.continueHint, { color: colors.mutedForeground }]} testID="step1-missing">
+                  {step1Ready
+                    ? 'Next: verify your phone and add your ID and certificates.'
+                    : Object.values(step1Missing).join(' ')}
+                </Text>
+              </View>
+            </View>
+            <Button
+              label="Continue to verification"
+              featherIcon="arrow-right"
+              iconPosition="trailing"
+              disabled={!step1Ready}
+              onPress={() => void handleProceedToStep2()}
+              testID="continue-to-step2"
+            />
+          </View>
         </View>
       )}
 
@@ -1643,6 +1739,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 2,
   },
+  continueCard: { borderWidth: 1, borderRadius: 18, padding: 14, gap: 12, marginTop: 4 },
+  continueHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  continueStep: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  continueTitle: { fontFamily: 'Inter_700Bold', fontSize: 14 },
+  continueHint: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17, marginTop: 2 },
   chip: {
     paddingVertical: 8,
     paddingHorizontal: 12,

@@ -114,6 +114,7 @@ type ApiTechnicianProfile = {
   yearsOfExperience: number;
   serviceExperiences: Array<{
     id?: string;
+    categoryId?: string | null;
     customName: string | null;
     category: { name: string } | null;
     yearsOfExperience: number;
@@ -154,6 +155,7 @@ function mapProfile(
 
   const experiences = profile.serviceExperiences.map((service) => ({
     id: service.id,
+    categoryId: service.categoryId ?? null,
     trade: service.category?.name ?? service.customName ?? 'General Maintenance',
     customName: service.customName ?? '',
     yearsOfExperience: service.yearsOfExperience,
@@ -1037,14 +1039,21 @@ export function WorkProvider({ children }: { children: ReactNode }) {
               true,
             ),
           );
+          // A catalog trade is sent by id so jobs for that service reach the technician;
+          // only a trade the technician named themselves goes as free text.
           const experiences = (application.serviceExperiences ?? [{
+            categoryId: null,
             trade: application.trade,
             customName: application.trade,
             yearsOfExperience: application.yearsExperience,
-          }]).map((experience) => ({
-            customName: experience.trade === 'Others' ? experience.customName.trim() : experience.trade,
-            yearsOfExperience: experience.yearsOfExperience,
-          }));
+          }]).map((experience) =>
+            experience.categoryId
+              ? { categoryId: experience.categoryId, yearsOfExperience: experience.yearsOfExperience }
+              : {
+                  customName: experience.trade === 'Others' ? experience.customName.trim() : experience.trade,
+                  yearsOfExperience: experience.yearsOfExperience,
+                },
+          );
           const normalizedPayment = cleanAndNormalizePhone(application.paymentNumber || application.phoneNumber || '');
           const profileBody = {
             gender: application.gender || 'PREFER_NOT_TO_SAY',
@@ -1140,7 +1149,11 @@ export function WorkProvider({ children }: { children: ReactNode }) {
               form.append('type', 'CERTIFICATE');
               form.append('title', title);
               form.append('certificateType', 'TVET_CERTIFICATE');
-              form.append('customCategoryName', experience?.customName || 'General');
+              if (experience && 'categoryId' in experience && experience.categoryId) {
+                form.append('categoryId', experience.categoryId);
+              } else {
+                form.append('customCategoryName', experience?.customName || 'General');
+              }
             }
             await appendLocalFile(form, uri, `certificate-${index + 1}`, mimeType);
             await apiUpload(
