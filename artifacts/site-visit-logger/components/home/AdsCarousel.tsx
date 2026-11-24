@@ -15,7 +15,7 @@ import { Image } from 'expo-image';
 import * as WebBrowser from 'expo-web-browser';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
-import { AdItem } from '@/context/AdsContext';
+import { AdItem, useAds } from '@/context/AdsContext';
 
 const AUTO_ADVANCE_DELAY_MS = 5000;
 const ANIMATION_DURATION_MS = 400;
@@ -27,6 +27,7 @@ interface AdsCarouselProps {
 
 export function AdsCarousel({ ads }: AdsCarouselProps) {
   const colors = useColors();
+  const { recordAdClick } = useAds();
   const { width: windowWidth } = useWindowDimensions();
 
   // Screen horizontal gutter on Home is 20px on each side (total 40px)
@@ -48,7 +49,10 @@ export function AdsCarousel({ ads }: AdsCarouselProps) {
     return [ads[ads.length - 1], ...ads, ads[0]];
   }, [ads]);
 
-  const handleOpenAd = async (url: string) => {
+  const handleOpenAd = async (ad: AdItem) => {
+    const url = ad.targetUrl;
+    if (!url) return;
+    recordAdClick(ad.id);
     try {
       if (Platform.OS !== 'web' && WebBrowser.openBrowserAsync) {
         await WebBrowser.openBrowserAsync(url);
@@ -187,7 +191,8 @@ export function AdsCarousel({ ads }: AdsCarouselProps) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${item.title} - ${item.pitch}`}
-          onPress={() => handleOpenAd(item.targetUrl)}
+          disabled={!item.targetUrl}
+          onPress={() => void handleOpenAd(item)}
           style={({ pressed }) => [
             styles.card,
             {
@@ -198,12 +203,15 @@ export function AdsCarousel({ ads }: AdsCarouselProps) {
             },
           ]}
         >
-          <Image
-            source={item.imageSource}
-            style={styles.image}
-            contentFit="cover"
-            transition={200}
-          />
+          {item.imageSource ? (
+            <Image
+              source={item.imageSource}
+              style={styles.image}
+              contentFit="cover"
+              transition={200}
+              accessibilityLabel={item.imageAlt ?? undefined}
+            />
+          ) : null}
 
           <View style={styles.contentContainer}>
             <View style={styles.textContainer}>
@@ -215,12 +223,14 @@ export function AdsCarousel({ ads }: AdsCarouselProps) {
               </Text>
             </View>
 
-            <View style={[styles.ctaButton, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.ctaText, { color: colors.primaryForeground }]}>
-                {item.callToAction}
-              </Text>
-              <Feather name="arrow-up-right" size={14} color={colors.primaryForeground} />
-            </View>
+            {item.targetUrl ? (
+              <View style={[styles.ctaButton, { backgroundColor: colors.primary }]}>
+                <Text style={[styles.ctaText, { color: colors.primaryForeground }]}>
+                  {item.callToAction}
+                </Text>
+                <Feather name="arrow-up-right" size={14} color={colors.primaryForeground} />
+              </View>
+            ) : null}
           </View>
         </Pressable>
       </View>

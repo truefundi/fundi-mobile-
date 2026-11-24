@@ -1,92 +1,103 @@
-import React, { createContext, useContext, useState, useMemo, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useWork } from '@/context/WorkContext';
+import { apiRequest } from '@/lib/api';
 
 export interface AdItem {
   id: string;
   title: string;
   pitch: string;
   callToAction: string;
-  targetUrl: string;
-  imageSource: any;
+  /** Where tapping the ad leads; null when the ad has no link. */
+  targetUrl: string | null;
+  imageSource: { uri: string } | null;
+  imageAlt: string | null;
 }
 
 interface AdsContextValue {
   ads: AdItem[];
   isLoading: boolean;
   refreshAds: () => Promise<void>;
+  /** Counts a tap on an ad (best effort). */
+  recordAdClick: (id: string) => void;
 }
 
-/**
- * Image Asset Placement Note:
- * Place your images at:
- *   1. assets/images/ads/homeshub.png
- *   2. assets/images/ads/rides.png
- *   3. assets/images/ads/eventis.png
- *
- * If local asset files are not yet present on disk,
- * the placeholder URIs below ensure the component does not crash.
- */
-const MOCK_ADS: AdItem[] = [
-  {
-    id: 'ad-homeshub',
-    title: 'HomesHub Kigali',
-    pitch: 'Find apartments, houses, and premium rentals across Kigali with ease.',
-    callToAction: 'Explore Houses',
-    targetUrl: 'https://homeshub.rw',
-    imageSource: {
-      uri: 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1000&q=80',
-    },
-    // Replace with: require('../../assets/images/ads/homeshub.png') when added to assets
-  },
-  {
-    id: 'ad-rides',
-    title: 'Rides Kigali',
-    pitch: 'Fast, secure, and affordable on-demand rides everywhere in Rwanda.',
-    callToAction: 'Book a Ride',
-    targetUrl: 'https://rides.rw',
-    imageSource: {
-      uri: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&w=1000&q=80',
-    },
-    // Replace with: require('../../assets/images/ads/rides.png') when added to assets
-  },
-  {
-    id: 'ad-eventis',
-    title: 'Eventis Rwanda',
-    pitch: 'Seamless event ticketing, concert passes, and venue coordination.',
-    callToAction: 'Discover Events',
-    targetUrl: 'https://eventis.rw',
-    imageSource: {
-      uri: 'https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=1000&q=80',
-    },
-    // Replace with: require('../../assets/images/ads/eventis.png') when added to assets
-  },
-];
+/** GET /api/v1/ads: an ad visible right now. */
+type ApiAd = {
+  id: string;
+  title: string;
+  description: string;
+  imageUrl: string | null;
+  imageAlt: string | null;
+  callToAction: string | null;
+  targetUrl: string | null;
+};
+
+/** Uploaded creatives come back as API paths; hosted ones as full URLs. */
+function absoluteImageUrl(url: string | null): string | null {
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
+  return base ? `${base}${url.startsWith('/') ? '' : '/'}${url}` : null;
+}
+
+function toAdItem(ad: ApiAd): AdItem {
+  const image = absoluteImageUrl(ad.imageUrl);
+  return {
+    id: ad.id,
+    title: ad.title,
+    pitch: ad.description,
+    callToAction: ad.callToAction?.trim() || 'Learn more',
+    targetUrl: ad.targetUrl,
+    imageSource: image ? { uri: image } : null,
+    imageAlt: ad.imageAlt,
+  };
+}
 
 const AdsContext = createContext<AdsContextValue | null>(null);
 
+/** Ads already counted as seen in this app session (survives the provider remounting). */
+const countedImpressions = new Set<string>();
+
+/** The home carousel's ads, managed by admins in the dashboard (placement MOBILE_HOME). */
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [ads, setAds] = useState<AdItem[]>(MOCK_ADS);
-  const [isLoading, setIsLoading] = useState(false);
+  const { mode } = useWork();
+  const role = mode === 'working' ? 'TECHNICIAN' : 'CUSTOMER';
+  const [ads, setAds] = useState<AdItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const refreshAds = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Reserved for live ads endpoint retrieval
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      setAds(MOCK_ADS);
+      const rows = await apiRequest<ApiAd[]>(`/api/v1/ads?placement=MOBILE_HOME&role=${role}`);
+      setAds(Array.isArray(rows) ? rows.map(toAdItem) : []);
     } catch {
+      // No ads is a normal state: the home screen shows its emergency card instead.
       setAds([]);
     } finally {
       setIsLoading(false);
     }
+  }, [role]);
+
+  useEffect(() => {
+    void refreshAds();
+  }, [refreshAds]);
+
+  // One impression per ad per app session.
+  useEffect(() => {
+    for (const ad of ads) {
+      if (countedImpressions.has(ad.id)) continue;
+      countedImpressions.add(ad.id);
+      void apiRequest(`/api/v1/ads/${ad.id}/impression`, { method: 'POST' }).catch(() => undefined);
+    }
+  }, [ads]);
+
+  const recordAdClick = useCallback((id: string) => {
+    void apiRequest(`/api/v1/ads/${id}/click`, { method: 'POST' }).catch(() => undefined);
   }, []);
 
   const value = useMemo(
-    () => ({
-      ads,
-      isLoading,
-      refreshAds,
-    }),
-    [ads, isLoading, refreshAds]
+    () => ({ ads, isLoading, refreshAds, recordAdClick }),
+    [ads, isLoading, refreshAds, recordAdClick],
   );
 
   return <AdsContext.Provider value={value}>{children}</AdsContext.Provider>;
