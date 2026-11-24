@@ -59,6 +59,8 @@ export function ConfirmDialog({
               size="small"
               testID="confirm-accept-button"
               style={destructive && !busy ? { backgroundColor: colors.destructive, borderColor: colors.destructive } : undefined}
+              // Dark mode draws button labels orange; on red that is unreadable, so destructive is always white.
+              textColor={destructive && !busy ? '#ffffff' : undefined}
             />
             <Button label={cancelLabel} variant="outline" onPress={onCancel} disabled={busy} size="small" testID="confirm-cancel-button" />
           </View>
