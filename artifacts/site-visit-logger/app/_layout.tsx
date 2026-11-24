@@ -132,6 +132,7 @@ function RootLayoutNav() {
         <Stack.Screen name="payments" options={{ headerShown: false }} />
         <Stack.Screen name="company" options={{ headerShown: false }} />
         <Stack.Screen name="add-service" options={{ headerShown: false }} />
+        <Stack.Screen name="disputes" options={{ headerShown: false }} />
         <Stack.Screen name="notifications" options={{ headerShown: false }} />
         <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
         <Stack.Screen name="saved-locations" options={{ headerShown: false }} />

@@ -217,8 +217,17 @@ export default function ProfileScreen() {
             ) : null}
           </View>
           {/* With a picture in place or initials, the camera badge stays visible so user can update */}
-          <View style={[styles.cameraBadge, { backgroundColor: colors.foreground, borderColor: colors.primary }]}>
-            <Ionicons name="camera" size={12} color={colors.primaryForeground} />
+          {/* Dark: an orange badge ringed in the page colour; light: dark navy ringed in white on the orange header. */}
+          <View
+            style={[
+              styles.cameraBadge,
+              {
+                backgroundColor: isDark ? colors.primary : colors.foreground,
+                borderColor: isDark ? colors.background : colors.primaryForeground,
+              },
+            ]}
+          >
+            <Ionicons name="camera" size={12} color="#ffffff" />
           </View>
         </Pressable>
         <View style={styles.profileCopy}>
