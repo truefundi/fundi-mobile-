@@ -29,6 +29,9 @@ import { isWorkVerified } from '@/constants/work';
 import { EmergencyServiceCard } from '@/components/home/EmergencyServiceCard';
 import { useAds } from '@/context/AdsContext';
 import { AdsCarousel } from '@/components/home/AdsCarousel';
+import { ActionDeck } from '@/components/home/ActionDeck';
+import { newestJobFirst, summarizeClientJob } from '@/lib/job-summary';
+import { openClientJob } from '@/lib/checkout-nav';
 
 const SCREEN_GUTTER = 20;
 const GRID_GAP = 10;
@@ -85,10 +88,16 @@ export default function HomeScreen({
   const search = useServiceSearch();
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const { activeJob, recent } = useMemo(() => {
+  const { activeJob, needsYou, recent } = useMemo(() => {
     const open = jobs.filter((job) => !isClosed(job.status));
+    const ongoing = jobs
+      .map((job) => ({ job, summary: summarizeClientJob(job) }))
+      .filter((row) => row.summary.ongoing)
+      .sort((a, b) => newestJobFirst(a.job, b.job));
     return {
       activeJob: open[0],
+      // Requests waiting on the client, newest first: the deck on Home.
+      needsYou: ongoing.filter((row) => row.summary.yourTurn),
       recent: jobs.filter((job) => job.status === 'COMPLETED').slice(0, 3),
     };
   }, [jobs]);
@@ -222,12 +231,14 @@ export default function HomeScreen({
                 </View>
               </Pressable>
             ) : null}
-            {activeJob ? (
+            {needsYou.length ? (
+              <ActionDeck items={needsYou} onOpen={(job) => openClientJob(router, job)} />
+            ) : activeJob ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Open your ${activeJob.service} job`}
                 testID="home-active-job-button"
-                onPress={() => router.push(`/job/${activeJob.id}`)}
+                onPress={() => openClientJob(router, activeJob)}
                 style={({ pressed }) => [styles.activeCard, { backgroundColor: colors.card, borderColor: colors.primary, opacity: pressed ? 0.8 : 1 }]}
               >
                 <View style={styles.activeCopy}>

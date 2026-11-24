@@ -2,7 +2,7 @@ import type { useRouter } from 'expo-router';
 import { cleanAndNormalizePhone } from '@/lib/auth-api';
 import { resolveServiceCategoryId } from '@/lib/categories-api';
 import { fetchJobPhoneStatus } from '@/lib/jobs-api';
-import type { Job } from '@/constants/jobs';
+import { isTerminated, type Job } from '@/constants/jobs';
 
 type Router = ReturnType<typeof useRouter>;
 
@@ -115,4 +115,30 @@ export function resumeRequest(router: Router, job: Job, options: NavOptions = {}
     );
   }
   return true;
+}
+
+/**
+ * Opens one of the client's requests where it continues: a cancelled one is
+ * booked again with another technician, a sent one lives in its chat, and one
+ * not booked yet opens at its step.
+ */
+export function openClientJob(router: Router, job: Job): void {
+  if (isTerminated(job.status)) {
+    router.push({
+      pathname: '/select-technician',
+      params: {
+        jobId: job.id,
+        service: job.service,
+        description: job.problem,
+        address: job.locationLabel,
+        ...(job.locationLatitude !== undefined ? { latitude: String(job.locationLatitude) } : {}),
+        ...(job.locationLongitude !== undefined ? { longitude: String(job.locationLongitude) } : {}),
+      },
+    });
+    return;
+  }
+  const sent =
+    job.bookingFee?.status === 'PAID' || job.status === 'ACTIVE' || job.status === 'IN_PROGRESS' || job.status === 'COMPLETED';
+  if (sent) router.push({ pathname: '/chat/[id]', params: { id: job.id } });
+  else router.push(`/job/${job.id}`);
 }

@@ -201,3 +201,10 @@ export function summarizeTechnicianJob(job: Job, isRequest: boolean): JobSummary
     ongoing: true,
   };
 }
+
+/** When a job last moved: finished, changed status, or was made. */
+export const lastActive = (job: Job) => job.completedAt ?? job.statusSince ?? job.createdAt;
+
+/** Sort helper: the job that moved most recently first. */
+export const newestJobFirst = (a: Job, b: Job) =>
+  new Date(lastActive(b)).getTime() - new Date(lastActive(a)).getTime();

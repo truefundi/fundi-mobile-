@@ -20,12 +20,12 @@ import { ReportDisputeModal } from '@/components/dispute/ReportDisputeModal';
 import { DisputeDetailsModal } from '@/components/dispute/DisputeDetailsModal';
 import { useColors } from '@/hooks/useColors';
 import { useTabScreenPadding } from '@/hooks/useTabScreenPadding';
-import { summarizeClientJob } from '@/lib/job-summary';
+import { lastActive, newestJobFirst, summarizeClientJob } from '@/lib/job-summary';
+import { openClientJob } from '@/lib/checkout-nav';
 
 type Tab = 'Ongoing' | 'History';
 
-const lastActive = (job: Job) => job.completedAt ?? job.statusSince ?? job.createdAt;
-const newestFirst = (a: Job, b: Job) => new Date(lastActive(b)).getTime() - new Date(lastActive(a)).getTime();
+const newestFirst = newestJobFirst;
 
 /**
  * The user's jobs. Clients see their requests; technicians in work mode see
@@ -81,27 +81,7 @@ function ClientJobs() {
     };
   }, [jobs]);
 
-  const open = (job: Job) => {
-    if (isTerminated(job.status)) {
-      // Book the same request again with another technician.
-      router.push({
-        pathname: '/select-technician',
-        params: {
-          jobId: job.id,
-          service: job.service,
-          description: job.problem,
-          address: job.locationLabel,
-          ...(job.locationLatitude !== undefined ? { latitude: String(job.locationLatitude) } : {}),
-          ...(job.locationLongitude !== undefined ? { longitude: String(job.locationLongitude) } : {}),
-        },
-      });
-      return;
-    }
-    const sent = job.bookingFee?.status === 'PAID' || job.status === 'ACTIVE' || job.status === 'IN_PROGRESS' || job.status === 'COMPLETED';
-    // A request not booked yet continues where it stopped; anything sent lives in its chat.
-    if (sent) router.push({ pathname: '/chat/[id]', params: { id: job.id } });
-    else router.push(`/job/${job.id}`);
-  };
+  const open = (job: Job) => openClientJob(router, job);
 
   const rows = tab === 'Ongoing' ? ongoing : history;
   const waitingOnYou = ongoing.filter((row) => row.summary.yourTurn).length;
