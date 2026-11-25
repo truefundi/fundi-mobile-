@@ -23,6 +23,15 @@ export type JobSummary = {
 // Work has started once the technician is working, on hold or finished.
 const WORK_STARTED = new Set(['IN_PROGRESS', 'ON_HOLD', 'COMPLETED']);
 
+/** "until 19:42" for the confirmation window, or nothing. */
+function until(iso?: string) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : ` It completes on its own at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+}
+
 function money(amount?: number) {
   return amount ? `RWF ${amount.toLocaleString()}` : null;
 }
@@ -116,10 +125,21 @@ export function summarizeClientJob(job: Job): JobSummary {
       ongoing: true,
     };
   }
+  if (job.workStatus === 'HEADING_TO_LOCATION' || job.workStatus === 'ARRIVED') {
+    const arrived = job.workStatus === 'ARRIVED';
+    return {
+      label: arrived ? 'Technician arrived' : 'On the way',
+      hint: arrived ? `${tech ?? 'Your technician'} is with you.` : `${tech ?? 'Your technician'} is on the way.`,
+      tone: 'progress',
+      yourTurn: false,
+      stepsDone: 2,
+      ongoing: true,
+    };
+  }
   if (!WORK_STARTED.has(job.workStatus ?? '')) {
     return {
       label: 'Confirmed',
-      hint: `${money(job.agreedPrice) ?? 'Price agreed'} · waiting for ${tech ?? 'the technician'} to start.`,
+      hint: `${money(job.agreedPrice) ?? 'Price agreed'} · waiting for ${tech ?? 'the technician'} to set off.`,
       tone: 'waiting',
       yourTurn: false,
       stepsDone: 2,
@@ -129,9 +149,19 @@ export function summarizeClientJob(job: Job): JobSummary {
   if (job.workStatus === 'COMPLETED') {
     return {
       label: 'Confirm it is done',
-      hint: `${tech ?? 'The technician'} marked the job finished.`,
+      hint: `${tech ?? 'The technician'} marked the job finished.${until(job.completionConfirmationDueAt)}`,
       tone: 'action',
       yourTurn: true,
+      stepsDone: 3,
+      ongoing: true,
+    };
+  }
+  if (job.workStatus === 'ON_HOLD') {
+    return {
+      label: 'On hold',
+      hint: job.workStatusReason?.trim() || `${tech ?? 'Your technician'} paused the work.`,
+      tone: 'waiting',
+      yourTurn: false,
       stepsDone: 3,
       ongoing: true,
     };
@@ -173,10 +203,30 @@ export function summarizeTechnicianJob(job: Job, isRequest: boolean): JobSummary
       ongoing: true,
     };
   }
+  if (job.workStatus === 'HEADING_TO_LOCATION') {
+    return {
+      label: 'On your way',
+      hint: `Tap "I've arrived" in the chat when you get there.`,
+      tone: 'progress',
+      yourTurn: true,
+      stepsDone: 2,
+      ongoing: true,
+    };
+  }
+  if (job.workStatus === 'ARRIVED') {
+    return {
+      label: 'Start the work',
+      hint: 'You have arrived. Start the work in the chat.',
+      tone: 'action',
+      yourTurn: true,
+      stepsDone: 2,
+      ongoing: true,
+    };
+  }
   if (!WORK_STARTED.has(job.workStatus ?? '')) {
     return {
-      label: 'Start the job',
-      hint: `${money(job.agreedPrice) ?? 'Price agreed'} · start when you arrive.`,
+      label: 'Set off',
+      hint: `${money(job.agreedPrice) ?? 'Price agreed'} · tell ${client} when you are on your way.`,
       tone: 'action',
       yourTurn: true,
       stepsDone: 2,
@@ -186,9 +236,19 @@ export function summarizeTechnicianJob(job: Job, isRequest: boolean): JobSummary
   if (job.workStatus === 'COMPLETED') {
     return {
       label: 'Waiting for the client',
-      hint: `${client[0]?.toUpperCase() ?? ''}${client.slice(1)} needs to confirm it is done.`,
+      hint: `${client[0]?.toUpperCase() ?? ''}${client.slice(1)} needs to confirm it is done.${until(job.completionConfirmationDueAt)}`,
       tone: 'waiting',
       yourTurn: false,
+      stepsDone: 3,
+      ongoing: true,
+    };
+  }
+  if (job.workStatus === 'ON_HOLD') {
+    return {
+      label: 'On hold',
+      hint: job.workStatusReason?.trim() ? `${job.workStatusReason.trim()} · resume in the chat.` : 'Resume the work in the chat.',
+      tone: 'waiting',
+      yourTurn: true,
       stepsDone: 3,
       ongoing: true,
     };

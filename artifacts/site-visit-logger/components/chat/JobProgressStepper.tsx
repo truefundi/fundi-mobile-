@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import { formatSeconds, useSecondsUntil } from '@/hooks/useCountdown';
 import { Button } from '@/components/ui/Button';
 import type { Lifecycle, LifecycleStep } from '@/lib/job-lifecycle';
 
@@ -55,6 +56,14 @@ export function JobProgressStepper({ lifecycle, expanded, actionLabel, onAction,
     lifecycle.isPriceAgreed && lifecycle.agreedAmount
       ? `Agreed ${lifecycle.currency} ${lifecycle.agreedAmount.toLocaleString()} · `
       : '';
+  // The client's confirmation window, ticking down (the job completes on its own at 0).
+  const secondsLeft = useSecondsUntil(lifecycle.completionDueAt);
+  const countdown =
+    secondsLeft === null
+      ? ''
+      : secondsLeft > 0
+        ? ` It completes on its own in ${formatSeconds(secondsLeft)}.`
+        : ' Completing now…';
 
   return (
     <View testID="job-progress-stepper">
@@ -121,6 +130,7 @@ export function JobProgressStepper({ lifecycle, expanded, actionLabel, onAction,
             <Text style={[styles.headline, { color: colors.mutedForeground }]} numberOfLines={2}>
               {agreed}
               {lifecycle.headline}
+              {countdown}
             </Text>
           ) : null}
         </Animated.View>
@@ -138,6 +148,7 @@ export function JobProgressStepper({ lifecycle, expanded, actionLabel, onAction,
           <Text style={[styles.actionText, hasSecondary && styles.actionTextStacked, { color: colors.mutedForeground }]} numberOfLines={2}>
             {agreed}
             {lifecycle.headline}
+            {countdown}
           </Text>
           <View style={[styles.actionButtons, hasSecondary && styles.actionButtonsStacked]}>
             {hasSecondary ? (

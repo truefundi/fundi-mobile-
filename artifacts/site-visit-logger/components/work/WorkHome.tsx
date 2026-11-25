@@ -161,14 +161,21 @@ function WorkRejected({ onlyDocuments, company }: { onlyDocuments: boolean; comp
 
 function WorkApproved() {
   const colors = useColors();
-  const { isAvailable, setAvailable, applicationError } = useWork();
+  const { isAvailable, capacityOffline, setAvailable, applicationError, profile } = useWork();
+  const individual = profile?.businessType !== 'COMPANY';
 
   return (
     <View style={styles.screen}>
       {applicationError ? <Text style={[styles.error, { color: colors.destructive }]}>{applicationError}</Text> : null}
       <SwitchRow
         title={isAvailable ? 'Available for work' : 'Not accepting jobs'}
-        hint="Availability is saved to your technician profile."
+        hint={
+          capacityOffline
+            ? "You have 3 active jobs, so you're offline automatically. You'll be back online when one ends."
+            : individual
+              ? 'You can have up to 3 active jobs. At 3 you go offline automatically.'
+              : 'Availability is saved to your technician profile.'
+        }
         value={isAvailable}
         onValueChange={(available) => {
           void setAvailable(available).catch(() => undefined);

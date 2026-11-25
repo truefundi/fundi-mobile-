@@ -58,6 +58,8 @@ export type Mode = 'hiring' | 'working';
 type Stored = {
   mode: Mode;
   isAvailable: boolean;
+  /** Taken offline automatically at three active jobs (back online when one ends). */
+  capacityOffline?: boolean;
   status: WorkStatus;
   profile: WorkProfile | null;
   applicationError: string | null;
@@ -81,6 +83,7 @@ function parseStored(raw: string | null): Stored {
       ...EMPTY,
       mode: parsed.mode ?? EMPTY.mode,
       isAvailable: parsed.isAvailable ?? EMPTY.isAvailable,
+      capacityOffline: parsed.capacityOffline ?? false,
       status: parsed.status ?? EMPTY.status,
       profile: parsed.profile ? { ...parsed.profile, nationalIdNumber: undefined } : null,
       applicationError: parsed.applicationError ?? null,
@@ -117,6 +120,8 @@ type ApiTechnicianProfile = {
   /** The admin's note when the whole application was rejected. */
   rejectionReason?: string | null;
   availabilityStatus: 'ONLINE' | 'OFFLINE';
+  /** Owner view: offline automatically at three active jobs. */
+  capacityAutoOffline?: boolean;
   location: { address: string; latitude: number; longitude: number };
   profilePictureUrl: string | null;
   nationalIdNumber: string | null;
@@ -249,7 +254,7 @@ function mapBackendJobToTechnicianJob(backendJob: BackendJob): Job {
   else if (backendJob.status === 'COMPLETED') status = 'COMPLETED';
   else if (backendJob.status === 'IN_PROGRESS') status = 'IN_PROGRESS';
   else if (backendJob.status === 'OPEN') status = 'REQUESTED';
-  else if (backendJob.status === 'ASSIGNED') {
+  else if ((backendJob.status === 'ASSIGNED' || backendJob.status === 'PAUSED')) {
     // Accepted is ACTIVE; once the technician is working (or on hold, or done) it is IN_PROGRESS.
     status = ['IN_PROGRESS', 'ON_HOLD', 'COMPLETED'].includes(backendJob.workStatus) ? 'IN_PROGRESS' : 'ACTIVE';
   }
@@ -335,6 +340,8 @@ type WorkContextValue = {
   /** True when the app shows the technician side: working mode with an approved application. */
   actingAsTechnician: boolean;
   isAvailable: boolean;
+  /** Offline because of three active jobs; it switches back on by itself when one ends. */
+  capacityOffline: boolean;
   setAvailable: (available: boolean) => Promise<void>;
   status: WorkStatus;
   profile: WorkProfile | null;
@@ -690,6 +697,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           ...current,
           status: nextStatus,
           isAvailable: serverProfile.availabilityStatus === 'ONLINE',
+          capacityOffline: Boolean(serverProfile.capacityAutoOffline),
           profile: mapProfile(serverProfile, documents, current.profile),
           applicationError: applicationNeedsFiles
             ? 'Your application is missing your national ID document. Add your ID and retry.'
@@ -828,6 +836,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       setMode,
       actingAsTechnician: state.mode === 'working' && isWorkVerified(state.status),
       isAvailable: state.isAvailable,
+      capacityOffline: Boolean(state.capacityOffline),
       setAvailable: async (isAvailable) => {
         try {
           const profile = await apiRequest<ApiTechnicianProfile>('/api/v1/technicians/availability', {
@@ -838,6 +847,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
           update((current) => ({
             ...current,
             isAvailable: profile.availabilityStatus === 'ONLINE',
+            capacityOffline: Boolean(profile.capacityAutoOffline),
             status: statusFromApi(profile.verificationStatus),
             profile: current.profile ? { ...current.profile, id: profile.id } : current.profile,
             applicationError: null,

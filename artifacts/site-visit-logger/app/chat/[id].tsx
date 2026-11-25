@@ -1125,7 +1125,8 @@ export default function JobChatScreen() {
           </View>
         </Pressable>
         <View style={styles.headerActionsRow}>
-          {otherPhone ? (
+          {/* Numbers are shared only once both sides confirm the deal. */}
+          {otherPhone && lifecycle.dealConfirmed ? (
             <Pressable
               accessibilityLabel="Call"
               onPress={() => void Linking.openURL(`tel:${otherPhone}`)}

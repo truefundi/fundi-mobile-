@@ -68,6 +68,8 @@ export type Lifecycle = {
   cancellation: CancellationMode;
   /** Whether new offers/counter-offers can be posted. */
   canNegotiate: boolean;
+  /** Both sides confirmed the deal: contact details (the call button) are shared from here. */
+  dealConfirmed: boolean;
   /** Where the work stands (the technician moves it). */
   workStatus: WorkStatus;
   /** Technician only: the work can be put on hold now (needs a reason). */
@@ -100,12 +102,6 @@ const CLIENT_WORK_HEADLINE: Record<WorkStatus, string> = {
   ON_HOLD: 'The work is on hold.',
   COMPLETED: 'The technician marked the job finished.',
 };
-
-function clock(iso: string | null): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 function pendingOffer(conversation: BackendConversation | null): PriceOfferItem | null {
   if (!conversation) return null;
@@ -247,17 +243,12 @@ export function deriveLifecycle(input: {
       action = { kind: 'finish-job' };
       headline = 'Mark the job finished when the work is done.';
     } else {
-      const due = clock(completionDueAt);
-      headline = due
-        ? `Waiting for the client to confirm. It completes on its own at ${due}.`
-        : 'Waiting for the client to confirm completion.';
+      // The progress bar adds the live countdown ("It completes on its own in 9:57.").
+      headline = 'Waiting for the client to confirm.';
     }
   } else if (workStatus === 'COMPLETED') {
     action = { kind: 'confirm-completion' };
-    const due = clock(completionDueAt);
-    headline = due
-      ? `The technician finished. Confirm the job is done, or it completes on its own at ${due}.`
-      : 'The technician finished. Confirm the job is done.';
+    headline = 'The technician finished. Confirm the job is done.';
   } else {
     headline =
       workStatus === 'ON_HOLD' && holdReason ? `The work is on hold: ${holdReason}` : CLIENT_WORK_HEADLINE[workStatus];
@@ -292,6 +283,7 @@ export function deriveLifecycle(input: {
     // Offers need someone on the other side: after a pull-out the job has no
     // technician until the next one accepts, and the API refuses offers.
     canNegotiate: convStatus === 'NEGOTIATING' && !isTerminal && hasAssignment,
+    dealConfirmed: cooperationConfirmed,
     workStatus,
     canHold:
       role === 'technician' &&

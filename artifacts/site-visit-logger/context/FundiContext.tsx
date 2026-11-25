@@ -84,7 +84,7 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
     status = 'COMPLETED';
   } else if (backendJob.status === 'IN_PROGRESS') {
     status = 'IN_PROGRESS';
-  } else if (backendJob.status === 'ASSIGNED') {
+  } else if ((backendJob.status === 'ASSIGNED' || backendJob.status === 'PAUSED')) {
     // Accepted is ACTIVE; once the technician is working (or on hold, or done) it is IN_PROGRESS.
     status = ['IN_PROGRESS', 'ON_HOLD', 'COMPLETED'].includes(backendJob.workStatus) ? 'IN_PROGRESS' : 'ACTIVE';
   } else if (backendJob.status === 'OPEN') {
