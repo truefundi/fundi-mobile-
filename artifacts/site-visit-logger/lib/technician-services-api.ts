@@ -95,3 +95,33 @@ export async function uploadServiceCertificate(
   }
   await apiUpload('/api/v1/technicians/profile/documents', form, 'POST');
 }
+
+/** A certificate the technician already filed, and the services it covers. */
+export type MyCertificate = {
+  id: string;
+  title: string;
+  certificateType: CertificateType | null;
+  status: 'SUBMITTED' | 'REVIEWING' | 'ACCEPTED' | 'DENIED';
+  serviceCategories: Array<{ id: string; name: string }>;
+};
+
+/** The technician's own certificates (not the national ID). */
+export async function fetchMyCertificates(): Promise<MyCertificate[]> {
+  const documents = await apiRequest<Array<MyCertificate & { type: string }>>('/api/v1/technicians/profile/documents', {
+    authenticated: true,
+  });
+  return documents.filter((document) => document.type === 'CERTIFICATE');
+}
+
+/** Links a certificate already on file to another catalog service, instead of uploading it again. */
+export async function reuseCertificate(documentId: string, categoryId: string): Promise<void> {
+  await apiRequest(`/api/v1/technicians/profile/documents/${documentId}/services`, {
+    method: 'POST',
+    authenticated: true,
+    body: { categoryId },
+  });
+}
+
+export function certificateTypeLabel(type: CertificateType | null): string {
+  return CERTIFICATE_TYPES.find((option) => option.value === type)?.label ?? 'Certificate';
+}

@@ -13,11 +13,15 @@ import {
   addMyService,
   CERTIFICATE_TYPES,
   certificateIssue,
+  certificateTypeLabel,
+  fetchMyCertificates,
   fetchMyServices,
+  reuseCertificate,
   serviceName,
   updateMyService,
   uploadServiceCertificate,
   type CertificateType,
+  type MyCertificate,
   type PickedFile,
   type TechnicianService,
 } from '@/lib/technician-services-api';
@@ -44,11 +48,17 @@ export default function AddServiceScreen() {
   const [certificate, setCertificate] = useState<PickedFile | null>(null);
   const [certificateType, setCertificateType] = useState<CertificateType>('TVET_CERTIFICATE');
   const [fileError, setFileError] = useState<string | null>(null);
+  // Certificates Fundi already accepted: one can cover this service too, without a new upload.
+  const [certificates, setCertificates] = useState<MyCertificate[]>([]);
+  const [reuseId, setReuseId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
+      fetchMyCertificates()
+        .then(setCertificates)
+        .catch(() => setCertificates([]));
       fetchMyServices()
         .then((services) => {
           setMine(services);
@@ -67,6 +77,14 @@ export default function AddServiceScreen() {
   }, [categories, mine]);
 
   const chosen = options.find((service) => service.id === choice);
+  // Reuse links a certificate to a catalog service; a service named by the technician needs an upload.
+  const targetCategoryId = resubmitting ? resubmitting.categoryId ?? null : chosen?.id ?? null;
+  const reusable = targetCategoryId
+    ? certificates.filter(
+        (doc) => doc.status === 'ACCEPTED' && !doc.serviceCategories.some((service) => service.id === targetCategoryId),
+      )
+    : [];
+  const reusing = reuseId && reusable.some((doc) => doc.id === reuseId) ? reuseId : null;
   const ownName = customName.trim();
   const ready = resubmitting
     ? true
@@ -91,6 +109,7 @@ export default function AddServiceScreen() {
       return;
     }
     setCertificate(file);
+    setReuseId(null);
   };
 
   const submit = async () => {
@@ -103,7 +122,19 @@ export default function AddServiceScreen() {
         : await addMyService(
             choice === OTHER ? { customName: ownName, yearsOfExperience: years } : { categoryId: choice!, yearsOfExperience: years },
           );
-      if (certificate) {
+      if (reusing && targetCategoryId) {
+        try {
+          await reuseCertificate(reusing, targetCategoryId);
+        } catch (linkError) {
+          setError(
+            `${serviceName(created)} was sent for review, but the certificate could not be added: ${
+              linkError instanceof Error ? linkError.message : 'try again from your profile.'
+            }`,
+          );
+          await refreshApplication().catch(() => undefined);
+          return;
+        }
+      } else if (certificate) {
         try {
           await uploadServiceCertificate(created, certificate, certificateType);
         } catch (uploadError) {
@@ -118,7 +149,8 @@ export default function AddServiceScreen() {
         }
       }
       await refreshApplication().catch(() => undefined);
-      router.back();
+      if (router.canGoBack()) router.back();
+      else router.replace('/profile');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The service could not be sent for review.');
     } finally {
@@ -241,8 +273,46 @@ export default function AddServiceScreen() {
         </Text>
         <Text style={[styles.hint, { color: colors.mutedForeground }]}>
           A certificate for {resubmitting ? serviceName(resubmitting) : chosen?.label ?? (ownName || 'this service')} helps Fundi approve
-          it faster. Photo or PDF, up to 5 MB.
+          it faster.
         </Text>
+        {reusable.length ? (
+          <View style={{ gap: 8 }} testID="add-service-reuse">
+            <Text style={[styles.label, { color: colors.foreground }]}>Use one Fundi already accepted</Text>
+            {reusable.map((doc) => {
+              const selected = reusing === doc.id;
+              const covers = doc.serviceCategories.map((service) => service.name).join(', ');
+              return (
+                <Pressable
+                  key={doc.id}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: selected }}
+                  onPress={() => {
+                    setReuseId(selected ? null : doc.id);
+                    if (!selected) setCertificate(null);
+                  }}
+                  style={[
+                    styles.reuseRow,
+                    { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary + '10' : colors.background },
+                  ]}
+                  testID={`add-service-reuse-${doc.id}`}
+                >
+                  <Feather name={selected ? 'check-circle' : 'circle'} size={18} color={selected ? colors.primary : colors.mutedForeground} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.reuseTitle, { color: colors.foreground }]} numberOfLines={1}>
+                      {doc.title}
+                    </Text>
+                    <Text style={[styles.hint, { color: colors.mutedForeground }]} numberOfLines={1}>
+                      {certificateTypeLabel(doc.certificateType)}
+                      {covers ? ` · accepted for ${covers}` : ''}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+            <Text style={[styles.label, { color: colors.foreground, marginTop: 4 }]}>Or upload a new one</Text>
+          </View>
+        ) : null}
+        <Text style={[styles.hint, { color: colors.mutedForeground }]}>Photo or PDF, up to 5 MB.</Text>
         <View style={styles.chips}>
           {CERTIFICATE_TYPES.map((type) => {
             const selected = certificateType === type.value;
@@ -301,4 +371,6 @@ const styles = StyleSheet.create({
   stepperValue: { fontFamily: 'Inter_700Bold', fontSize: 14, minWidth: 44, textAlign: 'center' },
   fileButton: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderStyle: 'dashed', borderRadius: 12, padding: 12 },
   fileText: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  reuseRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 12, padding: 12 },
+  reuseTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
 });
