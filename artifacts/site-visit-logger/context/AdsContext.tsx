@@ -30,7 +30,11 @@ type ApiAd = {
   imageAlt: string | null;
   callToAction: string | null;
   targetUrl: string | null;
+  priority?: number;
+  createdAt?: string;
 };
+
+const AD_PLACEMENTS = ['MOBILE_HOME', 'LANDING_PRODUCT'] as const;
 
 /** Uploaded creatives come back as API paths; hosted ones as full URLs. */
 function absoluteImageUrl(url: string | null): string | null {
@@ -58,7 +62,7 @@ const AdsContext = createContext<AdsContextValue | null>(null);
 /** Ads already counted as seen in this app session (survives the provider remounting). */
 const countedImpressions = new Set<string>();
 
-/** The home carousel's ads, managed by admins in the dashboard (placement MOBILE_HOME). */
+/** The home carousel's ads, managed by admins in the dashboard. */
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const { mode } = useWork();
   const role = mode === 'working' ? 'TECHNICIAN' : 'CUSTOMER';
@@ -68,8 +72,19 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const refreshAds = useCallback(async () => {
     setIsLoading(true);
     try {
-      const rows = await apiRequest<ApiAd[]>(`/api/v1/ads?placement=MOBILE_HOME&role=${role}`);
-      setAds(Array.isArray(rows) ? rows.map(toAdItem) : []);
+      // The admin dashboard publishes its ads as LANDING_PRODUCT; MOBILE_HOME holds
+      // the app-only ones. Show both, highest priority (then newest) first.
+      const lists = await Promise.all(
+        AD_PLACEMENTS.map((placement) =>
+          apiRequest<ApiAd[]>(`/api/v1/ads?placement=${placement}&role=${role}`).catch(() => [] as ApiAd[]),
+        ),
+      );
+      const seen = new Set<string>();
+      const rows = lists
+        .flatMap((list) => (Array.isArray(list) ? list : []))
+        .filter((ad) => (seen.has(ad.id) ? false : (seen.add(ad.id), true)))
+        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+      setAds(rows.map(toAdItem));
     } catch {
       // No ads is a normal state: the home screen shows its emergency card instead.
       setAds([]);

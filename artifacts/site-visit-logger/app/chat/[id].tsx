@@ -15,7 +15,8 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { previousIsBookingStep } from '@/lib/checkout-nav';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -337,10 +338,18 @@ export default function JobChatScreen() {
     if (router.canDismiss()) router.dismissAll();
     router.navigate('/(tabs)/chat');
   }, [router]);
+  // Back never lands on a booking screen (payment, phone code, choosing a
+  // technician): a chat reached from one of them goes home instead.
+  const navigation = useNavigation();
+  const goHome = useCallback(() => {
+    if (router.canDismiss()) router.dismissAll();
+    router.navigate('/(tabs)');
+  }, [router]);
   const goBack = useCallback(() => {
-    if (!cameFromCheckout && router.canGoBack()) router.back();
+    if (cameFromCheckout || previousIsBookingStep(navigation)) goHome();
+    else if (router.canGoBack()) router.back();
     else goToList();
-  }, [cameFromCheckout, goToList, router]);
+  }, [cameFromCheckout, goHome, goToList, navigation, router]);
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {

@@ -162,7 +162,16 @@ export default function EditProfileScreen() {
           <Text testID="edit-profile-phone" style={[styles.readOnlyText, { color: colors.mutedForeground }]}>{formatPhone(account.phone)}</Text>
           <Ionicons name="lock-closed-outline" size={16} color={colors.mutedForeground} />
         </View>
-        <Text style={[styles.hint, { color: colors.mutedForeground }]}>You sign in with this number, so it cannot be changed here.</Text>
+        <Text style={[styles.hint, { color: colors.mutedForeground }]}>You sign in with this number. To change it, verify the new one.</Text>
+        <Pressable
+          accessibilityRole="button"
+          testID="edit-profile-verify-phone"
+          onPress={() => router.push('/verify-number' as never)}
+          hitSlop={6}
+          style={({ pressed }) => [styles.removeLink, { opacity: pressed ? 0.6 : 1 }]}
+        >
+          <Text style={[styles.removeText, { color: colors.primary }]}>Verify or change number</Text>
+        </Pressable>
       </View>
 
       {errorFor('save')}

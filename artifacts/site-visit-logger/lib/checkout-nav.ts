@@ -26,7 +26,23 @@ type NavOptions = {
   paymentOpen?: boolean;
 };
 
-type StackNavigation = { getState?: () => { routes?: Array<{ name: string }> } | undefined };
+type StackNavigation = { getState?: () => { routes?: Array<{ name: string }>; index?: number } | undefined };
+
+/** Screens of the booking flow that must never be returned to once a request is sent. */
+const BOOKING_STEPS = new Set(['checkout/payment', 'checkout/verify-phone', 'checkout/sos-dispatch', 'select-technician']);
+
+/** Whether the screen right under the current one is a booking step (payment and the like). */
+export function previousIsBookingStep(navigation: StackNavigation | undefined): boolean {
+  try {
+    const state = navigation?.getState?.();
+    const routes = state?.routes ?? [];
+    const index = state?.index ?? routes.length - 1;
+    const previous = routes[index - 1]?.name;
+    return Boolean(previous && BOOKING_STEPS.has(previous));
+  } catch {
+    return false;
+  }
+}
 
 /** Whether a screen (by route name, e.g. 'checkout/payment') is open in the current stack. */
 export function isOpenInStack(navigation: StackNavigation | undefined, name: string): boolean {

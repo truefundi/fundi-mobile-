@@ -20,7 +20,7 @@ import { usePaymentQuote } from '@/hooks/usePaymentQuote';
 import { PriceBreakdown } from '@/components/checkout/PriceBreakdown';
 import { ClaimStatus, PayByCode } from '@/components/checkout/PayByCode';
 import { usePaymentClaim } from '@/hooks/usePaymentClaim';
-import type { PaymentClaimMethod } from '@/lib/payments-api';
+import { findUnusedPayment, type MyBookingPayment, type PaymentClaimMethod } from '@/lib/payments-api';
 import { BackButton } from '@/components/ui/BackButton';
 import { Button } from '@/components/ui/Button';
 import { Notice } from '@/components/ui/Notice';
@@ -59,6 +59,8 @@ function requestMediaParts(uris: Array<string | undefined>, kind: 'photo' | 'vid
  */
 type PaymentSource =
   | { kind: 'claim'; paymentId: string; amount: number; externalPaymentId: string }
+  /** A fee paid earlier for this service that no request used. */
+  | { kind: 'existing'; paymentId: string; amount: number; externalPaymentId: string }
   | { kind: 'test' };
 
 export default function CheckoutPaymentScreen() {
@@ -293,10 +295,14 @@ export default function CheckoutPaymentScreen() {
     try {
       // 1. The booking payment: the one an admin approved, or a test payment in development.
       const source = sourceRef.current;
+      const requestType = job?.type === 'SOS' ? 'SOS' : 'NORMAL';
+      // A fee already paid for this service and not used yet (the request failed
+      // after paying) is used first, so the client is never charged twice.
       const bookingPayment =
-        source.kind === 'claim'
+        source.kind === 'claim' || source.kind === 'existing'
           ? { id: source.paymentId, amount: source.amount, externalPaymentId: source.externalPaymentId }
-          : await createBookingPayment(targetServiceCategoryId, job?.type === 'SOS' ? 'SOS' : 'NORMAL', normalizedPhone);
+          : ((await findUnusedPayment(targetServiceCategoryId, requestType)) ??
+            (await createBookingPayment(targetServiceCategoryId, requestType, normalizedPhone)));
 
       // 2. Create customer job on real backend
       // The price itself is agreed in the chat, so no amount is sent here.
@@ -409,6 +415,37 @@ export default function CheckoutPaymentScreen() {
   }, [approvedClaim?.id, approvedClaim?.bookingPayment?.id]);
 
   const claimOpen = paymentClaim.claim !== null;
+
+  // A fee already paid for this service but never used by a request: offer it
+  // instead of asking the client to pay again.
+  const [unusedPayment, setUnusedPayment] = useState<MyBookingPayment | null>(null);
+  useEffect(() => {
+    if (isAlreadyPaid || paymentSuccess) return;
+    let active = true;
+    void (async () => {
+      try {
+        const categoryId = await resolveServiceCategoryId(targetService, params.categoryId || job?.serviceCategoryId);
+        const found = await findUnusedPayment(categoryId, job?.type === 'SOS' ? 'SOS' : 'NORMAL');
+        if (active) setUnusedPayment(found);
+      } catch {
+        // Nothing to offer: the normal payment options stay.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+    // Checked once per screen; a payment made here moves on to the chat.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetService, params.categoryId, job?.serviceCategoryId, job?.type]);
+  const payWithUnused = () => {
+    if (!unusedPayment) return;
+    void handlePay({
+      kind: 'existing',
+      paymentId: unusedPayment.id,
+      amount: unusedPayment.amount,
+      externalPaymentId: unusedPayment.externalPaymentId,
+    });
+  };
 
   const handleCancel = () => {
     // If payment was already completed, redirect to chats always
@@ -527,6 +564,15 @@ export default function CheckoutPaymentScreen() {
           <Notice tone="warning" icon="alert-circle-outline" text={(paymentError || paymentClaim.error)!} />
         ) : null}
 
+        {unusedPayment && !claimOpen ? (
+          <Notice
+            tone="success"
+            icon="checkmark-circle-outline"
+            testID="unused-payment-notice"
+            text={`You already paid ${formatBookingFee(unusedPayment.amount, unusedPayment.currency)} for ${unusedPayment.service} and it has not been used yet. Send this request with it: no need to pay again.`}
+          />
+        ) : null}
+
         {paymentClaim.claim ? (
           <ClaimStatus
             claim={paymentClaim.claim}
@@ -567,15 +613,26 @@ export default function CheckoutPaymentScreen() {
             },
           ]}
         >
-          <Button
-            label={`I have paid ${formatBookingFee(bookingAmount, bookingCurrency)}`}
-            icon="checkmark-done"
-            onPress={() => void handleReportPaid()}
-            loading={paymentClaim.submitting}
-            disabled={isProcessing}
-            testID="i-have-paid-button"
-          />
-          {__DEV__ ? (
+          {unusedPayment ? (
+            <Button
+              label="Send my request (already paid)"
+              icon="send"
+              onPress={payWithUnused}
+              loading={isProcessing}
+              disabled={isProcessing}
+              testID="use-unused-payment-button"
+            />
+          ) : (
+            <Button
+              label={`I have paid ${formatBookingFee(bookingAmount, bookingCurrency)}`}
+              icon="checkmark-done"
+              onPress={() => void handleReportPaid()}
+              loading={paymentClaim.submitting}
+              disabled={isProcessing}
+              testID="i-have-paid-button"
+            />
+          )}
+          {__DEV__ && !unusedPayment ? (
             <Button
               label="Test payment (development only)"
               variant="outline"

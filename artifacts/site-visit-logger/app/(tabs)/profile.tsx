@@ -22,6 +22,7 @@ import { isServiceRejected, isWorkPending, isWorkRejected, isWorkVerified } from
 import { withdrawMyService } from '@/lib/technician-services-api';
 import { pickProfilePhoto } from '@/lib/profilePhoto';
 import { fetchMyCompany, type MyCompany } from '@/lib/companies-api';
+import { fetchJobPhoneStatus } from '@/lib/jobs-api';
 import { COMPANY_STATUS } from '@/components/work/CompanyFields';
 
 type Link = {
@@ -78,6 +79,21 @@ export default function ProfileScreen() {
     useCallback(() => {
       if (mode === 'working') void refreshApplication().catch(() => undefined);
     }, [mode, refreshApplication]),
+  );
+  // Whether the number is verified: requests skip the code step when it is.
+  const [phoneVerified, setPhoneVerified] = useState<boolean | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      fetchJobPhoneStatus()
+        .then((status) => {
+          if (!cancelled) setPhoneVerified(status.verified);
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }, []),
   );
   // A company owner sees their company's review status next to their trades.
   const [company, setCompany] = useState<MyCompany | null>(null);
@@ -232,10 +248,29 @@ export default function ProfileScreen() {
         </Pressable>
         <View style={styles.profileCopy}>
           <Text testID="profile-name" numberOfLines={2} style={[styles.name, { color: isDark ? colors.foreground : colors.primaryForeground }]}>{account.name}</Text>
-          <View style={styles.verifiedRow}>
-            <Ionicons name="checkmark-circle" size={13} color={isDark ? colors.primary : colors.primaryForeground} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={phoneVerified ? 'Phone number verified. Change it' : 'Verify your phone number'}
+            testID="profile-phone-row"
+            onPress={() => router.push('/verify-number' as Href)}
+            hitSlop={4}
+            style={({ pressed }) => [styles.verifiedRow, { opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Ionicons
+              name={phoneVerified ? 'checkmark-circle' : 'call-outline'}
+              size={13}
+              color={isDark ? colors.primary : colors.primaryForeground}
+            />
             <Text testID="profile-phone" style={[styles.contact, { color: isDark ? colors.mutedForeground : colors.secondary }]}>{formatPhone(account.phone)}</Text>
-          </View>
+            {phoneVerified === false ? (
+              <View
+                testID="profile-verify-phone"
+                style={[styles.verifyChip, { backgroundColor: isDark ? colors.primary : colors.primaryForeground }]}
+              >
+                <Text style={[styles.verifyChipText, { color: isDark ? colors.primaryForeground : colors.primary }]}>Verify</Text>
+              </View>
+            ) : null}
+          </Pressable>
           <View style={styles.verifiedRow}>
             <Ionicons name="location-outline" size={13} color={isDark ? colors.primary : colors.primaryForeground} />
             <Text numberOfLines={1} style={[styles.contact, styles.contactFlex, { color: isDark ? colors.mutedForeground : colors.secondary }]}>{account.location}</Text>
@@ -616,6 +651,8 @@ const styles = StyleSheet.create({
   name: { fontFamily: 'Inter_700Bold', fontSize: 19 },
   verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
   contact: { fontFamily: 'Inter_400Regular', fontSize: 13 },
+  verifyChip: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 2 },
+  verifyChipText: { fontFamily: 'Inter_700Bold', fontSize: 11 },
   contactFlex: { flexShrink: 1 },
   modeCard: { borderRadius: 18, borderWidth: 1, padding: 14, gap: 13, marginTop: 14 },
   modeTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },

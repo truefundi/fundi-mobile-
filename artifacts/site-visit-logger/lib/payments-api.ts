@@ -42,6 +42,7 @@ export interface MyBookingPayment {
   id: string;
   externalPaymentId: string;
   jobId: string | null;
+  serviceCategoryId: string;
   service: string;
   requestType: BookingRequestType;
   status: 'VALID' | 'EXPIRED' | 'PAUSED' | 'RESUMED' | 'COMPLETED';
@@ -56,6 +57,28 @@ export interface MyBookingPayment {
 export async function fetchMyPayments(): Promise<MyBookingPayment[]> {
   const rows = await apiRequest<MyBookingPayment[]>('/api/v1/payments/mine', { authenticated: true });
   return Array.isArray(rows) ? rows : [];
+}
+
+/**
+ * A booking fee already paid for this service that no request uses yet (a
+ * request that failed after paying, say). Paying again would charge twice.
+ */
+export async function findUnusedPayment(
+  serviceCategoryId: string,
+  requestType: BookingRequestType,
+): Promise<MyBookingPayment | null> {
+  const rows = await fetchMyPayments().catch(() => [] as MyBookingPayment[]);
+  const now = Date.now();
+  return (
+    rows.find(
+      (row) =>
+        !row.jobId &&
+        row.serviceCategoryId === serviceCategoryId &&
+        row.requestType === requestType &&
+        (row.status === 'VALID' || row.status === 'RESUMED') &&
+        new Date(row.validUntil).getTime() > now,
+    ) ?? null
+  );
 }
 
 /** Charges the client pays on top of the base fee. */

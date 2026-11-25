@@ -44,7 +44,7 @@ export default function VerifyPhoneScreen() {
     phone?: string;
   }>();
 
-  const { account } = useAuth();
+  const { account, adoptVerifiedPhone } = useAuth();
   const { requestPhoneVerification, verifyPhoneOtp } = useFundi();
 
   // Initial phone determination
@@ -156,6 +156,8 @@ export default function VerifyPhoneScreen() {
 
     try {
       const verifyRes = await verifyPhoneOtp(verificationId, otpToVerify.trim());
+      // A new number just became the account's sign-in number.
+      if (verifyRes.phoneNumber) await adoptVerifiedPhone(verifyRes.phoneNumber).catch(() => undefined);
       await notify('success');
 
       // Resolve the actual backend service category UUID

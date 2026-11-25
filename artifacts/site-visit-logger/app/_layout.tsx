@@ -135,6 +135,7 @@ function RootLayoutNav() {
         <Stack.Screen name="disputes" options={{ headerShown: false }} />
         <Stack.Screen name="notifications" options={{ headerShown: false }} />
         <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
+        <Stack.Screen name="verify-number" options={{ headerShown: false }} />
         <Stack.Screen name="saved-locations" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen name="change-pin" options={{ headerShown: false }} />
