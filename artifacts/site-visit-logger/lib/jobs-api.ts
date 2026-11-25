@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { apiRequest, apiUpload } from '@/lib/api';
+import { ApiRequestError, apiRequest, apiUpload } from '@/lib/api';
 import { resolveRequestMediaUri } from '@/lib/requestMedia';
 import { cleanAndNormalizePhone } from '@/lib/auth-api';
 import type { RequestType } from '@/constants/jobs';
@@ -136,6 +136,10 @@ export interface MatchingTechnicianItem {
   matchedLocations?: string[];
   profilePictureUrl?: string | null;
   avatarUrl?: string | null;
+  /** OFFLINE technicians can still be sent a request; they have two hours to reply. */
+  availabilityStatus?: 'ONLINE' | 'OFFLINE';
+  /** Set for an approved company: the request goes to the company. */
+  company?: { id: string; name: string } | null;
 }
 
 export interface GeocodedLocation {
@@ -353,11 +357,13 @@ export async function previewMatchingTechnicians(
   serviceCategoryId: string,
   latitude: number,
   longitude: number,
+  options: { includeOffline?: boolean } = {},
 ): Promise<MatchingTechnicianItem[]> {
   const query = new URLSearchParams({
     serviceCategoryId,
     latitude: String(latitude),
     longitude: String(longitude),
+    ...(options.includeOffline ? { includeOffline: 'true' } : {}),
   });
   return apiRequest<MatchingTechnicianItem[]>(`/api/v1/jobs/matching-technicians?${query.toString()}`, {
     authenticated: true,
@@ -383,12 +389,35 @@ export async function retryJobDispatch(jobId: string): Promise<BackendJob> {
   });
 }
 
-export async function proposeTechnician(jobId: string, technicianId: string): Promise<BackendJob> {
-  return apiRequest<BackendJob>(`/api/v1/jobs/mine/${jobId}/requests`, {
-    method: 'POST',
-    authenticated: true,
-    body: { technicianId },
-  });
+/** How a technician is reached: a normal request, the two-hour offline one, or via their company. */
+export type RequestRoute = { offline?: boolean; companyId?: string };
+
+// Remembered from the technician list, so every place that sends the request
+// (checkout, the technician list, "Send again" in the chat) uses the same route.
+const requestRoutes = new Map<string, RequestRoute>();
+
+export function rememberRequestRoute(technicianId: string, route: RequestRoute) {
+  requestRoutes.set(technicianId, route);
+}
+
+const WENT_OFFLINE = 'The selected technician is no longer available.';
+
+export async function proposeTechnician(jobId: string, technicianId: string, route?: RequestRoute): Promise<BackendJob> {
+  const how = route ?? requestRoutes.get(technicianId) ?? {};
+  const send = (path: string, body: Record<string, string>) =>
+    apiRequest<BackendJob>(`/api/v1/jobs/mine/${jobId}/${path}`, { method: 'POST', authenticated: true, body });
+
+  if (how.companyId) return send('company-requests', { companyId: how.companyId });
+  if (how.offline) return send('offline-requests', { technicianId });
+  try {
+    return await send('requests', { technicianId });
+  } catch (error) {
+    // They went offline since the list loaded: send the two-hour request instead.
+    if (error instanceof ApiRequestError && error.status === 409 && error.message === WENT_OFFLINE) {
+      return send('offline-requests', { technicianId });
+    }
+    throw error;
+  }
 }
 
 export async function cancelCustomerJob(jobId: string, reason: string): Promise<BackendJob> {

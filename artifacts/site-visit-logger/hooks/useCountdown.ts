@@ -40,6 +40,14 @@ export function useSecondsUntil(iso: string | null | undefined): number | null {
   return active ? Math.max(Math.ceil((target - now) / 1000), 0) : null;
 }
 
+/** "1 h 52 min" for long waits, "4:32" under an hour. */
+export function formatWait(seconds: number): string {
+  if (seconds < 3600) return formatSeconds(seconds);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
 /** 0:00-style label for a number of seconds. */
 export function formatSeconds(seconds: number): string {
   const minutes = Math.floor(seconds / 60);

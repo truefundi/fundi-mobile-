@@ -46,6 +46,7 @@ import { OfferCard } from '@/components/chat/OfferCard';
 import { OfferSheet, ReasonSheet } from '@/components/chat/ChatSheets';
 import { RequestCard, buildRequestSummary } from '@/components/chat/RequestCard';
 import { IncomingRequestIntro, buildOfferSummary, formatCountdown, useSecondsLeft } from '@/components/chat/IncomingRequestView';
+import { formatWait, useSecondsUntil } from '@/hooks/useCountdown';
 import { ActionDialog, type DialogRequest } from '@/components/ui/ActionDialog';
 import { RatingBar, RatingSheet } from '@/components/chat/RatingPanel';
 import { fetchJobRating, submitJobRating, updateJobRating, type JobRatingState } from '@/lib/ratings-api';
@@ -693,6 +694,8 @@ export default function JobChatScreen() {
     job?.dispatchStatus !== 'OFFERED' &&
     !(Number.isFinite(lastAnswerAt) && (!Number.isFinite(assignmentEndedAt) || lastAnswerAt > assignmentEndedAt));
   const requestDelivered = awaitingTechnician && job?.dispatchStatus === 'OFFERED';
+  // Time left for them to answer: a few minutes online, up to two hours when offline.
+  const requestSecondsLeft = useSecondsUntil(requestDelivered ? routing?.expiresAt : null);
   const routedName = proposedTechnician?.name ?? routing?.technicianName ?? localJob?.technician?.name ?? 'the technician';
   const routedAvatar = proposedTechnician?.avatarUrl ?? routing?.technicianProfilePictureUrl ?? undefined;
   const chooseAnotherTechnician = () => {
@@ -1014,7 +1017,9 @@ export default function JobChatScreen() {
               </Text>
               <Text style={[styles.dispatchText, { color: colors.mutedForeground }]}>
                 {requestDelivered
-                  ? 'It is in their inbox now. They have a few minutes to accept; you will be notified here.'
+                  ? requestSecondsLeft !== null && requestSecondsLeft > 0
+                    ? `It is in their inbox now. They have ${formatWait(requestSecondsLeft)} left to accept; you will be notified here.`
+                    : 'It is in their inbox now. You will be notified here when they answer.'
                   : leftNegotiation
                     ? 'The negotiation ended before a price was agreed. Your booking fee still covers this job, so you can send it to another technician without paying again.'
                   : proposalError && !routing

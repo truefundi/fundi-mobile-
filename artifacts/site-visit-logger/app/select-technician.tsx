@@ -8,7 +8,7 @@ import { BackButton } from '@/components/ui/BackButton';
 import { PageHeading } from '@/components/ui/PageHeading';
 import { reviewsLabel, type MarketplaceTechnician } from '@/constants/technicians';
 import { fetchPublicTechnicians } from '@/lib/technicians-api';
-import { previewMatchingTechnicians } from '@/lib/jobs-api';
+import { previewMatchingTechnicians, rememberRequestRoute, type MatchingTechnicianItem } from '@/lib/jobs-api';
 import { useFundi } from '@/context/FundiContext';
 import { useBookTechnician } from '@/hooks/useBookTechnician';
 import { Notice } from '@/components/ui/Notice';
@@ -87,21 +87,39 @@ export default function SelectTechnicianScreen() {
   // someone the request would never reach.
   const categoryHint = requestJob?.serviceCategoryId || categoryId;
   const [eligibleIds, setEligibleIds] = useState<Set<string> | null>(null);
+  // Offline technicians can still be sent a request; they have two hours to reply.
+  const [offlineMatches, setOfflineMatches] = useState<MatchingTechnicianItem[]>([]);
+  // Technicians who work as an approved company: the request goes to the company.
+  const [companies, setCompanies] = useState<Map<string, { id: string; name: string }>>(new Map());
   useEffect(() => {
     if (!service || locationLatitude === undefined || locationLongitude === undefined) {
       setEligibleIds(null);
+      setOfflineMatches([]);
       return;
     }
     let mounted = true;
     resolveServiceCategoryId(service, categoryHint)
-      .then((serviceCategoryId) => previewMatchingTechnicians(serviceCategoryId, locationLatitude, locationLongitude))
+      .then((serviceCategoryId) =>
+        previewMatchingTechnicians(serviceCategoryId, locationLatitude, locationLongitude, { includeOffline: true }),
+      )
       .then((matches) => {
-        if (mounted) setEligibleIds(new Set(matches.map((match) => match.technicianId)));
+        if (!mounted) return;
+        const offline = (match: MatchingTechnicianItem) => match.availabilityStatus === 'OFFLINE';
+        setEligibleIds(new Set(matches.filter((match) => !offline(match)).map((match) => match.technicianId)));
+        setOfflineMatches(matches.filter(offline));
+        setCompanies(
+          new Map(
+            matches.flatMap((match) => (match.company ? [[match.technicianId, match.company] as const] : [])),
+          ),
+        );
       })
       .catch((err) => {
         // Fall back to the public list; the chat reports it if routing then fails.
         console.warn('Could not load eligible technicians:', err);
-        if (mounted) setEligibleIds(null);
+        if (mounted) {
+          setEligibleIds(null);
+          setOfflineMatches([]);
+        }
       });
     return () => {
       mounted = false;
@@ -199,9 +217,46 @@ export default function SelectTechnicianScreen() {
     });
   }, [apiTechnicians, eligibleIds, only, locationLatitude, locationLongitude, service, sortBy]);
 
+  const offlineTechnicians = useMemo(
+    () =>
+      offlineMatches
+        .map((match) => {
+          const services = match.serviceExperiences
+            .map((row) => row.category?.name ?? row.customName ?? '')
+            .filter(Boolean);
+          const technician: MarketplaceTechnician = {
+            id: match.technicianId,
+            name: match.fullName,
+            service: services[0] ?? service ?? 'Technician',
+            services,
+            rating: null,
+            reviewsCount: 0,
+            jobsCompleted: 0,
+            etaMinutes: 0,
+            yearsExperience: match.yearsOfExperience,
+            location: undefined as unknown as MarketplaceTechnician['location'],
+            isAvailable: true,
+            phoneNumber: '',
+            avatarUrl: match.profilePictureUrl ?? undefined,
+          };
+          return { technician, distance: match.distanceMeters, place: match.publicLocationLabel };
+        })
+        .filter(({ technician, distance }) => {
+          if (only.near && (distance === null || distance > NEAR_METERS)) return false;
+          if (only.rated) return false; // no ratings shown for these
+          if (only.experienced && technician.yearsExperience < 5) return false;
+          return true;
+        })
+        .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity)),
+    [offlineMatches, only, service],
+  );
+
   // Booking goes through one shared path so a request is never created twice.
   const { book, booking, error: bookingError } = useBookTechnician();
-  const handleSelectTech = (tech: MarketplaceTechnician) => {
+  const handleSelectTech = (tech: MarketplaceTechnician, offline = false) => {
+    // The request goes to their company, or as the two-hour offline request.
+    const company = companies.get(tech.id);
+    rememberRequestRoute(tech.id, company ? { companyId: company.id } : { offline });
     const requestLocation =
       locationLatitude !== undefined && locationLongitude !== undefined
         ? { latitude: locationLatitude, longitude: locationLongitude }
@@ -214,6 +269,108 @@ export default function SelectTechnicianScreen() {
       service,
       categoryId: categoryHint,
     });
+  };
+
+  /** One technician card; offline ones get the two-hour request. */
+  const renderCard = (item: MarketplaceTechnician, distance: number | null, offline = false) => {
+    const company = companies.get(item.id);
+    return (
+          <Pressable
+            disabled={!item.isAvailable || booking}
+            onPress={() => handleSelectTech(item, offline)}
+            testID={offline ? `offline-tech-${item.id}` : `tech-card-${item.id}`}
+            style={[
+              styles.card,
+              { backgroundColor: colors.card, borderColor: colors.border, opacity: item.isAvailable ? 1 : 0.6 },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <ProfileAvatar
+                uri={item.avatarUrl}
+                name={item.name}
+                size={44}
+              />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={[styles.techName, { color: colors.foreground }]}>{item.name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                  <MaterialCommunityIcons
+                    name={getServiceIcon(item.service) as any}
+                    size={13}
+                    color={colors.primary}
+                  />
+                  <Text style={[styles.techService, { color: colors.mutedForeground }]}>{item.service}</Text>
+                </View>
+                {company ? (
+                  <View style={styles.companyRow} testID={`tech-company-${item.id}`}>
+                    <Ionicons name="business-outline" size={12} color={colors.primary} />
+                    <Text style={[styles.companyText, { color: colors.primary }]} numberOfLines={1}>
+                      Company · {company.name}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              {offline ? (
+                <View style={[styles.statusBadge, { backgroundColor: colors.muted }]}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 11, fontWeight: '600' }}>Offline</Text>
+                </View>
+              ) : (
+                <View style={[styles.statusBadge, { backgroundColor: item.isAvailable ? colors.success + '20' : colors.muted }]}>
+                  <Text style={{ color: item.isAvailable ? colors.success : colors.mutedForeground, fontSize: 11, fontWeight: '600' }}>
+                    {item.isAvailable ? 'Available' : 'Busy'}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View style={[styles.metaRow, { borderTopColor: colors.border }]}>
+              <View style={styles.metaItem}>
+                {offline ? (
+                  <Ionicons name="time-outline" size={14} color={colors.mutedForeground} />
+                ) : (
+                  <Ionicons name="star" size={14} color="#F59E0B" />
+                )}
+                <Text style={[styles.metaText, { color: colors.foreground }]}>
+                  {offline ? 'Replies within 2 hours' : reviewsLabel(item.rating, item.reviewsCount)}
+                </Text>
+              </View>
+              <View style={styles.metaItem}>
+                <Ionicons name="location-outline" size={14} color={colors.primary} />
+                <Text style={[styles.metaText, { color: colors.foreground }]}>
+                  {formatDistance(distance) ?? 'Distance unavailable'}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`View ${item.name} profile`}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  router.push({
+                    pathname: `/technician/${item.id}` as any,
+                    params: {
+                      requestId: jobId || requestJob?.id,
+                      service: service || item.service,
+                      problem,
+                      locationLabel,
+                      techName: item.name,
+                      techService: item.service,
+                      techServices: JSON.stringify(item.services),
+                      techRating: item.rating === null ? '' : String(item.rating),
+                      techReviewsCount: String(item.reviewsCount),
+                      techJobsCompleted: String(item.jobsCompleted),
+                      techYearsExperience: String(item.yearsExperience),
+                      techAvailable: item.isAvailable ? 'true' : 'false',
+                      techAvatarUrl: item.avatarUrl || '',
+                      techLocation: item.location ? `${item.location.latitude},${item.location.longitude}` : '',
+                    },
+                  });
+                }}
+                style={[styles.profilePill, { backgroundColor: colors.secondary }]}
+              >
+                <Text style={[styles.profilePillText, { color: colors.primary }]}>Profile →</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+    );
   };
 
   return (
@@ -367,7 +524,9 @@ export default function SelectTechnicianScreen() {
               <Text style={[styles.emptyText, { color: colors.mutedForeground, paddingVertical: 0 }]}>
                 {activeFilters.length
                   ? 'No technician matches these filters.'
-                  : 'No technician for this service is available near this address right now.'}
+                  : offlineTechnicians.length
+                    ? 'Nobody is online for this right now. You can still send it to an offline technician below.'
+                    : 'No technician for this service is available near this address right now.'}
               </Text>
               {activeFilters.length ? (
                 <Pressable accessibilityRole="button" onPress={clearFilters} testID="tech-empty-clear">
@@ -377,82 +536,20 @@ export default function SelectTechnicianScreen() {
             </View>
           )
         }
-        renderItem={({ item: { technician: item, distance } }) => (
-          <Pressable
-            disabled={!item.isAvailable || booking}
-            onPress={() => handleSelectTech(item)}
-            style={[
-              styles.card,
-              { backgroundColor: colors.card, borderColor: colors.border, opacity: item.isAvailable ? 1 : 0.6 },
-            ]}
-          >
-            <View style={styles.cardHeader}>
-              <ProfileAvatar
-                uri={item.avatarUrl}
-                name={item.name}
-                size={44}
-              />
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={[styles.techName, { color: colors.foreground }]}>{item.name}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
-                  <MaterialCommunityIcons
-                    name={getServiceIcon(item.service) as any}
-                    size={13}
-                    color={colors.primary}
-                  />
-                  <Text style={[styles.techService, { color: colors.mutedForeground }]}>{item.service}</Text>
-                </View>
-              </View>
-              <View style={[styles.statusBadge, { backgroundColor: item.isAvailable ? colors.success + '20' : colors.muted }]}>
-                <Text style={{ color: item.isAvailable ? colors.success : colors.mutedForeground, fontSize: 11, fontWeight: '600' }}>
-                  {item.isAvailable ? 'Available' : 'Busy'}
-                </Text>
-              </View>
+        renderItem={({ item: { technician, distance } }) => renderCard(technician, distance)}
+        ListFooterComponent={
+          offlineTechnicians.length ? (
+            <View style={styles.offlineSection} testID="offline-technicians">
+              <Text style={[styles.controlLabel, { color: colors.mutedForeground }]}>Offline technicians</Text>
+              <Text style={[styles.offlineHint, { color: colors.mutedForeground }]}>
+                Not online now, but you can still send them your request. They have 2 hours to reply; if they don't, your booking fee still covers another technician.
+              </Text>
+              {offlineTechnicians.map(({ technician, distance }) => (
+                <React.Fragment key={technician.id}>{renderCard(technician, distance, true)}</React.Fragment>
+              ))}
             </View>
-
-            <View style={[styles.metaRow, { borderTopColor: colors.border }]}>
-              <View style={styles.metaItem}>
-                <Ionicons name="star" size={14} color="#F59E0B" />
-                <Text style={[styles.metaText, { color: colors.foreground }]}>{reviewsLabel(item.rating, item.reviewsCount)}</Text>
-              </View>
-              <View style={styles.metaItem}>
-                <Ionicons name="location-outline" size={14} color={colors.primary} />
-                <Text style={[styles.metaText, { color: colors.foreground }]}>
-                  {formatDistance(distance) ?? 'Distance unavailable'}
-                </Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`View ${item.name} profile`}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  router.push({
-                    pathname: `/technician/${item.id}` as any,
-                    params: {
-                      requestId: jobId || requestJob?.id,
-                      service: service || item.service,
-                      problem,
-                      locationLabel,
-                      techName: item.name,
-                      techService: item.service,
-                      techServices: JSON.stringify(item.services),
-                      techRating: item.rating === null ? '' : String(item.rating),
-                      techReviewsCount: String(item.reviewsCount),
-                      techJobsCompleted: String(item.jobsCompleted),
-                      techYearsExperience: String(item.yearsExperience),
-                      techAvailable: item.isAvailable ? 'true' : 'false',
-                      techAvatarUrl: item.avatarUrl || '',
-                      techLocation: item.location ? `${item.location.latitude},${item.location.longitude}` : '',
-                    },
-                  });
-                }}
-                style={[styles.profilePill, { backgroundColor: colors.secondary }]}
-              >
-                <Text style={[styles.profilePillText, { color: colors.primary }]}>Profile →</Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        )}
+          ) : undefined
+        }
       />
     </View>
   );
@@ -499,6 +596,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 2,
   },
+  companyRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  companyText: { fontFamily: 'Inter_600SemiBold', fontSize: 12, flexShrink: 1 },
+  offlineSection: { gap: 12, marginTop: 20 },
+  offlineHint: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
   profilePillText: {
     fontFamily: 'Inter_600SemiBold',
     fontSize: 12,
