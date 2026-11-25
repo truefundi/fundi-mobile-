@@ -12,7 +12,6 @@ import {
   fetchCustomerJobs,
   proposeTechnician,
   requestJobPhoneVerification,
-  updateJobProgress,
   verifyJobPhone,
   type BackendJob,
   type CreateBookingPaymentResponse,
@@ -86,8 +85,8 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
   } else if (backendJob.status === 'IN_PROGRESS') {
     status = 'IN_PROGRESS';
   } else if (backendJob.status === 'ASSIGNED') {
-    // The technician is STARTED once they accept; work on site is IN_PROGRESS.
-    status = backendJob.technicianProgress === 'IN_PROGRESS' || backendJob.technicianProgress === 'COMPLETED' ? 'IN_PROGRESS' : 'ACTIVE';
+    // Accepted is ACTIVE; once the technician is working (or on hold, or done) it is IN_PROGRESS.
+    status = ['IN_PROGRESS', 'ON_HOLD', 'COMPLETED'].includes(backendJob.workStatus) ? 'IN_PROGRESS' : 'ACTIVE';
   } else if (backendJob.status === 'OPEN') {
     if (backendJob.dispatchStatus === 'OFFERED') {
       status = 'OFFERED';
@@ -155,8 +154,9 @@ export function mapBackendJobToFrontendJob(backendJob: BackendJob): Job {
     type: backendJob.requestType === 'SOS' ? 'SOS' : 'STANDARD',
     agreedPrice: backendJob.offeredAmount || undefined,
     cooperationStatus: backendJob.cooperationStatus,
-    customerProgress: backendJob.customerProgress,
-    technicianProgress: backendJob.technicianProgress,
+    workStatus: backendJob.workStatus,
+    workStatusReason: backendJob.workStatusReason ?? undefined,
+    completionConfirmationDueAt: backendJob.completionConfirmationDueAt ?? undefined,
     paymentId: backendJob.bookingPayment?.id,
     bookingFee: {
       amount: feeAmount,
@@ -212,7 +212,6 @@ type FundiContextValue = {
   createBookingPayment: (serviceCategoryId: string, requestType?: 'NORMAL' | 'SOS', phoneNumber?: string) => Promise<CreateBookingPaymentResponse>;
   proposeTechnicianToJob: (jobId: string, technicianId: string) => Promise<BackendJob>;
   confirmCooperation: (jobId: string) => Promise<BackendJob>;
-  updateCustomerProgress: (jobId: string, status: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED') => Promise<BackendJob>;
 };
 
 export const FundiContext = createContext<FundiContextValue | undefined>(undefined);
@@ -776,21 +775,6 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     return backendJob;
   }, [storageKey]);
 
-  const updateCustomerProgress = useCallback(async (
-    jobId: string,
-    status: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED',
-  ): Promise<BackendJob> => {
-    const backendJob = await updateJobProgress(jobId, status, 'customer');
-    const mapped = mapBackendJobToFrontendJob(backendJob);
-    const updated = jobsRef.current.map((j) => (j.id === jobId ? mapped : j));
-    jobsRef.current = updated;
-    setJobs(updated);
-    if (storageKey) {
-      await AsyncStorage.setItem(storageKey, JSON.stringify(updated)).catch(() => {});
-    }
-    return backendJob;
-  }, [storageKey]);
-
   const value = useMemo<FundiContextValue>(() => {
     const events = jobs
       .flatMap((job) => job.events.map((event) => ({ ...event, jobId: job.id, service: job.service })))
@@ -852,7 +836,6 @@ export function FundiProvider({ children }: { children: ReactNode }) {
       createBookingPayment,
       proposeTechnicianToJob,
       confirmCooperation,
-      updateCustomerProgress,
     };
   }, [
     jobs,
@@ -878,7 +861,6 @@ export function FundiProvider({ children }: { children: ReactNode }) {
     createBookingPayment,
     proposeTechnicianToJob,
     confirmCooperation,
-    updateCustomerProgress,
     update,
   ]);
 

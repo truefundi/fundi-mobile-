@@ -20,7 +20,8 @@ export type JobSummary = {
   ongoing: boolean;
 };
 
-const WORK_STARTED = new Set(['IN_PROGRESS', 'COMPLETED']);
+// Work has started once the technician is working, on hold or finished.
+const WORK_STARTED = new Set(['IN_PROGRESS', 'ON_HOLD', 'COMPLETED']);
 
 function money(amount?: number) {
   return amount ? `RWF ${amount.toLocaleString()}` : null;
@@ -115,7 +116,7 @@ export function summarizeClientJob(job: Job): JobSummary {
       ongoing: true,
     };
   }
-  if (!WORK_STARTED.has(job.technicianProgress ?? '')) {
+  if (!WORK_STARTED.has(job.workStatus ?? '')) {
     return {
       label: 'Confirmed',
       hint: `${money(job.agreedPrice) ?? 'Price agreed'} · waiting for ${tech ?? 'the technician'} to start.`,
@@ -125,7 +126,7 @@ export function summarizeClientJob(job: Job): JobSummary {
       ongoing: true,
     };
   }
-  if (job.technicianProgress === 'COMPLETED' && job.customerProgress !== 'COMPLETED') {
+  if (job.workStatus === 'COMPLETED') {
     return {
       label: 'Confirm it is done',
       hint: `${tech ?? 'The technician'} marked the job finished.`,
@@ -172,7 +173,7 @@ export function summarizeTechnicianJob(job: Job, isRequest: boolean): JobSummary
       ongoing: true,
     };
   }
-  if (!WORK_STARTED.has(job.technicianProgress ?? '')) {
+  if (!WORK_STARTED.has(job.workStatus ?? '')) {
     return {
       label: 'Start the job',
       hint: `${money(job.agreedPrice) ?? 'Price agreed'} · start when you arrive.`,
@@ -182,7 +183,7 @@ export function summarizeTechnicianJob(job: Job, isRequest: boolean): JobSummary
       ongoing: true,
     };
   }
-  if (job.technicianProgress === 'COMPLETED') {
+  if (job.workStatus === 'COMPLETED') {
     return {
       label: 'Waiting for the client',
       hint: `${client[0]?.toUpperCase() ?? ''}${client.slice(1)} needs to confirm it is done.`,

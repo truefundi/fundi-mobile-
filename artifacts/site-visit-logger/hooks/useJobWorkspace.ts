@@ -5,8 +5,8 @@ import {
   cancelJobFromRoom,
   confirmRoomCooperation,
   denyRoomPartnership,
-  updateRoomProgress,
-  type JobProgressValue,
+  updateRoomWorkStatus,
+  type WorkStatusValue,
 } from '@/lib/chat-rooms-api';
 import {
   acceptJobRequestInConversation,
@@ -183,15 +183,11 @@ export function useJobWorkspace(params: {
 
     // ── Job lifecycle ───────────────────────────────────────────────────
     confirmCooperation: () => run('confirm', () => confirmRoomCooperation(requireRoom())),
-    updateProgress: (status: JobProgressValue) => run(`progress-${status}`, () => updateRoomProgress(requireRoom(), status)),
-    /** Moves the caller's progress to COMPLETED, passing through STARTED if needed. */
-    completeMyProgress: () =>
-      run('complete', async () => {
-        const room = requireRoom();
-        const mine = isTechnician ? job?.technicianProgress : job?.customerProgress;
-        if (!mine || mine === 'PENDING') await updateRoomProgress(room, 'STARTED');
-        return updateRoomProgress(room, 'COMPLETED');
-      }),
+    /** Technician: next work status; ON_HOLD needs a reason. */
+    updateWorkStatus: (status: WorkStatusValue, reason?: string) =>
+      run(`work-${status}`, () => updateRoomWorkStatus(requireRoom(), status, reason)),
+    /** Technician marks the work finished; the client confirms it (both send COMPLETED). */
+    completeWork: () => run('complete', () => updateRoomWorkStatus(requireRoom(), 'COMPLETED')),
     pullOut: (reason: string) => run('pull-out', () => denyRoomPartnership(requireRoom(), reason)),
     cancelAfterAgreement: (reason: string) =>
       run('cancel', () => cancelJobFromRoom<{ message?: string }>(requireRoom(), reason)),

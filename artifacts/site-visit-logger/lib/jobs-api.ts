@@ -103,8 +103,14 @@ export interface BackendJob {
   lastOffer?: BackendRequestRouting | null;
   currentTechnician?: BackendTechnicianProfile | null;
   bookingPayment?: BackendBookingPayment | null;
-  customerProgress: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
-  technicianProgress: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+  /** Where the work stands; the technician moves it, the client confirms COMPLETED. */
+  workStatus: WorkStatus;
+  /** Why the work is on hold (ON_HOLD only). */
+  workStatusReason?: string | null;
+  /** Set when the technician marks the work finished: the client confirms before this, or it completes itself. */
+  completionConfirmationDueAt?: string | null;
+  completionConfirmedAt?: string | null;
+  completionAutoCompletedAt?: string | null;
   media?: BackendJobMedia[];
   createdAt: string;
   updatedAt: string;
@@ -165,6 +171,9 @@ export interface TechnicianOfferItem {
     media: BackendJobMedia[];
   };
 }
+
+/** The job's work status (one model for both sides). */
+export type WorkStatus = 'PENDING' | 'HEADING_TO_LOCATION' | 'ARRIVED' | 'IN_PROGRESS' | 'ON_HOLD' | 'COMPLETED';
 
 export interface PhoneVerificationRequestResponse {
   verificationId: string;
@@ -400,22 +409,6 @@ export async function confirmJobCooperation(jobId: string, role: 'customer' | 't
   return apiRequest<BackendJob>(path, {
     method: 'POST',
     authenticated: true,
-  });
-}
-
-export async function updateJobProgress(
-  jobId: string,
-  status: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED',
-  role: 'customer' | 'technician' = 'customer',
-): Promise<BackendJob> {
-  const path = role === 'technician'
-    ? `/api/v1/jobs/technician/mine/${jobId}/progress`
-    : `/api/v1/jobs/mine/${jobId}/progress`;
-
-  return apiRequest<BackendJob>(path, {
-    method: 'PATCH',
-    authenticated: true,
-    body: { status },
   });
 }
 

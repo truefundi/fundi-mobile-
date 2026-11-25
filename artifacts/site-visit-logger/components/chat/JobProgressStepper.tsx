@@ -13,6 +13,9 @@ type Props = {
   actionLabel?: string | null;
   onAction?: () => void;
   actionBusy?: boolean;
+  /** A second, quieter step (e.g. "Put on hold"). */
+  secondaryLabel?: string | null;
+  onSecondary?: () => void;
 };
 
 /** Tallest the dropped-down tracker gets (steps + a two-line headline). */
@@ -24,7 +27,7 @@ const PANEL_HEIGHT = 132;
  * header's progress button; the viewer's next action stays in a slim bar so it
  * is reachable whether the tracker is open or not.
  */
-export function JobProgressStepper({ lifecycle, expanded, actionLabel, onAction, actionBusy }: Props) {
+export function JobProgressStepper({ lifecycle, expanded, actionLabel, onAction, actionBusy, secondaryLabel, onSecondary }: Props) {
   const colors = useColors();
   const open = useRef(new Animated.Value(expanded ? 1 : 0)).current;
 
@@ -47,6 +50,7 @@ export function JobProgressStepper({ lifecycle, expanded, actionLabel, onAction,
           : colors.border;
 
   const hasAction = Boolean(actionLabel && onAction);
+  const hasSecondary = Boolean(secondaryLabel && onSecondary);
   const agreed =
     lifecycle.isPriceAgreed && lifecycle.agreedAmount
       ? `Agreed ${lifecycle.currency} ${lifecycle.agreedAmount.toLocaleString()} · `
@@ -123,19 +127,38 @@ export function JobProgressStepper({ lifecycle, expanded, actionLabel, onAction,
       </Animated.View>
 
       {hasAction ? (
-        <View style={[styles.actionBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <Text style={[styles.actionText, { color: colors.mutedForeground }]} numberOfLines={2}>
+        <View
+          style={[
+            styles.actionBar,
+            // Two buttons leave the status line no room beside them: it gets its own row.
+            hasSecondary && styles.actionBarStacked,
+            { backgroundColor: colors.card, borderBottomColor: colors.border },
+          ]}
+        >
+          <Text style={[styles.actionText, hasSecondary && styles.actionTextStacked, { color: colors.mutedForeground }]} numberOfLines={2}>
             {agreed}
             {lifecycle.headline}
           </Text>
-          <Button
-            label={actionLabel!}
-            size="small"
-            onPress={onAction!}
-            loading={actionBusy}
-            disabled={actionBusy}
-            testID="job-progress-action"
-          />
+          <View style={[styles.actionButtons, hasSecondary && styles.actionButtonsStacked]}>
+            {hasSecondary ? (
+              <Button
+                label={secondaryLabel!}
+                size="small"
+                variant="outline"
+                onPress={onSecondary!}
+                disabled={actionBusy}
+                testID="job-progress-secondary"
+              />
+            ) : null}
+            <Button
+              label={actionLabel!}
+              size="small"
+              onPress={onAction!}
+              loading={actionBusy}
+              disabled={actionBusy}
+              testID="job-progress-action"
+            />
+          </View>
         </View>
       ) : null}
     </View>
@@ -228,6 +251,10 @@ const styles = StyleSheet.create({
   connectorFill: { height: 2 },
   label: { fontSize: 10.5, textAlign: 'center', marginTop: 4, lineHeight: 13 },
   headline: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 16 },
+  actionButtons: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  actionButtonsStacked: { justifyContent: 'flex-end' },
+  actionBarStacked: { flexDirection: 'column', alignItems: 'stretch' },
+  actionTextStacked: { flex: 0 },
   actionBar: {
     flexDirection: 'row',
     alignItems: 'center',

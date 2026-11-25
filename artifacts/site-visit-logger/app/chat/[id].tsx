@@ -73,7 +73,7 @@ type TimelineItem =
   | { kind: 'chat'; key: string; at: string; message: ChatTimelineMessage }
   | { kind: 'conv'; key: string; at: string; message: ConversationMessageItem };
 
-type ReasonFlow = 'pull-out' | 'decline-request' | 'cancel-open-job' | 'restricted' | 'deny-offer';
+type ReasonFlow = 'pull-out' | 'decline-request' | 'cancel-open-job' | 'restricted' | 'deny-offer' | 'hold';
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -115,15 +115,27 @@ const INPUT_MIN_HEIGHT = 42;
 const promptedRatings = new Set<string>();
 const INPUT_MAX_HEIGHT = 120;
 
-const ACTION_LABEL: Record<LifecycleAction['kind'], string> = {
+const ACTION_LABEL: Record<Exclude<LifecycleAction['kind'], 'work-step'>, string> = {
   'accept-request': 'Accept request',
   'make-offer': 'Propose price',
   'respond-offer': 'Review offer',
   'confirm-cooperation': 'Confirm & start',
-  'start-job': 'Start job',
   'finish-job': 'Mark finished',
   'confirm-completion': 'Confirm done',
 };
+
+/** The technician's next work step, by the status it moves to. */
+const WORK_STEP_LABEL: Record<Extract<LifecycleAction, { kind: 'work-step' }>['next'], string> = {
+  HEADING_TO_LOCATION: "I'm on my way",
+  ARRIVED: "I've arrived",
+  IN_PROGRESS: 'Start work',
+};
+
+function actionLabelFor(action: LifecycleAction, workStatus: string): string {
+  if (action.kind !== 'work-step') return ACTION_LABEL[action.kind];
+  // From on hold, the same step reads as resuming.
+  return workStatus === 'ON_HOLD' ? 'Resume work' : WORK_STEP_LABEL[action.next];
+}
 
 export default function JobChatScreen() {
   const colors = useColors();
@@ -543,8 +555,8 @@ export default function JobChatScreen() {
           ],
         );
         return;
-      case 'start-job':
-        void workspace.updateProgress('IN_PROGRESS').catch(fail('Could not start the job'));
+      case 'work-step':
+        void workspace.updateWorkStatus(action.next).catch(fail('Could not update the job'));
         return;
       case 'finish-job':
       case 'confirm-completion':
@@ -555,7 +567,7 @@ export default function JobChatScreen() {
             : 'This closes the job and the chat becomes read-only.',
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Confirm', onPress: () => void workspace.completeMyProgress().catch(fail('Could not update progress')) },
+            { text: 'Confirm', onPress: () => void workspace.completeWork().catch(fail('Could not update the job')) },
           ],
         );
         return;
@@ -613,6 +625,12 @@ export default function JobChatScreen() {
       confirm: 'Deny offer',
       required: false,
     },
+    hold: {
+      title: 'Put the work on hold',
+      description: 'Tell the client why (waiting for a part, for example). Resume when you are back on it.',
+      confirm: 'Put on hold',
+      required: true,
+    },
   };
 
   const submitReason = async (reason: string) => {
@@ -636,6 +654,9 @@ export default function JobChatScreen() {
       }
       case 'deny-offer':
         if (reasonFlow.offer) await workspace.declineOffer(reasonFlow.offer.id, reason);
+        return;
+      case 'hold':
+        await workspace.updateWorkStatus('ON_HOLD', reason);
         return;
     }
   };
@@ -1053,14 +1074,14 @@ export default function JobChatScreen() {
         ? feeStatus === 'checking' ? 'Checking…' : 'Pay to chat'
         : 'Message';
 
-  const actionLabel = lifecycle.action ? ACTION_LABEL[lifecycle.action.kind] : null;
+  const actionLabel = lifecycle.action ? actionLabelFor(lifecycle.action, lifecycle.workStatus) : null;
   const actionBusy =
     lifecycle.action?.kind === 'accept-request'
       ? workspace.busy === 'accept-request' || acceptingOffer
       : lifecycle.action?.kind === 'confirm-cooperation'
         ? workspace.busy === 'confirm'
-        : lifecycle.action?.kind === 'start-job'
-          ? workspace.busy === 'progress-IN_PROGRESS'
+        : lifecycle.action?.kind === 'work-step'
+          ? workspace.busy === `work-${lifecycle.action.next}`
           : workspace.busy === 'complete';
   // Clients must pay before acting on the negotiation.
   const stepperActionAllowed = !(feeBlocksClient && lifecycle.action && lifecycle.action.kind !== 'confirm-completion');
@@ -1169,6 +1190,8 @@ export default function JobChatScreen() {
         actionLabel={stepperActionAllowed ? actionLabel : null}
         onAction={lifecycle.action ? () => runLifecycleAction(lifecycle.action!) : undefined}
         actionBusy={actionBusy}
+        secondaryLabel={lifecycle.canHold ? 'Put on hold' : null}
+        onSecondary={() => setReasonFlow({ flow: 'hold' })}
       />
 
       {/* Connection / sync state */}

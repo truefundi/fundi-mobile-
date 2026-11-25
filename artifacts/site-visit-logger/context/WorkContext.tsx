@@ -33,7 +33,6 @@ import {
   fetchTechnicianJobs,
   fetchTechnicianOffers,
   rejectTechnicianOffer,
-  updateJobProgress,
   type BackendJob,
   type TechnicianOfferItem,
   jobMediaUrl,
@@ -251,11 +250,8 @@ function mapBackendJobToTechnicianJob(backendJob: BackendJob): Job {
   else if (backendJob.status === 'IN_PROGRESS') status = 'IN_PROGRESS';
   else if (backendJob.status === 'OPEN') status = 'REQUESTED';
   else if (backendJob.status === 'ASSIGNED') {
-    // STARTED means the request was accepted; work on site is IN_PROGRESS.
-    status =
-      backendJob.technicianProgress === 'IN_PROGRESS' || backendJob.technicianProgress === 'COMPLETED'
-        ? 'IN_PROGRESS'
-        : 'ACTIVE';
+    // Accepted is ACTIVE; once the technician is working (or on hold, or done) it is IN_PROGRESS.
+    status = ['IN_PROGRESS', 'ON_HOLD', 'COMPLETED'].includes(backendJob.workStatus) ? 'IN_PROGRESS' : 'ACTIVE';
   }
 
   return {
@@ -282,8 +278,9 @@ function mapBackendJobToTechnicianJob(backendJob: BackendJob): Job {
     type: backendJob.requestType === 'SOS' ? 'SOS' : 'STANDARD',
     agreedPrice: backendJob.offeredAmount || undefined,
     cooperationStatus: backendJob.cooperationStatus,
-    customerProgress: backendJob.customerProgress,
-    technicianProgress: backendJob.technicianProgress,
+    workStatus: backendJob.workStatus,
+    workStatusReason: backendJob.workStatusReason ?? undefined,
+    completionConfirmationDueAt: backendJob.completionConfirmationDueAt ?? undefined,
     paymentId: backendJob.bookingPayment?.id,
     bookingFee: {
       amount: backendJob.bookingPayment?.amount || 0,
@@ -358,9 +355,7 @@ type WorkContextValue = {
   rejectOffer: (offerId: string, reason?: string) => Promise<{ success: boolean }>;
   confirmCooperation: (jobId: string) => Promise<BackendJob>;
   addOrUpdateJob: (job: Job, targetTechnicianPhone?: string) => Promise<void>;
-  startJob: (jobId: string) => Promise<void>;
   cancelJob: (jobId: string, reason: string) => Promise<void>;
-  completeJob: (jobId: string, completedPhotoUri?: string) => Promise<void>;
   createDraftRequest: (data: Partial<ServiceRequest>) => string;
   markBookingFeePaid: (requestId: string, transactionId: string) => void;
   initializeChatId?: (requestId: string, chatId?: string) => string;
@@ -591,62 +586,6 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     [account?.phone, fundi],
   );
 
-  const startJob = useCallback(
-    async (jobId: string) => {
-      try {
-        await updateJobProgress(jobId, 'IN_PROGRESS', 'technician');
-      } catch (err) {
-        console.warn('Backend start progress update non-fatal:', err);
-      }
-
-      const now = new Date().toISOString();
-      const targetJob = techJobsRef.current.find((j) => j.id === jobId);
-      const updated = techJobsRef.current.map((j) => {
-        if (j.id === jobId) {
-          return {
-            ...j,
-            status: 'IN_PROGRESS' as JobStatus,
-            statusSince: now,
-            events: [
-              ...j.events,
-              {
-                id: `evt-${Date.now()}`,
-                status: 'IN_PROGRESS' as JobStatus,
-                title: 'Job in progress',
-                text: 'Technician has started work on this job.',
-                at: now,
-              },
-            ],
-          };
-        }
-        return j;
-      });
-      techJobsRef.current = updated;
-      setTechJobs(updated);
-      if (account?.phone) {
-        await AsyncStorage.setItem(techJobsKey(account.phone), JSON.stringify(updated));
-      }
-      if (fundi) {
-        fundi.updateJob(jobId, { status: 'IN_PROGRESS' });
-      }
-      if (targetJob?.clientPhone) {
-        const clientKey = jobsKey(targetJob.clientPhone);
-        void AsyncStorage.getItem(clientKey).then((raw) => {
-          if (!raw) return;
-          try {
-            const list: Job[] = JSON.parse(raw);
-            const updatedClientList = list.map((j) =>
-              j.id === jobId ? { ...j, status: 'IN_PROGRESS' as JobStatus, statusSince: now } : j,
-            );
-            void AsyncStorage.setItem(clientKey, JSON.stringify(updatedClientList));
-          } catch {}
-        });
-
-      }
-    },
-    [account?.phone, fundi],
-  );
-
   const cancelJob = useCallback(
     async (jobId: string, reason: string) => {
       try {
@@ -699,72 +638,6 @@ export function WorkProvider({ children }: { children: ReactNode }) {
                     status: 'CANCELLED' as JobStatus,
                     statusSince: now,
                     cancellationReason: reason,
-                  }
-                : j,
-            );
-            void AsyncStorage.setItem(clientKey, JSON.stringify(updatedClientList));
-          } catch {}
-        });
-
-      }
-    },
-    [account?.phone, fundi],
-  );
-
-  const completeJob = useCallback(
-    async (jobId: string, completedPhotoUri?: string) => {
-      try {
-        await updateJobProgress(jobId, 'COMPLETED', 'technician');
-      } catch (err) {
-        console.warn('Backend complete job non-fatal:', err);
-      }
-
-      const now = new Date().toISOString();
-      const targetJob = techJobsRef.current.find((j) => j.id === jobId);
-      const updated = techJobsRef.current.map((j) => {
-        if (j.id === jobId) {
-          return {
-            ...j,
-            status: 'COMPLETED' as JobStatus,
-            completedPhotoUri,
-            completedAt: now,
-            statusSince: now,
-            events: [
-              ...j.events,
-              {
-                id: `evt-${Date.now()}`,
-                status: 'COMPLETED' as JobStatus,
-                title: 'Job completed',
-                text: 'Technician has completed the work successfully.',
-                at: now,
-              },
-            ],
-          };
-        }
-        return j;
-      });
-      techJobsRef.current = updated;
-      setTechJobs(updated);
-      if (account?.phone) {
-        await AsyncStorage.setItem(techJobsKey(account.phone), JSON.stringify(updated));
-      }
-      if (fundi) {
-        fundi.updateJob(jobId, { status: 'COMPLETED', completedPhotoUri, completedAt: now });
-      }
-      if (targetJob?.clientPhone) {
-        const clientKey = jobsKey(targetJob.clientPhone);
-        void AsyncStorage.getItem(clientKey).then((raw) => {
-          if (!raw) return;
-          try {
-            const list: Job[] = JSON.parse(raw);
-            const updatedClientList = list.map((j) =>
-              j.id === jobId
-                ? {
-                    ...j,
-                    status: 'COMPLETED' as JobStatus,
-                    statusSince: now,
-                    completedAt: now,
-                    completedPhotoUri,
                   }
                 : j,
             );
@@ -1242,9 +1115,7 @@ export function WorkProvider({ children }: { children: ReactNode }) {
       rejectOffer,
       confirmCooperation,
       addOrUpdateJob,
-      startJob,
       cancelJob,
-      completeJob,
       createDraftRequest: fundi ? fundi.createDraftRequest : localCreateDraftRequest,
       markBookingFeePaid: fundi ? fundi.markBookingFeePaid : localMarkBookingFeePaid,
       initializeChatId: fundi ? fundi.initializeChatId : localInitializeChatId,
@@ -1254,7 +1125,6 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     acceptOffer,
     addOrUpdateJob,
     cancelJob,
-    completeJob,
     confirmCooperation,
     fundi,
     localCreateDraftRequest,
@@ -1263,7 +1133,6 @@ export function WorkProvider({ children }: { children: ReactNode }) {
     refreshApplication,
     refreshJobs,
     rejectOffer,
-    startJob,
     state,
     storageKey,
     techJobs,

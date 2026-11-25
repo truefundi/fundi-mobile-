@@ -6,7 +6,7 @@ import {
   type BackendConversation,
   type PriceOfferItem,
 } from '@/lib/conversations-api';
-import type { BackendJob } from '@/lib/jobs-api';
+import type { BackendJob, WorkStatus } from '@/lib/jobs-api';
 
 /**
  * Derives the job's lifecycle as seen from the chat screen:
@@ -35,7 +35,8 @@ export type LifecycleAction =
   | { kind: 'make-offer' }
   | { kind: 'respond-offer'; offer: PriceOfferItem }
   | { kind: 'confirm-cooperation' }
-  | { kind: 'start-job' }
+  /** Technician: move the work to its next status (on the way, arrived, working, resume). */
+  | { kind: 'work-step'; next: 'HEADING_TO_LOCATION' | 'ARRIVED' | 'IN_PROGRESS' }
   | { kind: 'finish-job' }
   | { kind: 'confirm-completion' };
 
@@ -67,6 +68,12 @@ export type Lifecycle = {
   cancellation: CancellationMode;
   /** Whether new offers/counter-offers can be posted. */
   canNegotiate: boolean;
+  /** Where the work stands (the technician moves it). */
+  workStatus: WorkStatus;
+  /** Technician only: the work can be put on hold now (needs a reason). */
+  canHold: boolean;
+  /** When the client's confirmation window closes and the job completes on its own. */
+  completionDueAt: string | null;
 };
 
 const STEP_LABELS: Record<ViewerRole, Record<StepKey, string>> = {
@@ -74,9 +81,31 @@ const STEP_LABELS: Record<ViewerRole, Record<StepKey, string>> = {
   technician: { found: 'Request Accepted', agreed: 'Price Agreed', started: 'Start Job', ended: 'Finish Job' },
 };
 
-// The backend marks a technician STARTED as soon as they accept the request;
-// work on site begins at IN_PROGRESS.
-const WORK_STARTED = new Set(['IN_PROGRESS', 'COMPLETED']);
+// The "Job Start" step is done once the technician is working (or on hold, or done).
+const WORK_STARTED = new Set<WorkStatus>(['IN_PROGRESS', 'ON_HOLD', 'COMPLETED']);
+
+/** The technician's next step and its wording, from where the work stands. */
+const NEXT_WORK_STEP: Partial<Record<WorkStatus, { next: 'HEADING_TO_LOCATION' | 'ARRIVED' | 'IN_PROGRESS'; headline: string }>> = {
+  PENDING: { next: 'HEADING_TO_LOCATION', headline: 'Price agreed and job confirmed. Let the client know when you set off.' },
+  HEADING_TO_LOCATION: { next: 'ARRIVED', headline: 'On your way. Tap when you arrive.' },
+  ARRIVED: { next: 'IN_PROGRESS', headline: 'You have arrived. Start the work when you are ready.' },
+};
+
+/** What the client reads while the technician moves the work along. */
+const CLIENT_WORK_HEADLINE: Record<WorkStatus, string> = {
+  PENDING: 'Price agreed and job confirmed. Waiting for the technician to set off.',
+  HEADING_TO_LOCATION: 'The technician is on the way.',
+  ARRIVED: 'The technician has arrived.',
+  IN_PROGRESS: 'The technician is working on it.',
+  ON_HOLD: 'The work is on hold.',
+  COMPLETED: 'The technician marked the job finished.',
+};
+
+function clock(iso: string | null): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 function pendingOffer(conversation: BackendConversation | null): PriceOfferItem | null {
   if (!conversation) return null;
@@ -100,8 +129,9 @@ export function deriveLifecycle(input: {
 
   const jobStatus = job?.status ?? room?.job.status ?? 'OPEN';
   const cooperationConfirmed = (job?.cooperationStatus ?? room?.job.cooperationStatus) === 'CONFIRMED';
-  const technicianProgress = job?.technicianProgress ?? 'PENDING';
-  const customerProgress = job?.customerProgress ?? 'PENDING';
+  const workStatus: WorkStatus = job?.workStatus ?? room?.job.workStatus ?? 'PENDING';
+  const holdReason = (job?.workStatusReason ?? room?.job.workStatusReason ?? '').trim();
+  const completionDueAt = job?.completionConfirmationDueAt ?? room?.job.completionConfirmationDueAt ?? null;
   const hasAssignment = Boolean(room && !room.assignment.endedAt) || Boolean(job?.currentTechnician);
   const convStatus = conversation?.status ?? null;
   const requestDeclined = Boolean(conversation && convStatus === 'DECLINED' && wasJobRequestDeclined(conversation));
@@ -122,7 +152,7 @@ export function deriveLifecycle(input: {
   // ── Step completion ────────────────────────────────────────────────────
   const technicianAccepted = hasAssignment && convStatus !== 'PENDING' && !requestDeclined;
   const foundDone = role === 'client' ? hasAssignment || technicianAccepted : technicianAccepted;
-  const startedDone = WORK_STARTED.has(technicianProgress) || completed;
+  const startedDone = WORK_STARTED.has(workStatus) || completed;
   const doneByKey: Record<StepKey, boolean> = {
     found: foundDone,
     agreed: isPriceAgreed,
@@ -205,25 +235,32 @@ export function deriveLifecycle(input: {
         ? 'Waiting for the technician to confirm.'
         : 'Waiting for the client to confirm.';
     }
-  } else if (!startedDone) {
-    if (role === 'technician') {
-      action = { kind: 'start-job' };
-      headline = 'Price agreed and job confirmed. Start the job when you arrive.';
-    } else {
-      headline = 'Price agreed and job confirmed. Waiting for the technician to start.';
-    }
   } else if (role === 'technician') {
-    if (technicianProgress !== 'COMPLETED') {
+    const step = NEXT_WORK_STEP[workStatus];
+    if (step) {
+      action = { kind: 'work-step', next: step.next };
+      headline = step.headline;
+    } else if (workStatus === 'ON_HOLD') {
+      action = { kind: 'work-step', next: 'IN_PROGRESS' };
+      headline = holdReason ? `On hold: ${holdReason}` : 'The work is on hold.';
+    } else if (workStatus === 'IN_PROGRESS') {
       action = { kind: 'finish-job' };
       headline = 'Mark the job finished when the work is done.';
     } else {
-      headline = 'Waiting for the client to confirm completion.';
+      const due = clock(completionDueAt);
+      headline = due
+        ? `Waiting for the client to confirm. It completes on its own at ${due}.`
+        : 'Waiting for the client to confirm completion.';
     }
-  } else if (technicianProgress === 'COMPLETED' && customerProgress !== 'COMPLETED') {
+  } else if (workStatus === 'COMPLETED') {
     action = { kind: 'confirm-completion' };
-    headline = 'The technician finished. Confirm the job is done.';
+    const due = clock(completionDueAt);
+    headline = due
+      ? `The technician finished. Confirm the job is done, or it completes on its own at ${due}.`
+      : 'The technician finished. Confirm the job is done.';
   } else {
-    headline = 'Work in progress.';
+    headline =
+      workStatus === 'ON_HOLD' && holdReason ? `The work is on hold: ${holdReason}` : CLIENT_WORK_HEADLINE[workStatus];
   }
 
   // ── Request card badge ────────────────────────────────────────────────
@@ -255,6 +292,13 @@ export function deriveLifecycle(input: {
     // Offers need someone on the other side: after a pull-out the job has no
     // technician until the next one accepts, and the API refuses offers.
     canNegotiate: convStatus === 'NEGOTIATING' && !isTerminal && hasAssignment,
+    workStatus,
+    canHold:
+      role === 'technician' &&
+      !jobOver &&
+      cooperationConfirmed &&
+      (workStatus === 'HEADING_TO_LOCATION' || workStatus === 'ARRIVED' || workStatus === 'IN_PROGRESS'),
+    completionDueAt: workStatus === 'COMPLETED' && !completed ? completionDueAt : null,
   };
 }
 

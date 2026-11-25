@@ -28,6 +28,8 @@ export interface ChatParticipant {
   fullName: string;
 }
 
+import type { WorkStatus } from '@/lib/jobs-api';
+
 export interface ChatRoomJobSummary {
   id: string;
   status: string;
@@ -36,6 +38,9 @@ export interface ChatRoomJobSummary {
   service: string | null;
   customer: ChatParticipant;
   technician: ChatParticipant | null;
+  workStatus?: WorkStatus;
+  workStatusReason?: string | null;
+  completionConfirmationDueAt?: string | null;
 }
 
 export interface ChatRoomMember {
@@ -161,7 +166,8 @@ export function markChatRoomRead(roomId: string, messageId: string): Promise<Cha
 // except a technician cancellation, which returns `{ message }` because it
 // goes to administrator review.
 
-export type JobProgressValue = 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+/** A work status the caller can set (the client only confirms COMPLETED). */
+export type WorkStatusValue = 'HEADING_TO_LOCATION' | 'ARRIVED' | 'IN_PROGRESS' | 'ON_HOLD' | 'COMPLETED';
 
 /** Confirms cooperation for the caller's side (after the price is agreed). */
 export function confirmRoomCooperation<T = unknown>(roomId: string): Promise<T> {
@@ -186,12 +192,16 @@ export function cancelJobFromRoom<T = unknown>(roomId: string, reason: string): 
   });
 }
 
-/** Records the caller's progress on the job (PENDING → STARTED → IN_PROGRESS → COMPLETED). */
-export function updateRoomProgress<T = unknown>(roomId: string, status: JobProgressValue): Promise<T> {
-  return apiRequest<T>(`${ROOMS}/${roomId}/progress`, {
+/**
+ * Moves the job's work status. The technician walks it along (on the way,
+ * arrived, working, on hold with a reason, finished); the client only confirms
+ * COMPLETED once the technician has marked it finished.
+ */
+export function updateRoomWorkStatus<T = unknown>(roomId: string, status: WorkStatusValue, reason?: string): Promise<T> {
+  return apiRequest<T>(`${ROOMS}/${roomId}/status`, {
     method: 'PATCH',
     authenticated: true,
-    body: { status },
+    body: { status, ...(reason ? { reason } : {}) },
   });
 }
 

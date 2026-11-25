@@ -240,8 +240,10 @@ export interface ServiceRequest {
   completedPhotoUri?: string;
   cancellationReason?: string;
   cooperationStatus?: 'PENDING' | 'CONFIRMED';
-  customerProgress?: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
-  technicianProgress?: 'PENDING' | 'STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+  workStatus?: 'PENDING' | 'HEADING_TO_LOCATION' | 'ARRIVED' | 'IN_PROGRESS' | 'ON_HOLD' | 'COMPLETED';
+  workStatusReason?: string;
+  /** The client confirms the finished work before this, or it completes on its own. */
+  completionConfirmationDueAt?: string;
   paymentId?: string;
   /** For a request booked again after it was cancelled: the request it replaces. */
   rebookOf?: string;
